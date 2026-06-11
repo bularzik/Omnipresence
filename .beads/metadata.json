@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_database": "Omnipresence",
+  "project_id": "377e5632-7920-4502-8722-464fb4bd8d3e"
+}
