@@ -6,6 +6,7 @@ Bump the module version and trigger a GitHub release by pushing a git tag.
 /publish [major|minor|patch]
 
 If no argument is given, default to `patch`.
+If an unrecognized argument is given (not `major`, `minor`, or `patch`), default to `patch` and inform the user.
 
 ## Steps
 
@@ -30,5 +31,10 @@ If no argument is given, default to `patch`.
    git tag v{new_version}
    git push origin v{new_version}
    ```
+   If the push fails, clean up the local tag to avoid a dangling ref:
+   ```bash
+   git tag -d v{new_version}
+   ```
+   Then report the error to the user.
 
 6. Confirm the tag was pushed and tell the user the GitHub Actions workflow will now run to build and publish the release. The release will appear at: https://github.com/bularzik/Omnipresence/releases
