@@ -16,10 +16,10 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
       height: 'auto'
     },
     actions: {
-      forcePush: OmnipresenceDashboard._onForcePush,
-      forcePull: OmnipresenceDashboard._onForcePull,
-      removeSync: OmnipresenceDashboard._onRemoveSync,
-      forceSyncAll: OmnipresenceDashboard._onForceSyncAll
+      forcePush: true,
+      forcePull: true,
+      removeSync: true,
+      forceSyncAll: true
     }
   };
 
@@ -37,7 +37,7 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     const actors = visibleActors.map(a => {
       const syncedAt = a.getFlag('omnipresence', 'syncedAt');
       const localModifiedAt = a.getFlag('omnipresence', 'localModifiedAt') ?? syncedAt;
-      const hasConflict = localModifiedAt > syncedAt;
+      const hasConflict = !!syncedAt && !!localModifiedAt && localModifiedAt > syncedAt;
       return {
         id: a.id,
         name: a.name,
@@ -82,6 +82,7 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
   }
 
   static async _onForceSyncAll(event, target) {
+    if (!game.user.isGM) return;
     const enrolledActors = game.actors.filter(a => SyncRegistry.isEnrolled(a));
     await Promise.all(enrolledActors.map(a => SyncEngine.push(a)));
     this.render();
