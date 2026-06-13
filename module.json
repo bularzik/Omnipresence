@@ -1,0 +1,29 @@
+{
+  "id": "omnipresence",
+  "title": "Omnipresence",
+  "description": "Synchronize player characters across multiple worlds on the same Foundry server.",
+  "version": "1.0.0",
+  "authors": [{ "name": "Dan Bularzik" }],
+  "compatibility": {
+    "minimum": "13",
+    "verified": "13"
+  },
+  "esmodules": ["omnipresence.js"],
+  "styles": ["styles/omnipresence.css"],
+  "languages": [
+    {
+      "lang": "en",
+      "name": "English",
+      "path": "lang/en.json"
+    }
+  ],
+  "packs": [
+    {
+      "name": "omnipresence-actors",
+      "label": "Omnipresence Shared Characters",
+      "path": "packs/omnipresence-actors",
+      "type": "Actor",
+      "system": ""
+    }
+  ]
+}

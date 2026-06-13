@@ -1,0 +1,49 @@
+#omnipresence-dashboard .omnipresence-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+#omnipresence-dashboard .omnipresence-table th {
+  text-align: left;
+  padding: 6px 10px;
+  background: rgba(0,0,0,0.2);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-dark-secondary, #888);
+}
+
+#omnipresence-dashboard .omnipresence-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--color-border-light-tertiary, #ddd);
+  vertical-align: middle;
+}
+
+#omnipresence-dashboard .omnipresence-table tr.conflict td {
+  background: rgba(232, 168, 56, 0.1);
+}
+
+#omnipresence-dashboard .conflict-badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(232, 168, 56, 0.3);
+  color: #a07000;
+  margin-left: 6px;
+}
+
+#omnipresence-dashboard .dashboard-footer {
+  padding: 10px;
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--color-border-light-tertiary, #ddd);
+}
+
+#omnipresence-dashboard .footer-hint {
+  font-size: 12px;
+  color: var(--color-text-dark-secondary, #888);
+  text-align: center;
+  padding: 10px;
+}
