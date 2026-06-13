@@ -38,6 +38,8 @@ Hooks.on('deleteActor', (actor, options, userId) => {
   SyncRegistry.unenroll(actor);
 });
 
+// Best-effort flush — browser does not await async handlers on unload.
+// Edits made within the 2s debounce window at logout may not sync.
 window.addEventListener('beforeunload', () => {
   SyncEngine.flushPending();
 });

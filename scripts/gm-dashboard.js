@@ -54,6 +54,7 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     const actorId = target.closest('[data-actor-id]').dataset.actorId;
     const actor = game.actors.get(actorId);
     if (!actor) return;
+    if (!game.user.isGM && !actor.isOwner) return;
     await SyncEngine.push(actor);
     this.render();
   }
@@ -62,6 +63,7 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     const actorId = target.closest('[data-actor-id]').dataset.actorId;
     const actor = game.actors.get(actorId);
     if (!actor) return;
+    if (!game.user.isGM && !actor.isOwner) return;
     const omnipresenceId = actor.getFlag('omnipresence', 'id');
     const pack = game.packs.get('omnipresence.omnipresence-actors');
     if (!pack) return;
@@ -76,6 +78,7 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     const actorId = target.closest('[data-actor-id]').dataset.actorId;
     const actor = game.actors.get(actorId);
     if (!actor) return;
+    if (!game.user.isGM && !actor.isOwner) return;
     await SyncRegistry.unenroll(actor);
     ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.unenrolled', { name: actor.name }));
     this.render();

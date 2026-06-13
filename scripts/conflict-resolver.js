@@ -9,10 +9,15 @@ export class ConflictResolver {
     const compSyncedAt = compActor.getFlag('omnipresence', 'syncedAt') ?? '';
 
     const fmt = (iso) => iso ? new Date(iso).toLocaleString() : '—';
+    const safeName = localActor.name
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
 
     const content = `
       <div style="margin-bottom:12px">
-        ${game.i18n.format('OMNIPRESENCE.conflict.message', { name: localActor.name })}
+        ${game.i18n.format('OMNIPRESENCE.conflict.message', { name: safeName })}
       </div>
       <div style="display:flex;gap:12px;margin-bottom:12px">
         <div style="flex:1;border:1px solid var(--color-border-light-tertiary);border-radius:4px;padding:10px">
@@ -52,8 +57,9 @@ export class ConflictResolver {
 
     if (choice === 'local') {
       await onKeepLocal();
-    } else {
+    } else if (choice === 'shared') {
       await onUseShared();
     }
+    // null (dialog dismissed) = do nothing
   }
 }

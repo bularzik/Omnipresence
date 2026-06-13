@@ -141,10 +141,11 @@ export class SyncEngine {
       // else: in sync
     }
 
-    // 2. Auto-import: compendium actors not present in this world
+    // 2. Auto-import: compendium actors not present in this world (GM only)
+    if (!game.user.isGM) return;
     const localOmnipresenceIds = new Set(
       game.actors
-        .filter(a => a.getFlag('omnipresence', 'id'))
+        .filter(a => SyncRegistry.isEnrolled(a))
         .map(a => a.getFlag('omnipresence', 'id'))
     );
 
