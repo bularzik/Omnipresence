@@ -22,8 +22,7 @@
       "name": "omnipresence-actors",
       "label": "Omnipresence Shared Characters",
       "path": "packs/omnipresence-actors",
-      "type": "Actor",
-      "system": ""
+      "type": "Actor"
     }
   ]
 }

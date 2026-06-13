@@ -17,8 +17,10 @@ Hooks.once('init', () => {
 });
 
 Hooks.once('ready', async () => {
-  const pack = game.packs.get('omnipresence.omnipresence-actors');
-  if (pack?.locked) await pack.configure({ locked: false });
+  if (game.user.isGM) {
+    const pack = game.packs.get('omnipresence.omnipresence-actors');
+    if (pack?.locked) await pack.configure({ locked: false });
+  }
   await SyncEngine.onLogin();
 });
 
@@ -31,12 +33,13 @@ Hooks.on('updateActor', (actor, changes, options, userId) => {
 });
 
 Hooks.on('deleteActor', (actor, options, userId) => {
+  if (userId !== game.user.id) return;
   if (!SyncRegistry.isEnrolled(actor)) return;
   SyncRegistry.unenroll(actor);
 });
 
-Hooks.on('closeWorld', async () => {
-  await SyncEngine.flushPending();
+window.addEventListener('beforeunload', () => {
+  SyncEngine.flushPending();
 });
 
 Hooks.on('getActorDirectoryEntryContext', (html, entryOptions) => {
