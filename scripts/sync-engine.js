@@ -1,5 +1,10 @@
 import { SyncRegistry } from './sync-registry.js';
-import { decideSyncAction, stripWorldLocalFields } from './sync-logic.js';
+import {
+  decideSyncAction,
+  stripWorldLocalFields,
+  diffEmbedded,
+  resolveOwningActor
+} from './sync-logic.js';
 
 const DEBOUNCE_MS = 2000;
 
@@ -96,6 +101,54 @@ export class SyncEngine {
     }
     this._timers.clear();
     await Promise.all(pending.map(actor => this.push(actor)));
+  }
+
+  /**
+   * Apply create/update/delete to one embedded collection so it matches
+   * `snapshotDocs`. All writes carry omnipresenceInternal so the embedded
+   * hooks ignore them. Creates use keepId so embedded _ids stay stable across
+   * worlds (the cross-world match key).
+   */
+  static async _reconcileCollection(parent, embeddedName, snapshotDocs) {
+    const collection = parent.getEmbeddedCollection(embeddedName);
+    const localDocs = collection.map(d => d.toObject());
+    const { toCreate, toUpdate, toDelete } = diffEmbedded(localDocs, snapshotDocs ?? []);
+
+    if (toDelete.length) {
+      await parent.deleteEmbeddedDocuments(embeddedName, toDelete, { omnipresenceInternal: true });
+    }
+    if (toCreate.length) {
+      await parent.createEmbeddedDocuments(embeddedName, toCreate, {
+        keepId: true,
+        omnipresenceInternal: true
+      });
+    }
+    if (toUpdate.length) {
+      await parent.updateEmbeddedDocuments(embeddedName, toUpdate, { omnipresenceInternal: true });
+    }
+  }
+
+  /**
+   * Make targetActor's embedded data (items, their nested effects, and
+   * actor-level effects) match snapshotData. snapshotData is plain actor data
+   * (e.g. from toObject()) whose embedded _ids are preserved.
+   */
+  static async reconcileActorEmbedded(targetActor, snapshotData) {
+    // 1. Items (inventory, spells, features).
+    await this._reconcileCollection(targetActor, 'Item', snapshotData.items ?? []);
+
+    // 2. Effects nested on items. Re-read items after the Item reconcile so newly
+    //    created items are included (their effects self-heal if keepId did not
+    //    carry to nested docs).
+    const snapItemsById = new Map((snapshotData.items ?? []).map(i => [i._id, i]));
+    for (const item of targetActor.items) {
+      const snapItem = snapItemsById.get(item.id);
+      if (!snapItem) continue;
+      await this._reconcileCollection(item, 'ActiveEffect', snapItem.effects ?? []);
+    }
+
+    // 3. Actor-level effects (buffs, conditions).
+    await this._reconcileCollection(targetActor, 'ActiveEffect', snapshotData.effects ?? []);
   }
 
   static async pull(localActor, compActor) {
