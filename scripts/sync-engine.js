@@ -143,7 +143,7 @@ export class SyncEngine {
     //    carry to nested docs).
     const snapItemsById = new Map((snapshotData.items ?? []).map(i => [i._id, i]));
     for (const item of targetActor.items) {
-      const snapItem = snapItemsById.get(item.id);
+      const snapItem = snapItemsById.get(item._id);
       if (!snapItem) continue;
       await this._reconcileCollection(item, 'ActiveEffect', snapItem.effects ?? []);
     }
@@ -159,8 +159,15 @@ export class SyncEngine {
     actorData.flags.omnipresence ??= {};
     // Reset localModifiedAt to match the pulled syncedAt (no local changes outstanding).
     actorData.flags.omnipresence.localModifiedAt = actorData.flags.omnipresence.syncedAt;
-    await localActor.update(actorData, { omnipresenceInternal: true });
-    await this.reconcileActorEmbedded(localActor, actorData);
+    try {
+      await localActor.update(actorData, { omnipresenceInternal: true });
+      await this.reconcileActorEmbedded(localActor, actorData);
+    } catch (err) {
+      console.error('Omnipresence | pull failed for', localActor.name, err);
+      ui.notifications.warn(
+        game.i18n.format('OMNIPRESENCE.notifications.syncFailed', { name: localActor.name })
+      );
+    }
   }
 
   static async onLogin() {
