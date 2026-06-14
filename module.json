@@ -21,11 +21,21 @@
     }
   ],
   "packs": [
-    {
-      "name": "omnipresence-actors",
-      "label": "Omnipresence Shared Characters",
-      "path": "packs/omnipresence-actors",
-      "type": "Actor"
-    }
-  ]
+    { "name": "omnipresence-dnd5e",       "type": "Actor", "system": "dnd5e",       "path": "packs/omnipresence-dnd5e",       "label": "Omnipresence — D&D 5e" },
+    { "name": "omnipresence-pf2e",        "type": "Actor", "system": "pf2e",        "path": "packs/omnipresence-pf2e",        "label": "Omnipresence — Pathfinder 2e" },
+    { "name": "omnipresence-daggerheart", "type": "Actor", "system": "daggerheart", "path": "packs/omnipresence-daggerheart", "label": "Omnipresence — Daggerheart" },
+    { "name": "omnipresence-draw-steel",  "type": "Actor", "system": "draw-steel",  "path": "packs/omnipresence-draw-steel",  "label": "Omnipresence — Draw Steel" },
+    { "name": "omnipresence-shadowdark",  "type": "Actor", "system": "shadowdark",  "path": "packs/omnipresence-shadowdark",  "label": "Omnipresence — Shadowdark" },
+    { "name": "omnipresence-CoC7",        "type": "Actor", "system": "CoC7",        "path": "packs/omnipresence-CoC7",        "label": "Omnipresence — Call of Cthulhu 7e" }
+  ],
+  "relationships": {
+    "systems": [
+      { "id": "dnd5e",       "type": "system" },
+      { "id": "pf2e",        "type": "system" },
+      { "id": "daggerheart", "type": "system" },
+      { "id": "draw-steel",  "type": "system" },
+      { "id": "shadowdark",  "type": "system" },
+      { "id": "CoC7",        "type": "system" }
+    ]
+  }
 }
