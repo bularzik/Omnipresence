@@ -10,7 +10,6 @@ const DEBOUNCE_MS = 2000;
 
 export class SyncEngine {
   static _timers = new Map();   // actorId → timeout handle
-  static _pending = new Map();  // actorId → actor (for flush on logout)
 
   /** Compendium id for the active world's game system. */
   static get PACK_ID() {
@@ -67,7 +66,6 @@ export class SyncEngine {
         { omnipresenceInternal: true }
       );
 
-      this._pending.delete(actor.id);
     } catch (err) {
       console.error('Omnipresence | push failed for', actor.name, err);
       ui.notifications.warn(
@@ -79,7 +77,6 @@ export class SyncEngine {
   static debouncedPush(actor) {
     const id = actor.id;
     if (this._timers.has(id)) clearTimeout(this._timers.get(id));
-    this._pending.set(id, actor);
     const timer = setTimeout(() => {
       this._timers.delete(id);
       this.push(actor);
@@ -105,16 +102,6 @@ export class SyncEngine {
     if (!SyncRegistry.isEnrolled(actor)) return;
     if (userId === game.user.id) this.trackLocalModification(actor);
     if (game.user.isGM) this.debouncedPush(actor);
-  }
-
-  static async flushPending() {
-    const pending = [...this._pending.values()];
-    this._pending.clear();
-    for (const [, timer] of this._timers) {
-      clearTimeout(timer);
-    }
-    this._timers.clear();
-    await Promise.all(pending.map(actor => this.push(actor)));
   }
 
   /**
