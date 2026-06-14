@@ -65,7 +65,7 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     if (!actor) return;
     if (!game.user.isGM && !actor.isOwner) return;
     const omnipresenceId = actor.getFlag('omnipresence', 'id');
-    const pack = game.packs.get('omnipresence.omnipresence-actors');
+    const pack = game.packs.get(SyncEngine.PACK_ID);
     if (!pack) return;
     const docs = await pack.getDocuments();
     const compActor = docs.find(d => d.getFlag('omnipresence', 'id') === omnipresenceId);
