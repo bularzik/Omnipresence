@@ -18,18 +18,19 @@ Hooks.once('init', () => {
 
 Hooks.once('ready', async () => {
   if (game.user.isGM) {
-    const pack = game.packs.get('omnipresence.omnipresence-actors');
-    if (pack?.locked) await pack.configure({ locked: false });
+    const pack = game.packs.get(SyncEngine.PACK_ID);
+    if (pack && pack.locked) await pack.configure({ locked: false });
   }
   await SyncEngine.onLogin();
 });
 
 Hooks.on('updateActor', (actor, changes, options, userId) => {
   if (options?.omnipresenceInternal) return;
-  if (userId !== game.user.id) return;
   if (!SyncRegistry.isEnrolled(actor)) return;
-  SyncEngine.trackLocalModification(actor);
-  SyncEngine.debouncedPush(actor);
+  // The editing user marks the actor dirty (they can write their own actor).
+  if (userId === game.user.id) SyncEngine.trackLocalModification(actor);
+  // A GM-role client performs the compendium write (only GMs can write packs).
+  if (game.user.isGM) SyncEngine.debouncedPush(actor);
 });
 
 Hooks.on('deleteActor', (actor, options, userId) => {
