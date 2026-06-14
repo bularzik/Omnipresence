@@ -23,5 +23,6 @@
   "OMNIPRESENCE.dashboard.never": "Never",
   "OMNIPRESENCE.notifications.syncFailed": "Omnipresence: sync failed for {name}. Check the console for details.",
   "OMNIPRESENCE.notifications.enrolled": "{name} added to Omnipresence sync.",
-  "OMNIPRESENCE.notifications.unenrolled": "{name} removed from Omnipresence sync."
+  "OMNIPRESENCE.notifications.unenrolled": "{name} removed from Omnipresence sync.",
+  "OMNIPRESENCE.notifications.unsupportedSystem": "Omnipresence: character sync is not available for the \"{system}\" game system."
 }
