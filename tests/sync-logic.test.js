@@ -110,6 +110,20 @@ test('diffEmbedded: empty inputs → empty result', () => {
   assert.deepEqual(diffEmbedded([], []), { toCreate: [], toUpdate: [], toDelete: [] });
 });
 
+test('diffEmbedded: array-valued field equal → no-op', () => {
+  const doc = { _id: 'a', system: { tags: ['fire', 'cold'] } };
+  const out = diffEmbedded([structuredClone(doc)], [structuredClone(doc)]);
+  assert.deepEqual(out, { toCreate: [], toUpdate: [], toDelete: [] });
+});
+
+test('diffEmbedded: array-valued field changed → toUpdate', () => {
+  const out = diffEmbedded(
+    [{ _id: 'a', system: { tags: ['fire'] } }],
+    [{ _id: 'a', system: { tags: ['fire', 'cold'] } }]
+  );
+  assert.deepEqual(out.toUpdate, [{ _id: 'a', system: { tags: ['fire', 'cold'] } }]);
+});
+
 test('resolveOwningActor: item directly on actor', () => {
   const actor = { documentName: 'Actor', parent: null };
   const item = { documentName: 'Item', parent: actor };
