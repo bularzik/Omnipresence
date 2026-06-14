@@ -56,8 +56,9 @@ export class SyncEngine {
       const existing = await this._getCompendiumActor(omnipresenceId);
       if (existing) {
         await existing.update(actorData);
+        await this.reconcileActorEmbedded(existing, actorData);
       } else {
-        await Actor.create(actorData, { pack: this.PACK_ID });
+        await Actor.create(actorData, { pack: this.PACK_ID, keepId: true });
       }
 
       // Update local syncedAt to match (do not touch localModifiedAt).
@@ -159,6 +160,7 @@ export class SyncEngine {
     // Reset localModifiedAt to match the pulled syncedAt (no local changes outstanding).
     actorData.flags.omnipresence.localModifiedAt = actorData.flags.omnipresence.syncedAt;
     await localActor.update(actorData, { omnipresenceInternal: true });
+    await this.reconcileActorEmbedded(localActor, actorData);
   }
 
   static async onLogin() {
@@ -237,7 +239,7 @@ export class SyncEngine {
       actorData.flags.omnipresence.localModifiedAt = actorData.flags.omnipresence.syncedAt;
       actorData.ownership = { default: 0, [matchingUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER };
 
-      const created = await Actor.create(actorData);
+      const created = await Actor.create(actorData, { keepId: true });
       await SyncRegistry.enroll(created);
     }
   }
