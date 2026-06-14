@@ -1,14 +1,19 @@
 import { SyncRegistry } from './sync-registry.js';
+import { decideSyncAction, stripWorldLocalFields } from './sync-logic.js';
 
-const PACK_ID = 'omnipresence.omnipresence-actors';
 const DEBOUNCE_MS = 2000;
 
 export class SyncEngine {
   static _timers = new Map();   // actorId → timeout handle
   static _pending = new Map();  // actorId → actor (for flush on logout)
 
+  /** Compendium id for the active world's game system. */
+  static get PACK_ID() {
+    return `omnipresence.omnipresence-${game.system.id}`;
+  }
+
   static _getPack() {
-    return game.packs.get(PACK_ID);
+    return game.packs.get(this.PACK_ID);
   }
 
   static async _getCompendiumActor(omnipresenceId) {
@@ -19,9 +24,12 @@ export class SyncEngine {
   }
 
   static async push(actor) {
+    // Only GM-role clients can write to a module compendium.
+    if (!game.user.isGM) return;
+
     const pack = this._getPack();
     if (!pack) {
-      console.warn('Omnipresence | compendium pack not found:', PACK_ID);
+      console.warn('Omnipresence | compendium pack not found:', this.PACK_ID);
       return;
     }
 
@@ -29,24 +37,25 @@ export class SyncEngine {
     if (!omnipresenceId) return;
 
     const syncedAt = new Date().toISOString();
-    const actorData = actor.toObject();
 
-    // Strip world-local metadata before writing to compendium
-    delete actorData.flags?.omnipresence?.localModifiedAt;
+    // Strip world-local fields (_id, ownership, folder) before writing to the shared compendium.
+    const actorData = stripWorldLocalFields(actor.toObject());
+
+    // Strip world-local sync metadata and stamp the shared syncedAt.
+    actorData.flags ??= {};
+    actorData.flags.omnipresence ??= {};
+    delete actorData.flags.omnipresence.localModifiedAt;
     actorData.flags.omnipresence.syncedAt = syncedAt;
 
     try {
       const existing = await this._getCompendiumActor(omnipresenceId);
       if (existing) {
-        // Preserve the compendium document's own _id
-        const { _id, ...rest } = actorData;
-        await existing.update(rest);
+        await existing.update(actorData);
       } else {
-        delete actorData._id;
-        await Actor.create(actorData, { pack: PACK_ID });
+        await Actor.create(actorData, { pack: this.PACK_ID });
       }
 
-      // Update local syncedAt to match (do not touch localModifiedAt)
+      // Update local syncedAt to match (do not touch localModifiedAt).
       await actor.update(
         { 'flags.omnipresence.syncedAt': syncedAt },
         { omnipresenceInternal: true }
@@ -82,7 +91,7 @@ export class SyncEngine {
   static async flushPending() {
     const pending = [...this._pending.values()];
     this._pending.clear();
-    for (const [id, timer] of this._timers) {
+    for (const [, timer] of this._timers) {
       clearTimeout(timer);
     }
     this._timers.clear();
@@ -90,58 +99,61 @@ export class SyncEngine {
   }
 
   static async pull(localActor, compActor) {
-    const actorData = compActor.toObject();
-    delete actorData._id;
-    // Reset localModifiedAt to match the pulled syncedAt (no local changes outstanding)
+    // Strip world-local fields so local ownership and folder are preserved.
+    const actorData = stripWorldLocalFields(compActor.toObject());
+    actorData.flags ??= {};
+    actorData.flags.omnipresence ??= {};
+    // Reset localModifiedAt to match the pulled syncedAt (no local changes outstanding).
     actorData.flags.omnipresence.localModifiedAt = actorData.flags.omnipresence.syncedAt;
     await localActor.update(actorData, { omnipresenceInternal: true });
   }
 
   static async onLogin() {
     const pack = this._getPack();
-    if (!pack) return;
+    if (!pack) {
+      if (game.user.isGM) {
+        ui.notifications.info(
+          game.i18n.format('OMNIPRESENCE.notifications.unsupportedSystem', { system: game.system.id })
+        );
+      }
+      return;
+    }
 
     const compActors = await pack.getDocuments();
     const myActors = game.actors.filter(a => a.isOwner && SyncRegistry.isEnrolled(a));
 
-    // 1. Sync each of the current user's enrolled actors
+    // 1. Sync each of the current user's enrolled actors.
     for (const actor of myActors) {
       const omnipresenceId = actor.getFlag('omnipresence', 'id');
       const compActor = compActors.find(d => d.getFlag('omnipresence', 'id') === omnipresenceId);
 
       if (!compActor) {
-        // No compendium entry — push local copy as master
+        // No compendium entry — push local copy as master (GM only; no-op for players).
         await this.push(actor);
         continue;
       }
 
-      const localSyncedAt = actor.getFlag('omnipresence', 'syncedAt');
-      const compSyncedAt = compActor.getFlag('omnipresence', 'syncedAt');
-      const localModifiedAt = actor.getFlag('omnipresence', 'localModifiedAt') ?? localSyncedAt;
+      const action = decideSyncAction({
+        localSyncedAt: actor.getFlag('omnipresence', 'syncedAt'),
+        compSyncedAt: compActor.getFlag('omnipresence', 'syncedAt'),
+        localModifiedAt: actor.getFlag('omnipresence', 'localModifiedAt')
+      });
 
-      const localSyncTime = localSyncedAt ? new Date(localSyncedAt).getTime() : 0;
-      const compSyncTime = compSyncedAt ? new Date(compSyncedAt).getTime() : 0;
-      const localModTime = localModifiedAt ? new Date(localModifiedAt).getTime() : 0;
-
-      const compNewer = compSyncTime > localSyncTime;
-      const localChanged = localModTime > localSyncTime;
-
-      if (compNewer && localChanged) {
-        // Both sides have changes — prompt user
+      if (action === 'conflict') {
         const { ConflictResolver } = await import('./conflict-resolver.js');
         await ConflictResolver.resolve(actor, compActor, {
           onKeepLocal: () => this.push(actor),
           onUseShared: () => this.pull(actor, compActor)
         });
-      } else if (compNewer) {
+      } else if (action === 'pull') {
         await this.pull(actor, compActor);
-      } else if (localSyncTime > compSyncTime) {
+      } else if (action === 'push') {
         await this.push(actor);
       }
-      // else: in sync
+      // 'none': in sync
     }
 
-    // 2. Auto-import: compendium actors not present in this world (GM only)
+    // 2. Auto-import: compendium actors not present in this world (GM only).
     if (!game.user.isGM) return;
     const localOmnipresenceIds = new Set(
       game.actors
@@ -166,8 +178,9 @@ export class SyncEngine {
         continue;
       }
 
-      const actorData = compActor.toObject();
-      delete actorData._id;
+      const actorData = stripWorldLocalFields(compActor.toObject());
+      actorData.flags ??= {};
+      actorData.flags.omnipresence ??= {};
       actorData.flags.omnipresence.localModifiedAt = actorData.flags.omnipresence.syncedAt;
       actorData.ownership = { default: 0, [matchingUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER };
 
