@@ -722,25 +722,63 @@ Expected: `OK` for every file, exit code 0.
 Run: `python3 -m json.tool module.json > /dev/null && python3 -m json.tool lang/en.json > /dev/null && echo VALID`
 Expected: `VALID`.
 
-- [ ] **Step 4: Manual verification checklist** (requires a running Foundry v13 instance — record results, do not automate)
+- [ ] **Step 4: Install the module into the local Foundry test instance**
 
-  - [ ] Module installs without the "pack must declare system" error.
-  - [ ] Module is enableable in a world for each of the six systems; in an unsupported system either it cannot be enabled (manifest enforcement) or, if enabled, a one-time "sync not available" notice appears and no errors occur.
-  - [ ] Right-click an actor in the Actors Directory → "Add to Omnipresence Sync" appears and enrolls it; the actor appears in the correct per-system compendium after a GM is present.
-  - [ ] Edit an enrolled actor as GM → change pushes to the compendium within ~2s.
-  - [ ] Edit an enrolled actor as a player while a GM is connected to the same world → change pushes via the GM client.
-  - [ ] Edit an enrolled actor as a player with no GM present → no error; the change pushes on the next GM login.
-  - [ ] In a second world of the same system, a GM login pulls a newer shared actor — confirm the actor's **ownership and folder are unchanged** (not clobbered with foreign IDs).
-  - [ ] Make conflicting edits in two worlds → the conflict dialog appears; dismissing it (Esc) makes no change.
-  - [ ] Confirm a dnd5e world never lists pf2e shared actors and vice versa.
+A real, licensed Foundry v13.351 (Node variant) is available for verification:
+- Install: `/Users/danbularzik/Desktop/Foundry/FoundryVTT-Node-13.351` (launch with `node main.js`)
+- Data dir: `/Users/danbularzik/Desktop/Foundry/Foundry-Data` (already set as `dataPath` in `Config/options.json`; serves on port 30000)
+- Installed system: **`dnd5e` only**. Test worlds: **`world-a`** and **`world-b`** (both dnd5e 13.351) for cross-world sync.
 
-- [ ] **Step 5: Report results** — summarize automated checks (tests, syntax, JSON) and the manual checklist outcomes. Per the repository's conservative git profile, do **not** push without explicit user approval.
+Install by copying the repo into the data dir's modules folder (copy, not symlink, to keep the repo working tree clean of Foundry's LevelDB writes). Re-run this command after any code fix:
+
+```bash
+DEST=/Users/danbularzik/Desktop/Foundry/Foundry-Data/Data/modules/omnipresence
+rm -rf "$DEST"
+rsync -a --exclude '.git' --exclude 'node_modules' --exclude 'docs' --exclude '.beads' \
+  --exclude '.superpowers' --exclude '.remember' --exclude '.agents' --exclude '.codex' \
+  --exclude '.claude' --exclude 'tests' --exclude '.DS_Store' \
+  /Users/danbularzik/Desktop/Claude/Projects/Omnipresence/ "$DEST/"
+ls "$DEST/module.json" && echo INSTALLED
+```
+Expected: `INSTALLED`.
+
+- [ ] **Step 5: Launch Foundry (background) and confirm it serves**
+
+Run (background process):
+```bash
+cd /Users/danbularzik/Desktop/Foundry/FoundryVTT-Node-13.351 && node main.js
+```
+Then confirm it is up: `curl -sf http://localhost:30000/ -o /dev/null && echo UP`
+Expected: `UP`. Drive the UI with the Playwright MCP at `http://localhost:30000`.
+
+- [ ] **Step 6: Runnable verification on dnd5e** (drive via Playwright; record pass/fail per item)
+
+  - [ ] Launch `world-a` as Gamemaster; enable the Omnipresence module if not already; confirm **no "pack must declare system" error** and no console errors at load.
+  - [ ] Confirm the `omnipresence.omnipresence-dnd5e` compendium is present in the Compendium Packs sidebar.
+  - [ ] Right-click an actor in the Actors Directory → "Add to Omnipresence Sync" appears; click it → enrolled notification; the actor appears in the dnd5e compendium.
+  - [ ] Edit that actor (e.g. change a value/HP) as GM → within ~2s the compendium copy updates (re-open it to confirm).
+  - [ ] In `world-b` (dnd5e), launch as GM → the enrolled actor **auto-imports** (matched by owner name); confirm its **ownership and folder are correct/preserved**, not foreign IDs from world-a.
+  - [ ] Edit the actor in `world-b`, then return to `world-a` and relaunch → the newer shared version **pulls** in; confirm ownership/folder again unchanged.
+  - [ ] Force conflicting edits (edit in both worlds without syncing between) → on next login the **conflict dialog** appears; pressing Esc makes no change.
+  - [ ] Inspect the compendium actor's source data → confirm `_id`, `ownership`, and `folder` are **absent** from what was written (the stripping works).
+
+- [ ] **Step 7: Scope note — checks that need additional systems**
+
+These spec items cannot be fully verified on this instance because only `dnd5e` is installed. Record as **not-verified-here** (not as failures) unless the corresponding systems are installed first:
+  - Cross-system isolation (a dnd5e world never lists pf2e actors, etc.).
+  - Behavior in an unsupported system (graceful-disable notice / module not enableable).
+
+If verification of these is required, install one extra system (e.g. `pf2e`) plus a world using it, then repeat the relevant checks.
+
+- [ ] **Step 8: Shut down and report**
+
+Stop the Foundry background process. Summarize: automated checks (unit tests, syntax, JSON), the dnd5e runtime results from Step 6, and the not-verified-here items from Step 7. Per the repository's conservative git profile, do **not** push without explicit user approval.
 
 ---
 
 ## Notes for the implementer
 
-- **Browser globals** (`game`, `Hooks`, `Actor`, `CONST`, `ui`, `foundry`) exist only in the Foundry runtime; `node --check` validates syntax without them, but the integration behavior (Tasks 5–8) can only be confirmed via the Task 9 manual checklist.
+- **Browser globals** (`game`, `Hooks`, `Actor`, `CONST`, `ui`, `foundry`) exist only in the Foundry runtime; `node --check` validates syntax without them. Integration behavior (Tasks 5–8) is verified for real against the local Foundry v13.351 instance in Task 9 (dnd5e / `world-a` ↔ `world-b`).
 - **`structuredClone`** is available both in Node v26 and Foundry's browser environment.
 - **Do not** add `relationships.requires` for the systems — that would force all six systems to be installed. `relationships.systems` is "compatible with any of these," which is what we want.
 - **Known limitations** (by design, not bugs): no live cross-world propagation; player edits made with no GM connected wait for the next GM login; cross-world owner matching is by user display name.
