@@ -4,13 +4,18 @@ import { SyncEngine } from './sync-engine.js';
 /**
  * Resolve the actor document id from a context-menu target that may be a
  * jQuery object (v12 / early v13) or a native HTMLElement (v13 ApplicationV2).
+ *
+ * The attribute name differs by version: v13's DocumentDirectory renders
+ * entries with `data-entry-id`, while older directories used `data-document-id`.
+ * Try both so enroll/unenroll works across versions.
  */
 function getDocumentId(li) {
   const el = li instanceof HTMLElement ? li : li?.[0];
+  if (el?.dataset?.entryId) return el.dataset.entryId;
   if (el?.dataset?.documentId) return el.dataset.documentId;
   // Not dead code: v12 set the id via jQuery's $.data() cache rather than a
-  // data-* attribute, so .dataset is empty but .data('documentId') resolves.
-  if (typeof li?.data === 'function') return li.data('documentId');
+  // data-* attribute, so .dataset is empty but .data(...) resolves.
+  if (typeof li?.data === 'function') return li.data('entryId') ?? li.data('documentId');
   return null;
 }
 
