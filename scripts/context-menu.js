@@ -8,6 +8,8 @@ import { SyncEngine } from './sync-engine.js';
 function getDocumentId(li) {
   const el = li instanceof HTMLElement ? li : li?.[0];
   if (el?.dataset?.documentId) return el.dataset.documentId;
+  // Not dead code: v12 set the id via jQuery's $.data() cache rather than a
+  // data-* attribute, so .dataset is empty but .data('documentId') resolves.
   if (typeof li?.data === 'function') return li.data('documentId');
   return null;
 }

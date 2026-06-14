@@ -28,6 +28,8 @@ Hooks.on('updateActor', (actor, changes, options, userId) => {
   if (options?.omnipresenceInternal) return;
   if (!SyncRegistry.isEnrolled(actor)) return;
   // The editing user marks the actor dirty (they can write their own actor).
+  // Fire-and-forget: not awaited. The flag write completes well within the
+  // 2s push debounce, so push() always sees the dirty marker before it runs.
   if (userId === game.user.id) SyncEngine.trackLocalModification(actor);
   // A GM-role client performs the compendium write (only GMs can write packs).
   if (game.user.isGM) SyncEngine.debouncedPush(actor);
