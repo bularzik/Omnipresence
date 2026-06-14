@@ -33,8 +33,8 @@ To stop syncing, right-click and choose **Remove from Omnipresence Sync**. The a
 ### Automatic sync
 
 - **On login:** Each of your enrolled characters is compared against the shared compendium. If the shared version is newer, it is pulled silently. If both sides have changed, you are prompted to choose which version to keep.
-- **On edit:** Any change to an enrolled actor is pushed to the compendium within 2 seconds.
-- **On logout:** Any pending edits are flushed before the page unloads (best-effort).
+- **On edit:** Any change to an enrolled actor — including inventory, spells, features, and active effects — is pushed to the compendium within 2 seconds.
+- **On logout:** Edits made in the last couple of seconds before you leave are not pushed immediately, but the change is remembered and synced automatically the next time you log in.
 
 ### New worlds
 

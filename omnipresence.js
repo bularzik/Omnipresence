@@ -52,6 +52,7 @@ Hooks.on('getActorDirectoryEntryContext', (html, entryOptions) => {
 const onEmbeddedCreateDelete = (doc, options, userId) =>
   SyncEngine.handleEmbeddedChange(doc, options, userId);
 const onEmbeddedUpdate = (doc, changes, options, userId) =>
+  // changes unused — the whole actor is pushed, not a delta.
   SyncEngine.handleEmbeddedChange(doc, options, userId);
 
 for (const hook of ['createItem', 'deleteItem', 'createActiveEffect', 'deleteActiveEffect']) {
