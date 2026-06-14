@@ -4,3 +4,12 @@
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# OS / editor cruft
+.DS_Store
+
+# Playwright MCP scratch output
+.playwright-mcp/
+
+# Superpowers brainstorm scratch state
+.superpowers/
