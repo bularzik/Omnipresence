@@ -2,7 +2,7 @@
   "id": "omnipresence",
   "title": "Omnipresence",
   "description": "Synchronize player characters across multiple worlds on the same Foundry server.",
-  "version": "1.0.0",
+  "version": "0.0.2",
   "authors": [{ "name": "Dan Bularzik" }],
   "compatibility": {
     "minimum": "13",
