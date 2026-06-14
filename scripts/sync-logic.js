@@ -64,6 +64,21 @@ export function diffEmbedded(localDocs, snapshotDocs) {
   return { toCreate, toUpdate, toDelete };
 }
 
+/**
+ * Walk an embedded document's parent chain to the owning Actor.
+ * Uses `documentName` (a data property) so it stays Foundry-independent and
+ * unit-testable. Returns the Actor document, or null if there is no Actor
+ * ancestor. The passed document itself is never considered (start at parent).
+ */
+export function resolveOwningActor(doc) {
+  let node = doc?.parent ?? null;
+  while (node) {
+    if (node.documentName === 'Actor') return node;
+    node = node.parent ?? null;
+  }
+  return null;
+}
+
 const WORLD_LOCAL_KEYS = ['_id', 'ownership', 'folder'];
 
 /**

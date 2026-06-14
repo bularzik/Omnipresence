@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSyncAction, stripWorldLocalFields, diffEmbedded } from '../scripts/sync-logic.js';
+import { decideSyncAction, stripWorldLocalFields, diffEmbedded, resolveOwningActor } from '../scripts/sync-logic.js';
 
 const T0 = '2026-06-14T10:00:00.000Z';
 const T1 = '2026-06-14T11:00:00.000Z';
@@ -108,4 +108,32 @@ test('diffEmbedded: mixed create + update + delete', () => {
 
 test('diffEmbedded: empty inputs → empty result', () => {
   assert.deepEqual(diffEmbedded([], []), { toCreate: [], toUpdate: [], toDelete: [] });
+});
+
+test('resolveOwningActor: item directly on actor', () => {
+  const actor = { documentName: 'Actor', parent: null };
+  const item = { documentName: 'Item', parent: actor };
+  assert.equal(resolveOwningActor(item), actor);
+});
+
+test('resolveOwningActor: effect on actor', () => {
+  const actor = { documentName: 'Actor', parent: null };
+  const effect = { documentName: 'ActiveEffect', parent: actor };
+  assert.equal(resolveOwningActor(effect), actor);
+});
+
+test('resolveOwningActor: effect nested on item nested on actor', () => {
+  const actor = { documentName: 'Actor', parent: null };
+  const item = { documentName: 'Item', parent: actor };
+  const effect = { documentName: 'ActiveEffect', parent: item };
+  assert.equal(resolveOwningActor(effect), actor);
+});
+
+test('resolveOwningActor: no actor ancestor → null', () => {
+  const item = { documentName: 'Item', parent: { documentName: 'Item', parent: null } };
+  assert.equal(resolveOwningActor(item), null);
+});
+
+test('resolveOwningActor: doc with no parent → null', () => {
+  assert.equal(resolveOwningActor({ documentName: 'Item', parent: null }), null);
 });
