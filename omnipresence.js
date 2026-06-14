@@ -50,3 +50,19 @@ window.addEventListener('beforeunload', () => {
 Hooks.on('getActorDirectoryEntryContext', (html, entryOptions) => {
   registerContextMenu(entryOptions);
 });
+
+// Embedded-document changes (inventory, spells, features, effects, and effects
+// nested on items) do not fire updateActor — route them to the owning actor.
+// create/delete hooks fire (doc, options, userId); update fires
+// (doc, changes, options, userId), so userId arrives in different positions.
+const onEmbeddedCreateDelete = (doc, options, userId) =>
+  SyncEngine.handleEmbeddedChange(doc, options, userId);
+const onEmbeddedUpdate = (doc, changes, options, userId) =>
+  SyncEngine.handleEmbeddedChange(doc, options, userId);
+
+for (const hook of ['createItem', 'deleteItem', 'createActiveEffect', 'deleteActiveEffect']) {
+  Hooks.on(hook, onEmbeddedCreateDelete);
+}
+for (const hook of ['updateItem', 'updateActiveEffect']) {
+  Hooks.on(hook, onEmbeddedUpdate);
+}

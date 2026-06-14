@@ -94,6 +94,19 @@ export class SyncEngine {
     );
   }
 
+  /**
+   * Route an embedded-document change to the owning enrolled actor: mark dirty
+   * (editing user) and debounce a push (GM). Mirrors the updateActor handler.
+   */
+  static handleEmbeddedChange(doc, options, userId) {
+    if (options?.omnipresenceInternal) return;
+    const actor = resolveOwningActor(doc);
+    if (!actor) return;
+    if (!SyncRegistry.isEnrolled(actor)) return;
+    if (userId === game.user.id) this.trackLocalModification(actor);
+    if (game.user.isGM) this.debouncedPush(actor);
+  }
+
   static async flushPending() {
     const pending = [...this._pending.values()];
     this._pending.clear();
