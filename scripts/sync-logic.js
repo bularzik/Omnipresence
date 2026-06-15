@@ -21,6 +21,23 @@ export function decideSyncAction({ localSyncedAt, compSyncedAt, localModifiedAt 
   return 'none';
 }
 
+/**
+ * Decide whether an enrolled actor is in a sync conflict, for dashboard display.
+ * When the shared compendium is loaded (`compAvailable`), uses the authoritative
+ * three-timestamp decision. When it could not be loaded, falls back to the
+ * local-only heuristic (local edited since last sync).
+ * @returns {boolean}
+ */
+export function deriveConflictState({ localSyncedAt, compSyncedAt, localModifiedAt, compAvailable }) {
+  if (compAvailable) {
+    return decideSyncAction({ localSyncedAt, compSyncedAt, localModifiedAt }) === 'conflict';
+  }
+  const t = (iso) => (iso ? new Date(iso).getTime() : 0);
+  const localSync = t(localSyncedAt);
+  const localMod = localModifiedAt ? t(localModifiedAt) : localSync;
+  return localMod > localSync;
+}
+
 // Foundry-independent deep equality for plain data objects (no node: imports —
 // this file also runs in the browser).
 function deepEqual(a, b) {
