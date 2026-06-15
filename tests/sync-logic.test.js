@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSyncAction, stripWorldLocalFields, diffEmbedded, resolveOwningActor } from '../scripts/sync-logic.js';
+import { decideSyncAction, stripWorldLocalFields, diffEmbedded, resolveOwningActor, deriveConflictState } from '../scripts/sync-logic.js';
 
 const T0 = '2026-06-14T10:00:00.000Z';
 const T1 = '2026-06-14T11:00:00.000Z';
@@ -150,4 +150,69 @@ test('resolveOwningActor: no actor ancestor → null', () => {
 
 test('resolveOwningActor: doc with no parent → null', () => {
   assert.equal(resolveOwningActor({ documentName: 'Item', parent: null }), null);
+});
+
+test('deriveConflictState: comp available, both sides changed → true', () => {
+  assert.equal(
+    deriveConflictState({ localSyncedAt: T0, compSyncedAt: T2, localModifiedAt: T1, compAvailable: true }),
+    true
+  );
+});
+
+test('deriveConflictState: comp available, only local changed → false', () => {
+  assert.equal(
+    deriveConflictState({ localSyncedAt: T0, compSyncedAt: T0, localModifiedAt: T1, compAvailable: true }),
+    false
+  );
+});
+
+test('deriveConflictState: comp available, only comp newer → false', () => {
+  assert.equal(
+    deriveConflictState({ localSyncedAt: T0, compSyncedAt: T2, localModifiedAt: T0, compAvailable: true }),
+    false
+  );
+});
+
+test('deriveConflictState: comp available, nothing changed → false', () => {
+  assert.equal(
+    deriveConflictState({ localSyncedAt: T0, compSyncedAt: T0, localModifiedAt: T0, compAvailable: true }),
+    false
+  );
+});
+
+test('deriveConflictState: comp unavailable, local edited since sync → true (fallback)', () => {
+  assert.equal(
+    deriveConflictState({ localSyncedAt: T0, compSyncedAt: null, localModifiedAt: T1, compAvailable: false }),
+    true
+  );
+});
+
+test('deriveConflictState: comp unavailable, no local change → false (fallback)', () => {
+  assert.equal(
+    deriveConflictState({ localSyncedAt: T0, compSyncedAt: null, localModifiedAt: T0, compAvailable: false }),
+    false
+  );
+});
+
+test('deriveConflictState: comp unavailable, missing localModifiedAt falls back to syncedAt → false', () => {
+  assert.equal(
+    deriveConflictState({ localSyncedAt: T0, compSyncedAt: null, localModifiedAt: undefined, compAvailable: false }),
+    false
+  );
+});
+
+test('deriveConflictState: comp available, never synced locally (null localSyncedAt) + local edit → conflict iff comp also newer', () => {
+  // localSyncedAt null → baseline epoch 0; comp has a real syncedAt (newer than 0)
+  // and local was modified → both sides newer than baseline → conflict → true.
+  assert.equal(
+    deriveConflictState({ localSyncedAt: null, compSyncedAt: T1, localModifiedAt: T2, compAvailable: true }),
+    true
+  );
+});
+
+test('deriveConflictState: comp unavailable, never synced (null localSyncedAt), no local edit → false', () => {
+  assert.equal(
+    deriveConflictState({ localSyncedAt: null, compSyncedAt: null, localModifiedAt: undefined, compAvailable: false }),
+    false
+  );
 });

@@ -19,7 +19,15 @@
           {{/if}}
         </td>
         <td>{{this.ownerName}}</td>
-        <td>{{this.syncedAtFormatted}}</td>
+        <td>
+          {{this.syncedAtFormatted}}
+          {{#if this.hasConflict}}
+          <div style="font-size:11px;color:var(--color-text-dark-secondary);margin-top:2px">
+            <div>{{localize "OMNIPRESENCE.dashboard.yourLastEdit"}}: {{this.localModifiedAtFormatted}}</div>
+            <div>{{localize "OMNIPRESENCE.dashboard.sharedUpdated"}}: {{this.compSyncedAtFormatted}}</div>
+          </div>
+          {{/if}}
+        </td>
         <td>
           <a data-action="forcePush" data-actor-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.forcePush"}}"><i class="fas fa-upload"></i></a>
           <a data-action="forcePull" data-actor-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.forcePull"}}"><i class="fas fa-download"></i></a>
@@ -31,11 +39,13 @@
       {{/each}}
     </tbody>
   </table>
+  {{#unless conflictsOnly}}
   <div class="dashboard-footer">
     <button type="button" data-action="forceSyncAll">
       <i class="fas fa-sync"></i> {{localize "OMNIPRESENCE.dashboard.forceSyncAll"}}
     </button>
   </div>
+  {{/unless}}
   {{else}}
   <table class="omnipresence-table">
     <thead>
@@ -54,8 +64,17 @@
           <span class="conflict-badge">{{localize "OMNIPRESENCE.dashboard.conflict"}}</span>
           {{/if}}
         </td>
-        <td>{{this.syncedAtFormatted}}</td>
         <td>
+          {{this.syncedAtFormatted}}
+          {{#if this.hasConflict}}
+          <div style="font-size:11px;color:var(--color-text-dark-secondary);margin-top:2px">
+            <div>{{localize "OMNIPRESENCE.dashboard.yourLastEdit"}}: {{this.localModifiedAtFormatted}}</div>
+            <div>{{localize "OMNIPRESENCE.dashboard.sharedUpdated"}}: {{this.compSyncedAtFormatted}}</div>
+          </div>
+          {{/if}}
+        </td>
+        <td>
+          <a data-action="forcePull" data-actor-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.forcePull"}}"><i class="fas fa-download"></i></a>
           <a data-action="removeSync" data-actor-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.remove"}}" style="color:#c0392b"><i class="fas fa-unlink"></i></a>
         </td>
       </tr>
