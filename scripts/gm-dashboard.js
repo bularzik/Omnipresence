@@ -105,6 +105,19 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     return { isGM, actors, conflictsOnly: !!this.conflictActorIds };
   }
 
+  /**
+   * In conflicts-only mode, close once all conflicts are resolved. Resolving a
+   * row re-renders; resolved rows are filtered out of `context.actors`, so an
+   * empty table means done. onLogin only opens this view when at least one
+   * conflict exists, so the initial render is never empty.
+   */
+  _onRender(context, options) {
+    super._onRender(context, options);
+    if (this.conflictActorIds && context.actors.length === 0) {
+      this.close();
+    }
+  }
+
   static async _onForcePush(event, target) {
     const actorId = target.closest('[data-actor-id]').dataset.actorId;
     const actor = game.actors.get(actorId);
