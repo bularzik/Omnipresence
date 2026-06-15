@@ -185,6 +185,7 @@ export class SyncEngine {
     const myActors = game.actors.filter(a => a.isOwner && SyncRegistry.isEnrolled(a));
 
     // 1. Sync each of the current user's enrolled actors.
+    const conflicts = [];
     for (const actor of myActors) {
       const omnipresenceId = actor.getFlag('omnipresence', 'id');
       const compActor = compActors.find(d => d.getFlag('omnipresence', 'id') === omnipresenceId);
@@ -202,17 +203,20 @@ export class SyncEngine {
       });
 
       if (action === 'conflict') {
-        const { ConflictResolver } = await import('./conflict-resolver.js');
-        await ConflictResolver.resolve(actor, compActor, {
-          onKeepLocal: () => this.push(actor),
-          onUseShared: () => this.pull(actor, compActor)
-        });
+        conflicts.push(actor.id);
       } else if (action === 'pull') {
         await this.pull(actor, compActor);
       } else if (action === 'push') {
         await this.push(actor);
       }
       // 'none': in sync
+    }
+
+    // Surface any conflicts in one consolidated view instead of N modals.
+    // Dynamic import avoids a static cycle (gm-dashboard imports SyncEngine).
+    if (conflicts.length > 0) {
+      const { OmnipresenceDashboard } = await import('./gm-dashboard.js');
+      new OmnipresenceDashboard({ conflictActorIds: conflicts }).render(true);
     }
 
     // 2. Auto-import: compendium actors not present in this world (GM only).
