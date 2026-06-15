@@ -32,7 +32,7 @@ To stop syncing, right-click and choose **Remove from Omnipresence Sync**. The a
 
 ### Automatic sync
 
-- **On login:** Each of your enrolled characters is compared against the shared compendium. If the shared version is newer, it is pulled silently. If both sides have changed, you are prompted to choose which version to keep.
+- **On login:** Each of your enrolled characters is compared against the shared compendium. If the shared version is newer, it is pulled silently. If any characters have changed on both sides, they are surfaced together in a single dialog (see [Conflict Resolution](#conflict-resolution)) — not one prompt per character.
 - **On edit:** Any change to an enrolled actor — including inventory, spells, features, and active effects — is pushed to the compendium within 2 seconds.
 - **On logout:** Edits made in the last couple of seconds before you leave are not pushed immediately, but the change is remembered and synced automatically the next time you log in.
 
@@ -50,13 +50,20 @@ Open **Configure Settings → Module Settings → Manage Sync** to view and mana
 - Remove from sync
 - Force sync all enrolled actors at once
 
-**Players** see only their own actors and can remove them from sync.
+**Players** see only their own actors, with controls to force pull (overwrite the local copy with the shared version) or remove from sync. Players cannot force push — only a GM can write to the shared compendium.
 
 ## Conflict Resolution
 
 A conflict occurs when the same actor has been modified both locally and in the shared compendium since the last sync. This can happen when a character is edited in two different worlds between logins.
 
-When a conflict is detected on login, a dialog appears showing the timestamp of each version. Choose **Keep Local Version** or **Use Shared Version** — the chosen version becomes the new master. Dismissing the dialog without choosing leaves both versions unchanged.
+When conflicts are detected on login, all of your conflicting characters are shown together in a single **Resolve Sync Conflicts** dialog — one row per character, each showing when you last edited it locally and when the shared copy was last updated. Resolve each from its row:
+
+- **Use shared** (force pull) overwrites your local copy with the shared version.
+- **Remove from sync** stops tracking that character.
+
+The dialog closes automatically once every conflict is resolved. Characters you leave unresolved are untouched and surface again on your next login.
+
+Because only a GM can write to the shared compendium, players resolve conflicts by pulling the shared version. A GM additionally has a **force push** option to make a local copy the new master.
 
 ## Notes
 
