@@ -29,10 +29,28 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     }
   };
 
+  constructor(options = {}) {
+    super(options);
+    // When opened from the login flow this holds the ids of conflicting actors;
+    // null when opened normally from settings (full dashboard).
+    this.conflictActorIds = options.conflictActorIds ?? null;
+  }
+
+  get title() {
+    if (this.conflictActorIds) {
+      return game.i18n.localize('OMNIPRESENCE.dashboard.conflictsTitle');
+    }
+    return game.i18n.localize(this.options.window.title);
+  }
+
   async _prepareContext(options) {
     const isGM = game.user.isGM;
     const allActors = game.actors.filter(a => SyncRegistry.isEnrolled(a));
-    const visibleActors = isGM ? allActors : allActors.filter(a => a.isOwner);
+    let visibleActors = isGM ? allActors : allActors.filter(a => a.isOwner);
+    if (this.conflictActorIds) {
+      const ids = new Set(this.conflictActorIds);
+      visibleActors = visibleActors.filter(a => ids.has(a.id));
+    }
 
     const actors = visibleActors.map(a => {
       const syncedAt = a.getFlag('omnipresence', 'syncedAt');
@@ -47,7 +65,7 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
       };
     });
 
-    return { isGM, actors };
+    return { isGM, actors, conflictsOnly: !!this.conflictActorIds };
   }
 
   static async _onForcePush(event, target) {
