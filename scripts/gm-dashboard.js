@@ -1,5 +1,6 @@
 import { SyncRegistry } from './sync-registry.js';
 import { SyncEngine } from './sync-engine.js';
+import { deriveConflictState } from './sync-logic.js';
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
@@ -52,18 +53,54 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
       visibleActors = visibleActors.filter(a => ids.has(a.id));
     }
 
-    const actors = visibleActors.map(a => {
+    // Load shared syncedAt per actor so the conflict badge is authoritative.
+    // compById maps omnipresence-id → shared syncedAt; null if the pack is
+    // unavailable, in which case deriveConflictState falls back to local-only.
+    let compById = null;
+    try {
+      const pack = game.packs.get(SyncEngine.PACK_ID);
+      if (pack) {
+        const docs = await pack.getDocuments();
+        compById = new Map(
+          docs.map(d => [d.getFlag('omnipresence', 'id'), d.getFlag('omnipresence', 'syncedAt') ?? null])
+        );
+      }
+    } catch (err) {
+      console.warn('Omnipresence | dashboard pack load failed, using local-only badge', err);
+      compById = null;
+    }
+    const compAvailable = compById !== null;
+
+    const never = game.i18n.localize('OMNIPRESENCE.dashboard.never');
+    const fmt = (iso) => (iso ? new Date(iso).toLocaleString() : never);
+
+    let actors = visibleActors.map(a => {
       const syncedAt = a.getFlag('omnipresence', 'syncedAt');
       const localModifiedAt = a.getFlag('omnipresence', 'localModifiedAt') ?? syncedAt;
-      const hasConflict = !!syncedAt && !!localModifiedAt && localModifiedAt > syncedAt;
+      const opId = a.getFlag('omnipresence', 'id');
+      const compSyncedAt = compById ? (compById.get(opId) ?? null) : null;
+      const hasConflict = deriveConflictState({
+        localSyncedAt: syncedAt,
+        compSyncedAt,
+        localModifiedAt,
+        compAvailable
+      });
       return {
         id: a.id,
         name: a.name,
         ownerName: a.getFlag('omnipresence', 'ownerName') ?? '—',
-        syncedAtFormatted: syncedAt ? new Date(syncedAt).toLocaleString() : game.i18n.localize('OMNIPRESENCE.dashboard.never'),
+        syncedAtFormatted: syncedAt ? new Date(syncedAt).toLocaleString() : never,
+        localModifiedAtFormatted: fmt(localModifiedAt),
+        compSyncedAtFormatted: fmt(compSyncedAt),
         hasConflict
       };
     });
+
+    // In conflicts-only mode, drop rows that are no longer in conflict so that
+    // resolving the last one empties the table (a later task auto-closes the window).
+    if (this.conflictActorIds) {
+      actors = actors.filter(r => r.hasConflict);
+    }
 
     return { isGM, actors, conflictsOnly: !!this.conflictActorIds };
   }
