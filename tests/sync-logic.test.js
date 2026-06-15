@@ -200,3 +200,19 @@ test('deriveConflictState: comp unavailable, missing localModifiedAt falls back 
     false
   );
 });
+
+test('deriveConflictState: comp available, never synced locally (null localSyncedAt) + local edit → conflict iff comp also newer', () => {
+  // localSyncedAt null → baseline epoch 0; comp has a real syncedAt (newer than 0)
+  // and local was modified → both sides newer than baseline → conflict → true.
+  assert.equal(
+    deriveConflictState({ localSyncedAt: null, compSyncedAt: T1, localModifiedAt: T2, compAvailable: true }),
+    true
+  );
+});
+
+test('deriveConflictState: comp unavailable, never synced (null localSyncedAt), no local edit → false', () => {
+  assert.equal(
+    deriveConflictState({ localSyncedAt: null, compSyncedAt: null, localModifiedAt: undefined, compAvailable: false }),
+    false
+  );
+});

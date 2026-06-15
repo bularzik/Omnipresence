@@ -1,18 +1,29 @@
 // Pure, Foundry-independent sync helpers.
 // No access to game/Hooks/CONST/ui — safe to unit-test under plain Node.
 
+// Shared time conversion: ISO string → epoch ms (null/undefined → 0).
+function toEpoch(iso) {
+  return iso ? new Date(iso).getTime() : 0;
+}
+
+// Whether the actor was edited locally since its last sync. localModifiedAt
+// missing → treated as the last-sync time (i.e. no local change).
+function localChangedSince(localSyncedAt, localModifiedAt) {
+  const localSync = toEpoch(localSyncedAt);
+  const localMod = localModifiedAt ? toEpoch(localModifiedAt) : localSync;
+  return localMod > localSync;
+}
+
 /**
  * Decide what sync action an enrolled actor needs, from timestamps alone.
  * Inputs are ISO date strings or null/undefined.
  * @returns {'push'|'pull'|'conflict'|'none'}
  */
 export function decideSyncAction({ localSyncedAt, compSyncedAt, localModifiedAt }) {
-  const t = (iso) => (iso ? new Date(iso).getTime() : 0);
-  const localSync = t(localSyncedAt);
-  const compSync = t(compSyncedAt);
-  const localMod = localModifiedAt ? t(localModifiedAt) : localSync;
+  const localSync = toEpoch(localSyncedAt);
+  const compSync = toEpoch(compSyncedAt);
 
-  const localChanged = localMod > localSync;
+  const localChanged = localChangedSince(localSyncedAt, localModifiedAt);
   const compNewer = compSync > localSync;
 
   if (compNewer && localChanged) return 'conflict';
@@ -32,10 +43,7 @@ export function deriveConflictState({ localSyncedAt, compSyncedAt, localModified
   if (compAvailable) {
     return decideSyncAction({ localSyncedAt, compSyncedAt, localModifiedAt }) === 'conflict';
   }
-  const t = (iso) => (iso ? new Date(iso).getTime() : 0);
-  const localSync = t(localSyncedAt);
-  const localMod = localModifiedAt ? t(localModifiedAt) : localSync;
-  return localMod > localSync;
+  return localChangedSince(localSyncedAt, localModifiedAt);
 }
 
 // Foundry-independent deep equality for plain data objects (no node: imports —
