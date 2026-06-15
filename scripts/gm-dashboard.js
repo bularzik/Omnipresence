@@ -16,11 +16,14 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
       width: 620,
       height: 'auto'
     },
+    // ApplicationV2 expects each action to map to a handler function. Reference
+    // the static handlers (called with the instance as `this`); `true` here was
+    // a no-op that made #onClickAction throw "handler?.call is not a function".
     actions: {
-      forcePush: true,
-      forcePull: true,
-      removeSync: true,
-      forceSyncAll: true
+      forcePush: this._onForcePush,
+      forcePull: this._onForcePull,
+      removeSync: this._onRemoveSync,
+      forceSyncAll: this._onForceSyncAll
     }
   };
 
