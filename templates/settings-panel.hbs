@@ -72,6 +72,8 @@
           {{/if}}
         </td>
         <td>
+          <a data-action="forcePush" data-actor-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.forcePush"}}"><i class="fas fa-upload"></i></a>
+          <a data-action="forcePull" data-actor-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.forcePull"}}"><i class="fas fa-download"></i></a>
           <a data-action="removeSync" data-actor-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.remove"}}" style="color:#c0392b"><i class="fas fa-unlink"></i></a>
         </td>
       </tr>
