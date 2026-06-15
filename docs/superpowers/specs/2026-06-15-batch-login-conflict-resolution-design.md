@@ -1,7 +1,18 @@
 # Batch login conflict resolution — design
 
 **Date:** 2026-06-15
-**Status:** Approved, ready for implementation plan
+**Status:** Implemented
+
+## Implementation note (correction)
+
+The "Player row actions" section below proposed giving player rows both
+force-push and force-pull. During final review this was corrected: module
+compendiums are **GM-write-only** (`SyncEngine.push()` is a no-op for non-GM
+clients), so a player's "keep mine" force-push cannot write the shared copy and
+would leave the conflicts-only window unable to auto-close. As shipped, **player
+rows get force-pull ("use shared") + remove only**; GM rows keep both. The GM
+"Force Sync All" footer is also hidden in conflicts-only mode (it pushes every
+enrolled actor, not just the conflicts).
 
 ## Problem
 
