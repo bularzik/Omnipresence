@@ -41,7 +41,12 @@ Hooks.on('deleteActor', (actor, options, userId) => {
   SyncRegistry.unenroll(actor);
 });
 
-Hooks.on('getActorDirectoryEntryContext', (html, entryOptions) => {
+// v13 renamed directory context-menu hooks to get{DocumentName}ContextOptions;
+// the v12 name (getActorDirectoryEntryContext) no longer fires. The callback
+// receives (application, entryOptions) — the entry element passed to each
+// option's condition/callback is a native HTMLElement, which getDocumentId
+// already handles.
+Hooks.on('getActorContextOptions', (directory, entryOptions) => {
   registerContextMenu(entryOptions);
 });
 
