@@ -41,12 +41,23 @@ Hooks.on('deleteActor', (actor, options, userId) => {
   SyncRegistry.unenroll(actor);
 });
 
-// Best-effort flush — browser does not await async handlers on unload.
-// Edits made within the 2s debounce window at logout may not sync.
-window.addEventListener('beforeunload', () => {
-  SyncEngine.flushPending();
-});
-
 Hooks.on('getActorDirectoryEntryContext', (html, entryOptions) => {
   registerContextMenu(entryOptions);
 });
+
+// Embedded-document changes (inventory, spells, features, effects, and effects
+// nested on items) do not fire updateActor — route them to the owning actor.
+// create/delete hooks fire (doc, options, userId); update fires
+// (doc, changes, options, userId), so userId arrives in different positions.
+const onEmbeddedCreateDelete = (doc, options, userId) =>
+  SyncEngine.handleEmbeddedChange(doc, options, userId);
+const onEmbeddedUpdate = (doc, changes, options, userId) =>
+  // changes unused — the whole actor is pushed, not a delta.
+  SyncEngine.handleEmbeddedChange(doc, options, userId);
+
+for (const hook of ['createItem', 'deleteItem', 'createActiveEffect', 'deleteActiveEffect']) {
+  Hooks.on(hook, onEmbeddedCreateDelete);
+}
+for (const hook of ['updateItem', 'updateActiveEffect']) {
+  Hooks.on(hook, onEmbeddedUpdate);
+}

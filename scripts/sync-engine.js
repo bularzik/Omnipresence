@@ -1,11 +1,15 @@
 import { SyncRegistry } from './sync-registry.js';
-import { decideSyncAction, stripWorldLocalFields } from './sync-logic.js';
+import {
+  decideSyncAction,
+  stripWorldLocalFields,
+  diffEmbedded,
+  resolveOwningActor
+} from './sync-logic.js';
 
 const DEBOUNCE_MS = 2000;
 
 export class SyncEngine {
   static _timers = new Map();   // actorId → timeout handle
-  static _pending = new Map();  // actorId → actor (for flush on logout)
 
   /** Compendium id for the active world's game system. */
   static get PACK_ID() {
@@ -51,8 +55,9 @@ export class SyncEngine {
       const existing = await this._getCompendiumActor(omnipresenceId);
       if (existing) {
         await existing.update(actorData);
+        await this.reconcileActorEmbedded(existing, actorData);
       } else {
-        await Actor.create(actorData, { pack: this.PACK_ID });
+        await Actor.create(actorData, { pack: this.PACK_ID, keepId: true });
       }
 
       // Update local syncedAt to match (do not touch localModifiedAt).
@@ -61,7 +66,6 @@ export class SyncEngine {
         { omnipresenceInternal: true }
       );
 
-      this._pending.delete(actor.id);
     } catch (err) {
       console.error('Omnipresence | push failed for', actor.name, err);
       ui.notifications.warn(
@@ -73,7 +77,6 @@ export class SyncEngine {
   static debouncedPush(actor) {
     const id = actor.id;
     if (this._timers.has(id)) clearTimeout(this._timers.get(id));
-    this._pending.set(id, actor);
     const timer = setTimeout(() => {
       this._timers.delete(id);
       this.push(actor);
@@ -88,14 +91,65 @@ export class SyncEngine {
     );
   }
 
-  static async flushPending() {
-    const pending = [...this._pending.values()];
-    this._pending.clear();
-    for (const [, timer] of this._timers) {
-      clearTimeout(timer);
+  /**
+   * Route an embedded-document change to the owning enrolled actor: mark dirty
+   * (editing user) and debounce a push (GM). Mirrors the updateActor handler.
+   */
+  static handleEmbeddedChange(doc, options, userId) {
+    if (options?.omnipresenceInternal) return;
+    const actor = resolveOwningActor(doc);
+    if (!actor) return;
+    if (!SyncRegistry.isEnrolled(actor)) return;
+    if (userId === game.user.id) this.trackLocalModification(actor);
+    if (game.user.isGM) this.debouncedPush(actor);
+  }
+
+  /**
+   * Apply create/update/delete to one embedded collection so it matches
+   * `snapshotDocs`. All writes carry omnipresenceInternal so the embedded
+   * hooks ignore them. Creates use keepId so embedded _ids stay stable across
+   * worlds (the cross-world match key).
+   */
+  static async _reconcileCollection(parent, embeddedName, snapshotDocs) {
+    const collection = parent.getEmbeddedCollection(embeddedName);
+    const localDocs = collection.map(d => d.toObject());
+    const { toCreate, toUpdate, toDelete } = diffEmbedded(localDocs, snapshotDocs ?? []);
+
+    if (toDelete.length) {
+      await parent.deleteEmbeddedDocuments(embeddedName, toDelete, { omnipresenceInternal: true });
     }
-    this._timers.clear();
-    await Promise.all(pending.map(actor => this.push(actor)));
+    if (toCreate.length) {
+      await parent.createEmbeddedDocuments(embeddedName, toCreate, {
+        keepId: true,
+        omnipresenceInternal: true
+      });
+    }
+    if (toUpdate.length) {
+      await parent.updateEmbeddedDocuments(embeddedName, toUpdate, { omnipresenceInternal: true });
+    }
+  }
+
+  /**
+   * Make targetActor's embedded data (items, their nested effects, and
+   * actor-level effects) match snapshotData. snapshotData is plain actor data
+   * (e.g. from toObject()) whose embedded _ids are preserved.
+   */
+  static async reconcileActorEmbedded(targetActor, snapshotData) {
+    // 1. Items (inventory, spells, features).
+    await this._reconcileCollection(targetActor, 'Item', snapshotData.items ?? []);
+
+    // 2. Effects nested on items. Re-read items after the Item reconcile so newly
+    //    created items are included (their effects self-heal if keepId did not
+    //    carry to nested docs).
+    const snapItemsById = new Map((snapshotData.items ?? []).map(i => [i._id, i]));
+    for (const item of targetActor.items) {
+      const snapItem = snapItemsById.get(item._id);
+      if (!snapItem) continue;
+      await this._reconcileCollection(item, 'ActiveEffect', snapItem.effects ?? []);
+    }
+
+    // 3. Actor-level effects (buffs, conditions).
+    await this._reconcileCollection(targetActor, 'ActiveEffect', snapshotData.effects ?? []);
   }
 
   static async pull(localActor, compActor) {
@@ -105,7 +159,15 @@ export class SyncEngine {
     actorData.flags.omnipresence ??= {};
     // Reset localModifiedAt to match the pulled syncedAt (no local changes outstanding).
     actorData.flags.omnipresence.localModifiedAt = actorData.flags.omnipresence.syncedAt;
-    await localActor.update(actorData, { omnipresenceInternal: true });
+    try {
+      await localActor.update(actorData, { omnipresenceInternal: true });
+      await this.reconcileActorEmbedded(localActor, actorData);
+    } catch (err) {
+      console.error('Omnipresence | pull failed for', localActor.name, err);
+      ui.notifications.warn(
+        game.i18n.format('OMNIPRESENCE.notifications.syncFailed', { name: localActor.name })
+      );
+    }
   }
 
   static async onLogin() {
@@ -184,7 +246,7 @@ export class SyncEngine {
       actorData.flags.omnipresence.localModifiedAt = actorData.flags.omnipresence.syncedAt;
       actorData.ownership = { default: 0, [matchingUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER };
 
-      const created = await Actor.create(actorData);
+      const created = await Actor.create(actorData, { keepId: true });
       await SyncRegistry.enroll(created);
     }
   }
