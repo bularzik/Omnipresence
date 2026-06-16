@@ -56,22 +56,22 @@ jobs:
           VERSION: ${{ steps.version.outputs.VERSION }}
           TAG: ${{ github.ref_name }}
         run: |
+          jq empty module.json || { echo "::error::module.json is not valid JSON"; exit 1; }
+          if [ "$(jq -r '.id' module.json)" = "null" ]; then echo "::error::module.json has no id"; exit 1; fi
           payload=$(jq -n \
-            --arg id       "$(jq -r '.id' module.json)" \
             --arg version  "$VERSION" \
             --arg manifest "https://github.com/bularzik/Omnipresence/releases/download/${TAG}/module.json" \
             --arg notes    "https://github.com/bularzik/Omnipresence/releases/tag/${TAG}" \
-            --arg minimum  "$(jq -r '.compatibility.minimum' module.json)" \
-            --arg verified "$(jq -r '.compatibility.verified' module.json)" \
-            --arg maximum  "$(jq -r '.compatibility.maximum // ""' module.json)" \
-            '{id: $id, release: {version: $version, manifest: $manifest, notes: $notes, compatibility: {minimum: $minimum, verified: $verified, maximum: $maximum}}}')
+            --slurpfile mod module.json \
+            '$mod[0] as $m | {id: $m.id, release: {version: $version, manifest: $manifest, notes: $notes, compatibility: {minimum: $m.compatibility.minimum, verified: $m.compatibility.verified, maximum: ($m.compatibility.maximum // "")}}}')
           echo "Publishing to Foundry:"
           echo "$payload" | jq '.'
+          # Foundry's Release API expects the raw token, not a Bearer prefix.
           http_code=$(curl -sS -o response.json -w '%{http_code}' \
             -X POST 'https://foundryvtt.com/_api/packages/release_version/' \
             -H 'Content-Type: application/json' \
             -H "Authorization: $FOUNDRY_RELEASE_TOKEN" \
-            -d "$payload")
+            -d "$payload" || echo "000")
           echo "Foundry API returned HTTP $http_code"
           cat response.json
           if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
