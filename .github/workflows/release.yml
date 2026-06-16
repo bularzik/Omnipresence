@@ -20,11 +20,12 @@ jobs:
       - name: Patch module.json
         env:
           VERSION: ${{ steps.version.outputs.VERSION }}
+          TAG: ${{ github.ref_name }}
         run: |
           jq \
             --arg v "$VERSION" \
             --arg m "https://github.com/bularzik/Omnipresence/releases/latest/download/module.json" \
-            --arg d "https://github.com/bularzik/Omnipresence/releases/latest/download/omnipresence.zip" \
+            --arg d "https://github.com/bularzik/Omnipresence/releases/download/${TAG}/omnipresence.zip" \
             '.version = $v | .manifest = $m | .download = $d' \
             module.json > module.patched.json
           mv module.patched.json module.json
