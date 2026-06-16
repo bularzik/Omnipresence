@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      FOUNDRY_RELEASE_TOKEN: ${{ secrets.FOUNDRY_RELEASE_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -47,3 +49,32 @@ jobs:
           files: |
             omnipresence.zip
             module.json
+
+      - name: Publish release to Foundry registry
+        if: ${{ env.FOUNDRY_RELEASE_TOKEN != '' }}
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          payload=$(jq -n \
+            --arg id       "$(jq -r '.id' module.json)" \
+            --arg version  "$VERSION" \
+            --arg manifest "https://github.com/bularzik/Omnipresence/releases/download/${TAG}/module.json" \
+            --arg notes    "https://github.com/bularzik/Omnipresence/releases/tag/${TAG}" \
+            --arg minimum  "$(jq -r '.compatibility.minimum' module.json)" \
+            --arg verified "$(jq -r '.compatibility.verified' module.json)" \
+            --arg maximum  "$(jq -r '.compatibility.maximum // ""' module.json)" \
+            '{id: $id, release: {version: $version, manifest: $manifest, notes: $notes, compatibility: {minimum: $minimum, verified: $verified, maximum: $maximum}}}')
+          echo "Publishing to Foundry:"
+          echo "$payload" | jq '.'
+          http_code=$(curl -sS -o response.json -w '%{http_code}' \
+            -X POST 'https://foundryvtt.com/_api/packages/release_version/' \
+            -H 'Content-Type: application/json' \
+            -H "Authorization: $FOUNDRY_RELEASE_TOKEN" \
+            -d "$payload")
+          echo "Foundry API returned HTTP $http_code"
+          cat response.json
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            echo "::error::Foundry publish failed (HTTP $http_code)"
+            exit 1
+          fi
