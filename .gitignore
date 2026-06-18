@@ -13,3 +13,14 @@
 
 # Superpowers brainstorm scratch state
 .superpowers/
+
+# Everything else
+.agents/
+.beads/
+.claude/
+.codex/
+.github/
+.obsidian/
+.remember/
+AGENTS.md
+CLAUDE.md
