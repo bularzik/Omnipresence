@@ -2,6 +2,7 @@ import { SyncRegistry } from './scripts/sync-registry.js';
 import { SyncEngine } from './scripts/sync-engine.js';
 import { registerContextMenu } from './scripts/context-menu.js';
 import { OmnipresenceDashboard } from './scripts/gm-dashboard.js';
+import { registerUserConfigInjection } from './scripts/user-config.js';
 
 Hooks.once('init', () => {
   SyncRegistry.register();
@@ -14,6 +15,8 @@ Hooks.once('init', () => {
     type: OmnipresenceDashboard,
     restricted: false
   });
+
+  registerUserConfigInjection();
 });
 
 Hooks.once('ready', async () => {
