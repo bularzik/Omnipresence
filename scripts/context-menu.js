@@ -42,7 +42,10 @@ export function registerContextMenu(entryOptions) {
         if (!actor) return;
         await SyncRegistry.enroll(actor);
         await SyncEngine.push(actor);
-        ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.enrolled', { name: actor.name }));
+        const key = game.user.isGM
+          ? 'OMNIPRESENCE.notifications.enrolled'
+          : 'OMNIPRESENCE.notifications.enrolledQueued';
+        ui.notifications.info(game.i18n.format(key, { name: actor.name }));
       }
     },
     {
