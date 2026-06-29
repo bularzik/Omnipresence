@@ -110,6 +110,54 @@ export class MacroSync {
   }
 
   static async onLogin() {
-    // Implemented in Task 5.
+    const pack = this._getPack();
+    if (!pack) return;
+    if (!SyncRegistry.isMacroSyncEnabled(game.user.id)) return;
+
+    const compDocs = await pack.getDocuments();
+    const myDocs = compDocs.filter(d =>
+      d.getFlag('omnipresence', 'ownerName') === game.user.name
+    );
+    if (myDocs.length === 0) return;
+
+    const localById = new Map(
+      game.macros
+        .filter(m => m.getFlag('omnipresence', 'id'))
+        .map(m => [m.getFlag('omnipresence', 'id'), m])
+    );
+
+    const newHotbarEntries = {};
+
+    for (const compMacro of myDocs) {
+      const ompId = compMacro.getFlag('omnipresence', 'id');
+      const slots = compMacro.getFlag('omnipresence', 'hotbarSlots') ?? [];
+
+      const macroData = compMacro.toObject();
+      delete macroData._id;
+      delete macroData.folder;
+
+      let localMacro = localById.get(ompId);
+      try {
+        if (localMacro) {
+          await localMacro.update(macroData, { omnipresenceInternal: true });
+        } else {
+          localMacro = await Macro.create(macroData);
+        }
+      } catch (err) {
+        console.error('Omnipresence | macro pull failed for', compMacro.name, err);
+        continue;
+      }
+
+      for (const slot of slots) {
+        newHotbarEntries[slot] = localMacro.id;
+      }
+    }
+
+    if (Object.keys(newHotbarEntries).length > 0) {
+      await game.user.update(
+        { hotbar: { ...game.user.hotbar, ...newHotbarEntries } },
+        { omnipresenceInternal: true }
+      );
+    }
   }
 }
