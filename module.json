@@ -26,7 +26,8 @@
     { "name": "omnipresence-daggerheart", "type": "Actor", "system": "daggerheart", "path": "packs/omnipresence-daggerheart", "label": "Omnipresence — Daggerheart" },
     { "name": "omnipresence-draw-steel",  "type": "Actor", "system": "draw-steel",  "path": "packs/omnipresence-draw-steel",  "label": "Omnipresence — Draw Steel" },
     { "name": "omnipresence-shadowdark",  "type": "Actor", "system": "shadowdark",  "path": "packs/omnipresence-shadowdark",  "label": "Omnipresence — Shadowdark" },
-    { "name": "omnipresence-CoC7",        "type": "Actor", "system": "CoC7",        "path": "packs/omnipresence-CoC7",        "label": "Omnipresence — Call of Cthulhu 7e" }
+    { "name": "omnipresence-CoC7",        "type": "Actor", "system": "CoC7",        "path": "packs/omnipresence-CoC7",        "label": "Omnipresence — Call of Cthulhu 7e" },
+    { "name": "omnipresence-macros",      "type": "Macro", "path": "packs/omnipresence-macros", "label": "Omnipresence — Macros" }
   ],
   "relationships": {
     "systems": [

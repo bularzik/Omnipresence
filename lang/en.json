@@ -22,5 +22,8 @@
   "OMNIPRESENCE.notifications.syncFailed": "Omnipresence: sync failed for {name}. Check the console for details.",
   "OMNIPRESENCE.notifications.enrolled": "{name} added to Omnipresence sync.",
   "OMNIPRESENCE.notifications.unenrolled": "{name} removed from Omnipresence sync.",
-  "OMNIPRESENCE.notifications.unsupportedSystem": "Omnipresence: character sync is not available for the \"{system}\" game system."
+  "OMNIPRESENCE.notifications.unsupportedSystem": "Omnipresence: character sync is not available for the \"{system}\" game system.",
+  "OMNIPRESENCE.userConfig.legend": "Omnipresence",
+  "OMNIPRESENCE.userConfig.actorSync": "Synchronize player characters across worlds",
+  "OMNIPRESENCE.userConfig.macroSync": "Synchronize hotbar macros across worlds"
 }

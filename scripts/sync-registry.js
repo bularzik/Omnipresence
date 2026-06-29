@@ -1,9 +1,17 @@
 export class SyncRegistry {
   static SETTING = 'syncRegistry';
+  static PREFS_SETTING = 'syncPrefs';
 
   static register() {
     game.settings.register('omnipresence', this.SETTING, {
       name: 'Sync Registry',
+      scope: 'world',
+      config: false,
+      type: Object,
+      default: {}
+    });
+    game.settings.register('omnipresence', this.PREFS_SETTING, {
+      name: 'Sync Preferences',
       scope: 'world',
       config: false,
       type: Object,
@@ -62,5 +70,24 @@ export class SyncRegistry {
     const registry = this._getAll();
     delete registry[id];
     await game.settings.set('omnipresence', this.SETTING, registry);
+  }
+
+  static getPrefs(userId) {
+    const all = game.settings.get('omnipresence', this.PREFS_SETTING);
+    return all[userId] ?? { actors: true, macros: true };
+  }
+
+  static async setPrefs(userId, prefs) {
+    const all = game.settings.get('omnipresence', this.PREFS_SETTING);
+    all[userId] = { ...(all[userId] ?? { actors: true, macros: true }), ...prefs };
+    await game.settings.set('omnipresence', this.PREFS_SETTING, all);
+  }
+
+  static isActorSyncEnabled(userId) {
+    return this.getPrefs(userId).actors !== false;
+  }
+
+  static isMacroSyncEnabled(userId) {
+    return this.getPrefs(userId).macros !== false;
   }
 }
