@@ -154,7 +154,7 @@ All writes by the module carry `{ omnipresenceInternal: true }`. The `updateMacr
 
 ## 7. Testing
 
-All verification is manual in a live Foundry instance (no unit-testable pure logic is added).
+No unit-testable pure logic is added. The primary test layer is automated browser tests via the Playwright MCP against a live Foundry instance, supplemented by a small number of manual-only checks.
 
 **Environment:**
 - Foundry Node: `/FoundryVTT/FoundryVTT-Node-13.351`
@@ -163,15 +163,26 @@ All verification is manual in a live Foundry instance (no unit-testable pure log
 - Worlds: `World A` and `World B` (both dnd5e)
 - Start server: `~/FoundryVTT/start-foundry.command` → `http://localhost:30000`
 
-**Test cases:**
+### Automated tests (Playwright MCP)
 
-1. **Hotbar push** — opt in, create a macro, drag to slot 1 → compendium entry has correct `ownerName`, `hotbarSlots: [1]`, macro content
-2. **Macro content update** — edit a hotbar macro's command → compendium entry content updates
-3. **Hotbar rearrange** — drag macro from slot 1 to slot 3 → `hotbarSlots` updates to `[3]`
-4. **Macro removed from hotbar** — drag off → compendium entry deleted
-5. **Cross-world pull** — log into World B → macros appear in correct slots with correct content
-6. **Overwrite on pull** — edit macro in World B, log back into World A (compendium still has World A version) → World A version overwrites World B edits
-7. **Actor sync pause** — uncheck "Synchronize player characters" → context menu items gone; editing enrolled actor triggers no push; no actor reconciliation on next login; re-checking resumes
-8. **Macro sync pause** — uncheck "Synchronize hotbar macros" → hotbar changes and macro edits trigger no compendium writes
-9. **Re-enable** — re-check either toggle → sync resumes on next login
-10. **Mixed macro types** — hotbar contains both chat macros and script macros → both sync faithfully (script content is carried as-is; behavior in World B depends on whether referenced entities exist there)
+Each test: start Foundry, navigate to `http://localhost:30000`, log in, run the scenario, assert via `page.evaluate()` against live Foundry state (`game.user.hotbar`, compendium contents, flags on documents).
+
+| # | Scenario | Key assertion |
+|---|---|---|
+| 1 | **Hotbar push** — log in to World A as GM; create a chat macro; drag to slot 1; wait 2.5 s for debounce | `page.evaluate(() => game.packs.get('omnipresence.omnipresence-macros').getDocuments())` returns one entry with `flags.omnipresence.ownerName === user.name`, `hotbarSlots: [1]`, correct `name`/`command` |
+| 2 | **Macro content update** — edit the macro's command in the macro editor | Compendium entry `command` field matches the new value |
+| 3 | **Hotbar rearrange** — drag macro from slot 1 to slot 3 | Compendium entry `hotbarSlots` updates to `[3]` |
+| 4 | **Macro removed from hotbar** — right-click slot, clear it | Compendium has zero entries for this user |
+| 5 | **Cross-world pull** — with a compendium entry present, log out of World A and into World B | `game.user.hotbar` in World B contains a local macro ID in the correct slot; local macro `command` matches compendium |
+| 6 | **Overwrite on pull** — in World B, open and edit the macro's command; log back into World A | After login, local macro command in World A matches the World A compendium version (World B edit is gone) |
+| 7 | **Actor sync pause** — open User Config, uncheck "Synchronize player characters"; edit an enrolled actor | `game.packs.get(SyncEngine.PACK_ID).getDocuments()` shows the actor's `syncedAt` has not updated; context menu items absent from Actors Directory |
+| 8 | **Macro sync pause** — uncheck "Synchronize hotbar macros"; drag a macro to a slot | Macro compendium still has zero entries (or unchanged) after 2.5 s |
+| 9 | **Re-enable both toggles** — re-check both; log out and back in | Actor and macro sync resume; hotbar slots correct in World B |
+
+### Manual-only checks
+
+These require visual inspection and cannot be fully asserted via `page.evaluate()`:
+
+- **User Config fieldset appearance** — verify the "Omnipresence" fieldset renders correctly in the dialog, with correct labels and default checked state
+- **Script macro behavior in World B** — confirm script macros that reference World A entities appear on the hotbar but may fail to execute (expected; content is synced as-is)
+- **Multi-page hotbar** — drag macros to page 2 slots (11–20) and verify they survive the cross-world round-trip
