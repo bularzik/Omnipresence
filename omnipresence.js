@@ -1,5 +1,6 @@
 import { SyncRegistry } from './scripts/sync-registry.js';
 import { SyncEngine } from './scripts/sync-engine.js';
+import { MacroSync } from './scripts/macro-sync.js';
 import { registerContextMenu } from './scripts/context-menu.js';
 import { OmnipresenceDashboard } from './scripts/gm-dashboard.js';
 import { registerUserConfigInjection } from './scripts/user-config.js';
@@ -23,8 +24,11 @@ Hooks.once('ready', async () => {
   if (game.user.isGM) {
     const pack = game.packs.get(SyncEngine.PACK_ID);
     if (pack && pack.locked) await pack.configure({ locked: false });
+    const macroPack = game.packs.get(MacroSync.PACK_ID);
+    if (macroPack && macroPack.locked) await macroPack.configure({ locked: false });
   }
   await SyncEngine.onLogin();
+  await MacroSync.onLogin();
 });
 
 Hooks.on('updateActor', (actor, changes, options, userId) => {
@@ -66,3 +70,14 @@ for (const hook of ['createItem', 'deleteItem', 'createActiveEffect', 'deleteAct
 for (const hook of ['updateItem', 'updateActiveEffect']) {
   Hooks.on(hook, onEmbeddedUpdate);
 }
+
+Hooks.on('updateMacro', (macro, _changes, options, _userId) => {
+  if (options?.omnipresenceInternal) return;
+  MacroSync.handleMacroChange(macro);
+});
+
+Hooks.on('updateUser', (user, changes, options, _userId) => {
+  if (options?.omnipresenceInternal) return;
+  if (!changes.hotbar) return;
+  MacroSync.handleHotbarChange(user);
+});
