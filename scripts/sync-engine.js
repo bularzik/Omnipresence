@@ -181,6 +181,8 @@ export class SyncEngine {
       return;
     }
 
+    if (!SyncRegistry.isActorSyncEnabled(game.user.id)) return;
+
     const compActors = await pack.getDocuments();
     const myActors = game.actors.filter(a => a.isOwner && SyncRegistry.isEnrolled(a));
 

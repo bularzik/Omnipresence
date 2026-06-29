@@ -31,6 +31,7 @@ export function registerContextMenu(entryOptions) {
       icon: '<i class="fas fa-link"></i>',
       condition: (li) => {
         if (!syncAvailable()) return false;
+        if (!SyncRegistry.isActorSyncEnabled(game.user.id)) return false;
         const actor = game.actors.get(getDocumentId(li));
         if (!actor) return false;
         if (!game.user.isGM && !actor.isOwner) return false;
@@ -49,6 +50,7 @@ export function registerContextMenu(entryOptions) {
       icon: '<i class="fas fa-unlink"></i>',
       condition: (li) => {
         if (!syncAvailable()) return false;
+        if (!SyncRegistry.isActorSyncEnabled(game.user.id)) return false;
         const actor = game.actors.get(getDocumentId(li));
         if (!actor) return false;
         if (!game.user.isGM && !actor.isOwner) return false;

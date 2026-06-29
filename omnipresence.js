@@ -30,11 +30,8 @@ Hooks.once('ready', async () => {
 Hooks.on('updateActor', (actor, changes, options, userId) => {
   if (options?.omnipresenceInternal) return;
   if (!SyncRegistry.isEnrolled(actor)) return;
-  // The editing user marks the actor dirty (they can write their own actor).
-  // Fire-and-forget: not awaited. The marker drives the next login-time sync
-  // decision (decideSyncAction); the GM's debounced push persists current state.
+  if (!SyncRegistry.isActorSyncEnabled(userId)) return;
   if (userId === game.user.id) SyncEngine.trackLocalModification(actor);
-  // A GM-role client performs the compendium write (only GMs can write packs).
   if (game.user.isGM) SyncEngine.debouncedPush(actor);
 });
 
