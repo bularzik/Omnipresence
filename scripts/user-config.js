@@ -23,10 +23,15 @@ export function registerUserConfigInjection() {
       </div>
     `;
 
-    // Insert before the footer / submit button group.
-    const form = root.querySelector('form') ?? root;
-    const footer = root.querySelector('.form-footer, footer, .window-footer');
-    form.insertBefore(fieldset, footer);
+    // In v13, html is the outer <form> dialog element; the real scrollable content
+    // lives in a child div. Evaluate selectors in priority order (not as a combined
+    // list) so a more-specific inner element always wins over a broader outer one.
+    const container = root.querySelector('[data-application-part="form"]')
+      ?? root.querySelector('.standard-form.scrollable')
+      ?? root.querySelector('.window-content')
+      ?? root;
+    const footer = container.querySelector('.form-footer, footer, .window-footer');
+    container.insertBefore(fieldset, footer ?? null);
 
     fieldset.querySelector('[name="omnipresence-actors"]').addEventListener('change', (e) => {
       SyncRegistry.setPrefs(game.user.id, { actors: e.target.checked });
