@@ -10,16 +10,16 @@ export function registerUserConfigInjection() {
     fieldset.innerHTML = `
       <legend>${game.i18n.localize('OMNIPRESENCE.userConfig.legend')}</legend>
       <div class="form-group">
-        <label>
-          <input type="checkbox" name="omnipresence-actors"${userPrefs.actors !== false ? ' checked' : ''}>
-          ${game.i18n.localize('OMNIPRESENCE.userConfig.actorSync')}
-        </label>
+        <label for="omnipresence-actors">${game.i18n.localize('OMNIPRESENCE.userConfig.actorSync')}</label>
+        <div class="form-fields">
+          <input type="checkbox" id="omnipresence-actors" name="omnipresence-actors"${userPrefs.actors !== false ? ' checked' : ''}>
+        </div>
       </div>
       <div class="form-group">
-        <label>
-          <input type="checkbox" name="omnipresence-macros"${userPrefs.macros !== false ? ' checked' : ''}>
-          ${game.i18n.localize('OMNIPRESENCE.userConfig.macroSync')}
-        </label>
+        <label for="omnipresence-macros">${game.i18n.localize('OMNIPRESENCE.userConfig.macroSync')}</label>
+        <div class="form-fields">
+          <input type="checkbox" id="omnipresence-macros" name="omnipresence-macros"${userPrefs.macros !== false ? ' checked' : ''}>
+        </div>
       </div>
     `;
 
