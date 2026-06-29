@@ -14,12 +14,14 @@ export function registerUserConfigInjection() {
         <div class="form-fields">
           <input type="checkbox" id="omnipresence-actors" name="omnipresence-actors"${userPrefs.actors !== false ? ' checked' : ''}>
         </div>
+        <p class="hint">${game.i18n.localize('OMNIPRESENCE.userConfig.actorSyncHint')}</p>
       </div>
       <div class="form-group">
         <label for="omnipresence-macros">${game.i18n.localize('OMNIPRESENCE.userConfig.macroSync')}</label>
         <div class="form-fields">
           <input type="checkbox" id="omnipresence-macros" name="omnipresence-macros"${userPrefs.macros !== false ? ' checked' : ''}>
         </div>
+        <p class="hint">${game.i18n.localize('OMNIPRESENCE.userConfig.macroSyncHint')}</p>
       </div>
     `;
 

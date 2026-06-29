@@ -25,6 +25,8 @@
   "OMNIPRESENCE.notifications.unenrolled": "{name} removed from Omnipresence sync.",
   "OMNIPRESENCE.notifications.unsupportedSystem": "Omnipresence: character sync is not available for the \"{system}\" game system.",
   "OMNIPRESENCE.userConfig.legend": "Omnipresence",
-  "OMNIPRESENCE.userConfig.actorSync": "Synchronize player characters across worlds",
-  "OMNIPRESENCE.userConfig.macroSync": "Synchronize hotbar macros across worlds"
+  "OMNIPRESENCE.userConfig.actorSync": "Sync PCs",
+  "OMNIPRESENCE.userConfig.actorSyncHint": "Synchronize player characters across worlds",
+  "OMNIPRESENCE.userConfig.macroSync": "Sync Hotbar",
+  "OMNIPRESENCE.userConfig.macroSyncHint": "Synchronize hotbar macros/chat commands across worlds"
 }
