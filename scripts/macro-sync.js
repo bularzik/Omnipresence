@@ -65,6 +65,7 @@ export class MacroSync {
       const macroData = macro.toObject();
       delete macroData._id;
       delete macroData.folder;
+      delete macroData.ownership;
       macroData.flags ??= {};
       macroData.flags.omnipresence = { id: ompId, ownerName: user.name, hotbarSlots: slots };
 
