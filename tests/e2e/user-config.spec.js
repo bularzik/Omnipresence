@@ -52,3 +52,36 @@ test.afterAll(async () => {
   await userContext?.close();
   await browser?.close();
 });
+
+test('no permission errors when opening User Config', async () => {
+  const errors = [];
+  const handler = msg => {
+    if (msg.type() === 'error' && msg.text().includes('lacks permissions')) {
+      errors.push(msg.text());
+    }
+  };
+  userPage.on('console', handler);
+
+  await userPage.evaluate(() => game.user.sheet.render(true));
+  await userPage.waitForFunction(
+    () => !!document.querySelector('#omnipresence-actors'),
+    { timeout: 5_000 }
+  );
+  await userPage.waitForTimeout(2_000); // collect any async errors
+
+  userPage.off('console', handler);
+
+  expect(errors, `Permission errors found:\n${errors.join('\n')}`).toHaveLength(0);
+
+  const actorsPresent = await userPage.evaluate(() =>
+    !!document.querySelector('#omnipresence-actors')
+  );
+  expect(actorsPresent).toBe(true);
+
+  const macrosPresent = await userPage.evaluate(() =>
+    !!document.querySelector('#omnipresence-macros')
+  );
+  expect(macrosPresent).toBe(true);
+
+  await userPage.evaluate(() => game.user.sheet.close());
+});
