@@ -117,7 +117,11 @@ export class MacroSync {
     if (game.user.isGM) {
       for (const user of game.users) {
         if (SyncRegistry.isMacroSyncEnabled(user.id)) {
-          await this.pushForUser(user);
+          try {
+            await this.pushForUser(user);
+          } catch (err) {
+            console.error('Omnipresence | macro push failed for user', user.name, err);
+          }
         }
       }
     }
