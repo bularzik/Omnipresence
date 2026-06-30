@@ -112,6 +112,16 @@ export class MacroSync {
   static async onLogin() {
     const pack = this._getPack();
     if (!pack) return;
+
+    // GM: push all users' hotbars to catch up changes made while GM was offline.
+    if (game.user.isGM) {
+      for (const user of game.users) {
+        if (SyncRegistry.isMacroSyncEnabled(user.id)) {
+          await this.pushForUser(user);
+        }
+      }
+    }
+
     if (!SyncRegistry.isMacroSyncEnabled(game.user.id)) return;
 
     const compDocs = await pack.getDocuments();
