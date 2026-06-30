@@ -8,6 +8,16 @@ import { registerUserConfigInjection } from './scripts/user-config.js';
 Hooks.once('init', () => {
   SyncRegistry.register();
 
+  // Non-GM users cannot write world-scoped settings; they emit a socket message
+  // so an active GM can proxy the write. userId is taken from the verified sender
+  // (second arg) rather than from msg to prevent IDOR spoofing.
+  game.socket.on('module.omnipresence', (msg, senderId) => {
+    if (!game.user.isGM || msg?.type !== 'setPrefs') return;
+    const sender = game.users.get(senderId);
+    if (!sender) return;
+    SyncRegistry._writePrefs(senderId, msg.prefs);
+  });
+
   game.settings.registerMenu('omnipresence', 'dashboard', {
     name: 'OMNIPRESENCE.settings.dashboard.name',
     label: 'OMNIPRESENCE.settings.dashboard.label',

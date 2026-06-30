@@ -77,10 +77,20 @@ export class SyncRegistry {
     return all[userId] ?? { actors: true, macros: true };
   }
 
-  static async setPrefs(userId, prefs) {
+  // Direct write — only call from GM context (socket handler or GM user).
+  static async _writePrefs(userId, prefs) {
     const all = game.settings.get('omnipresence', this.PREFS_SETTING);
     all[userId] = { ...(all[userId] ?? { actors: true, macros: true }), ...prefs };
     await game.settings.set('omnipresence', this.PREFS_SETTING, all);
+  }
+
+  // Non-GMs cannot write world-scoped settings directly; proxy through GM via socket.
+  static async setPrefs(userId, prefs) {
+    if (game.user.isGM) {
+      await this._writePrefs(userId, prefs);
+    } else {
+      game.socket.emit('module.omnipresence', { type: 'setPrefs', prefs });
+    }
   }
 
   static isActorSyncEnabled(userId) {
