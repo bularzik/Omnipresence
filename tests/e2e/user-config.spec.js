@@ -253,3 +253,62 @@ test('macro sync is suppressed when macros pref is false', async () => {
   }, savedMacroId);
   await userPage.waitForTimeout(DEBOUNCE_WAIT_MS);
 });
+
+test('GM login batch-pushes hotbars to restore entries missed while GM was offline', async () => {
+  // Snapshot User 1's current compendium entries
+  const before = await gmPage.evaluate(async () => {
+    const pack = game.packs.get('omnipresence.omnipresence-macros');
+    if (!pack) throw new Error('Macro compendium pack not found');
+    await pack.getDocuments();
+    return pack.contents
+      .filter(d => d.getFlag('omnipresence', 'ownerName') === 'User 1')
+      .map(d => d.getFlag('omnipresence', 'id'))
+      .sort();
+  });
+  expect(before.length).toBeGreaterThan(0);
+
+  // Delete them — simulates the push never happening (GM was offline)
+  await gmPage.evaluate(async () => {
+    const pack = game.packs.get('omnipresence.omnipresence-macros');
+    await pack.getDocuments();
+    const userDocs = pack.contents.filter(
+      d => d.getFlag('omnipresence', 'ownerName') === 'User 1'
+    );
+    for (const doc of userDocs) await doc.delete();
+  });
+
+  const afterDelete = await gmPage.evaluate(async () => {
+    const pack = game.packs.get('omnipresence.omnipresence-macros');
+    await pack.getDocuments();
+    return pack.contents.filter(
+      d => d.getFlag('omnipresence', 'ownerName') === 'User 1'
+    ).length;
+  });
+  expect(afterDelete).toBe(0);
+
+  // Simulate GM login: reload (session cookie persists; Foundry resumes the world)
+  await gmPage.reload();
+  await gmPage.waitForFunction(() => window.game?.ready === true, { timeout: 30_000 });
+
+  // Wait until the batch push restores User 1's entries (condition-based, no fixed sleep)
+  await gmPage.waitForFunction(
+    async () => {
+      const pack = game.packs.get('omnipresence.omnipresence-macros');
+      if (!pack) return false;
+      await pack.getDocuments();
+      return pack.contents.some(d => d.getFlag('omnipresence', 'ownerName') === 'User 1');
+    },
+    { timeout: 15_000 }
+  );
+
+  // Verify the restored set matches the original
+  const after = await gmPage.evaluate(async () => {
+    const pack = game.packs.get('omnipresence.omnipresence-macros');
+    await pack.getDocuments();
+    return pack.contents
+      .filter(d => d.getFlag('omnipresence', 'ownerName') === 'User 1')
+      .map(d => d.getFlag('omnipresence', 'id'))
+      .sort();
+  });
+  expect(after).toEqual(before);
+});
