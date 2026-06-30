@@ -12,14 +12,14 @@ export function registerUserConfigInjection() {
       <div class="form-group">
         <label for="omnipresence-actors">${game.i18n.localize('OMNIPRESENCE.userConfig.actorSync')}</label>
         <div class="form-fields">
-          <input type="checkbox" id="omnipresence-actors" name="omnipresence-actors"${userPrefs.actors !== false ? ' checked' : ''}>
+          <input type="checkbox" id="omnipresence-actors" name="omnipresence-actors">
         </div>
         <p class="hint">${game.i18n.localize('OMNIPRESENCE.userConfig.actorSyncHint')}</p>
       </div>
       <div class="form-group">
         <label for="omnipresence-macros">${game.i18n.localize('OMNIPRESENCE.userConfig.macroSync')}</label>
         <div class="form-fields">
-          <input type="checkbox" id="omnipresence-macros" name="omnipresence-macros"${userPrefs.macros !== false ? ' checked' : ''}>
+          <input type="checkbox" id="omnipresence-macros" name="omnipresence-macros">
         </div>
         <p class="hint">${game.i18n.localize('OMNIPRESENCE.userConfig.macroSyncHint')}</p>
       </div>
@@ -35,11 +35,24 @@ export function registerUserConfigInjection() {
     const footer = container.querySelector('.form-footer, footer, .window-footer');
     container.insertBefore(fieldset, footer ?? null);
 
-    fieldset.querySelector('[name="omnipresence-actors"]').addEventListener('change', (e) => {
+    const actorsInput = fieldset.querySelector('[name="omnipresence-actors"]');
+    const macrosInput = fieldset.querySelector('[name="omnipresence-macros"]');
+
+    // Foundry re-renders the open UserConfig when user flags change, which can fire
+    // renderUserConfig again with a stale closure before our prior setTimeout fires.
+    // Re-reading prefs at setTimeout time ensures we always apply the current flag value.
+    setTimeout(() => {
+      if (!actorsInput.isConnected) return;
+      const currentPrefs = SyncRegistry.getPrefs(game.user.id);
+      actorsInput.checked = currentPrefs.actors !== false;
+      macrosInput.checked = currentPrefs.macros !== false;
+    }, 0);
+
+    actorsInput.addEventListener('change', (e) => {
       SyncRegistry.setPrefs(game.user.id, { actors: e.target.checked });
     });
 
-    fieldset.querySelector('[name="omnipresence-macros"]').addEventListener('change', (e) => {
+    macrosInput.addEventListener('change', (e) => {
       SyncRegistry.setPrefs(game.user.id, { macros: e.target.checked });
     });
   });
