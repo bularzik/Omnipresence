@@ -146,3 +146,110 @@ test('prefs are retained after save', async () => {
     game.user.setFlag('omnipresence', 'prefs', { actors: true, macros: true })
   );
 });
+
+test('actor sync is suppressed when actors pref is false', async () => {
+  // Disable actor sync for User 1 and wait for it to settle
+  await userPage.evaluate(() =>
+    game.user.setFlag('omnipresence', 'prefs', { actors: false, macros: true })
+  );
+  await userPage.waitForFunction(
+    () => game.user.getFlag('omnipresence', 'prefs')?.actors === false,
+    { timeout: 10_000 }
+  );
+  await userPage.waitForTimeout(500);
+
+  // Snapshot the compendium actor's system data (GM page has pack write access)
+  const packId = await gmPage.evaluate(() => `omnipresence.omnipresence-${game.system.id}`);
+  const before = await gmPage.evaluate(async (pid) => {
+    const pack = game.packs.get(pid);
+    if (!pack) throw new Error(`Pack not found: ${pid}`);
+    await pack.getDocuments();
+    const docs = pack.contents;
+    const doc = docs.find(d => d.name === 'Omnipresence Test Actor');
+    if (!doc) throw new Error('"Omnipresence Test Actor" not in compendium — push it after enrollment');
+    return JSON.stringify(doc.system);
+  }, packId);
+
+  // Edit the actor on User 1's page — sync should be suppressed
+  await userPage.evaluate(() => {
+    const actor = game.actors.getName('Omnipresence Test Actor');
+    return actor.update({ 'system.details.biography.value': 'suppression-test-' + Date.now() });
+  });
+
+  // Wait for the debounce window (DEBOUNCE_MS + 2 s buffer) to confirm suppression
+  await userPage.waitForTimeout(DEBOUNCE_WAIT_MS);
+
+  // Compendium should be unchanged
+  const after = await gmPage.evaluate(async (pid) => {
+    const pack = game.packs.get(pid);
+    await pack.getDocuments();
+    const docs = pack.contents;
+    const doc = docs.find(d => d.name === 'Omnipresence Test Actor');
+    return JSON.stringify(doc.system);
+  }, packId);
+
+  expect(after).toBe(before);
+
+  // Cleanup: re-enable sync, push a clean edit so compendium reflects current state
+  await userPage.evaluate(() =>
+    game.user.setFlag('omnipresence', 'prefs', { actors: true, macros: true })
+  );
+  await userPage.waitForTimeout(500);
+  await userPage.evaluate(() => {
+    const actor = game.actors.getName('Omnipresence Test Actor');
+    return actor.update({ 'system.details.biography.value': '' });
+  });
+  await userPage.waitForTimeout(DEBOUNCE_WAIT_MS);
+});
+
+test('macro sync is suppressed when macros pref is false', async () => {
+  // Disable macro sync for User 1 and wait for it to settle
+  await userPage.evaluate(() =>
+    game.user.setFlag('omnipresence', 'prefs', { actors: true, macros: false })
+  );
+  await userPage.waitForFunction(
+    () => game.user.getFlag('omnipresence', 'prefs')?.macros === false,
+    { timeout: 10_000 }
+  );
+  await userPage.waitForTimeout(500);
+
+  // Snapshot current macro compendium entries owned by User 1
+  const before = await gmPage.evaluate(async () => {
+    const pack = game.packs.get('omnipresence.omnipresence-macros');
+    if (!pack) throw new Error('Macro compendium pack not found');
+    await pack.getDocuments();
+    const userDocs = pack.contents.filter(d => d.getFlag('omnipresence', 'ownerName') === 'User 1');
+    return JSON.stringify(userDocs.map(d => d.getFlag('omnipresence', 'id')).sort());
+  });
+
+  // Save slot-1 macro id then remove it from hotbar — macro sync should be suppressed
+  const savedMacroId = await userPage.evaluate(async () => {
+    const id = game.user.hotbar[1];
+    await game.user.update({ 'hotbar.-=1': null });
+    return id;
+  });
+  expect(savedMacroId).toBeTruthy();
+
+  // Wait for the debounce window to confirm suppression
+  await userPage.waitForTimeout(DEBOUNCE_WAIT_MS);
+
+  // Compendium macro entries for User 1 should be unchanged
+  const after = await gmPage.evaluate(async () => {
+    const pack = game.packs.get('omnipresence.omnipresence-macros');
+    await pack.getDocuments();
+    const userDocs = pack.contents.filter(d => d.getFlag('omnipresence', 'ownerName') === 'User 1');
+    return JSON.stringify(userDocs.map(d => d.getFlag('omnipresence', 'id')).sort());
+  });
+
+  expect(after).toBe(before);
+
+  // Cleanup: re-enable macro sync, restore slot 1, wait for push
+  await userPage.evaluate(() =>
+    game.user.setFlag('omnipresence', 'prefs', { actors: true, macros: true })
+  );
+  await userPage.waitForTimeout(500);
+  await userPage.evaluate(async (macroId) => {
+    await game.user.update({ hotbar: { ...game.user.hotbar, 1: macroId } });
+  }, savedMacroId);
+  await userPage.waitForTimeout(DEBOUNCE_WAIT_MS);
+});
