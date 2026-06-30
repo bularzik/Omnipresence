@@ -1,0 +1,54 @@
+// tests/e2e/user-config.spec.js
+import { test, expect, chromium } from '@playwright/test';
+
+const FOUNDRY_URL = 'http://localhost:30000';
+const DEBOUNCE_WAIT_MS = 4_000;
+
+let browser, gmContext, userContext, gmPage, userPage;
+
+async function loginToFoundry(page, userName) {
+  await page.goto(`${FOUNDRY_URL}/join`);
+  await page.selectOption('select[name="userid"]', { label: userName });
+  // Both accounts have blank passwords — no fill needed
+  await page.click('button[type="submit"]');
+  await page.waitForFunction(
+    () => window.game?.ready === true,
+    { timeout: 30_000 }
+  );
+}
+
+test.beforeAll(async () => {
+  browser = await chromium.launch();
+
+  gmContext = await browser.newContext();
+  gmPage = await gmContext.newPage();
+  await loginToFoundry(gmPage, 'Gamemaster');
+
+  userContext = await browser.newContext();
+  userPage = await userContext.newPage();
+  await loginToFoundry(userPage, 'User 1');
+
+  const actorExists = await userPage.evaluate(() =>
+    !!game.actors.getName('Omnipresence Test Actor')
+  );
+  if (!actorExists) {
+    throw new Error(
+      'Prerequisite missing: "Omnipresence Test Actor" not found in World A. ' +
+      'Create the actor, grant User 1 OWNER permission, and enroll via context menu.'
+    );
+  }
+
+  const hasHotbarMacro = await userPage.evaluate(() => !!game.user.hotbar[1]);
+  if (!hasHotbarMacro) {
+    throw new Error(
+      'Prerequisite missing: User 1 has no macro in hotbar slot 1. ' +
+      'Add any macro to slot 1 and verify it appears in the macro compendium.'
+    );
+  }
+});
+
+test.afterAll(async () => {
+  await gmContext?.close();
+  await userContext?.close();
+  await browser?.close();
+});
