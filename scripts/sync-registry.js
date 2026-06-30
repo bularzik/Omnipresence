@@ -1,17 +1,8 @@
 export class SyncRegistry {
   static SETTING = 'syncRegistry';
-  static PREFS_SETTING = 'syncPrefs';
-
   static register() {
     game.settings.register('omnipresence', this.SETTING, {
       name: 'Sync Registry',
-      scope: 'world',
-      config: false,
-      type: Object,
-      default: {}
-    });
-    game.settings.register('omnipresence', this.PREFS_SETTING, {
-      name: 'Sync Preferences',
       scope: 'world',
       config: false,
       type: Object,
@@ -72,25 +63,21 @@ export class SyncRegistry {
     await game.settings.set('omnipresence', this.SETTING, registry);
   }
 
+  // Per-user sync preferences live on the User document as flags so that:
+  // - each user can write their own flags without GM permission, and
+  // - the GM can read any user's flags since User documents sync to all clients.
   static getPrefs(userId) {
-    const all = game.settings.get('omnipresence', this.PREFS_SETTING);
-    return all[userId] ?? { actors: true, macros: true };
+    const user = game.users?.get(userId);
+    if (!user) return { actors: true, macros: true };
+    const stored = user.getFlag('omnipresence', 'prefs') ?? {};
+    return { actors: stored.actors !== false, macros: stored.macros !== false };
   }
 
-  // Direct write — only call from GM context (socket handler or GM user).
-  static async _writePrefs(userId, prefs) {
-    const all = game.settings.get('omnipresence', this.PREFS_SETTING);
-    all[userId] = { ...(all[userId] ?? { actors: true, macros: true }), ...prefs };
-    await game.settings.set('omnipresence', this.PREFS_SETTING, all);
-  }
-
-  // Non-GMs cannot write world-scoped settings directly; proxy through GM via socket.
   static async setPrefs(userId, prefs) {
-    if (game.user.isGM) {
-      await this._writePrefs(userId, prefs);
-    } else {
-      game.socket.emit('module.omnipresence', { type: 'setPrefs', prefs });
-    }
+    const user = game.users?.get(userId);
+    if (!user) return;
+    const existing = user.getFlag('omnipresence', 'prefs') ?? {};
+    await user.setFlag('omnipresence', 'prefs', { ...existing, ...prefs });
   }
 
   static isActorSyncEnabled(userId) {
