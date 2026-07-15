@@ -1,10 +1,10 @@
 # Omnipresence
 
-A Foundry VTT module that synchronizes player character actors and hotbar macros across multiple worlds on the same server.
+A Foundry VTT module that synchronizes player character actors, journals, and hotbar macros across multiple worlds on the same server.
 
 ## Overview
 
-Foundry VTT allows you to manually share actors between worlds by saving them to a compendium and importing them elsewhere. Omnipresence automates this: enroll a character once, and it stays in sync across every world you play in — automatically updated on login and whenever the character is edited. Your hotbar macros follow you too, so your action bar looks the same no matter which world you join.
+Foundry VTT allows you to manually share documents between worlds by saving them to a compendium and importing them elsewhere. Omnipresence automates this: enroll a character or journal once, and it stays in sync across every world you play in — automatically updated on login and whenever it is edited. Your hotbar macros follow you too, so your action bar looks the same no matter which world you join. Links between synced documents are rewritten automatically, so a journal's link to your character (or to another journal) keeps working in every world.
 
 ## Requirements
 
@@ -20,9 +20,9 @@ Foundry VTT allows you to manually share actors between worlds by saving them to
 
 ## How It Works
 
-Omnipresence uses a shared compendium pack (`Omnipresence Shared Characters`) as the single source of truth. All worlds with the module active read and write to the same pack files on disk.
+Omnipresence uses shared compendium packs (per-system character packs, plus `Omnipresence — Journals` and a macros pack) as the single source of truth. All worlds with the module active read and write to the same pack files on disk.
 
-Each enrolled actor is stamped with a stable UUID (`flags.omnipresence.id`) so it can be recognized across worlds even if renamed.
+Each enrolled document is stamped with a stable id (`flags.omnipresence.id`) so it can be recognized across worlds even if renamed. That same id doubles as the world-independent form links are stored in, which is how cross-world links resolve.
 
 ### Enrolling a character
 
@@ -44,21 +44,33 @@ All macros on your hotbar — both Chat and Script types — are kept in sync ac
 
 Each user's macros are stored independently, so two players can have completely different hotbars without interfering with each other.
 
+### Journal sync
+
+Journals sync the same way characters do. Right-click a journal in the **Journal Entries** directory and choose **Add to Omnipresence Sync** — available to the journal's owner and to the GM. Enrolled journals are pushed on edit (including page additions, renames, and deletions, which are matched by stable page ids), pulled on login, and auto-imported into worlds where they don't exist yet, owned by the same player.
+
+Journals from modules that define custom page types — such as **Campaign Record** or **Monk's Enhanced Journal** — sync faithfully: page types, data, and module flags travel verbatim. If a world is missing a module a synced journal depends on, you get a single notification at login listing what's needed (Foundry preserves the data untouched in the meantime). Media paths that point inside a specific world's folder are flagged the same way.
+
+### Cross-world links
+
+Links between synced documents keep working in every world. When an enrolled journal or actor references another enrolled document — an `@UUID` link in page text or a character bio, or structured references like Campaign Record's NPC-to-actor relation and Monk's Enhanced Journal relationships — Omnipresence rewrites the link to each world's local copy on sync. If a link's target hasn't reached a world yet, the link stays dormant and is healed automatically at a later login once the target arrives.
+
+Links to documents that aren't enrolled (a world's scenes, unsynced actors) are left untouched — they keep working in their home world and are simply dead elsewhere.
+
 ### New worlds
 
-When you log into a world where one of your characters doesn't exist yet, Omnipresence creates it automatically from the compendium, assigns you ownership, and enrolls it in sync. Hotbar macros are created the same way — you don't need to set up your action bar again.
+When you log into a world where one of your characters or journals doesn't exist yet, Omnipresence creates it automatically from the compendium, assigns you ownership, and enrolls it in sync. Hotbar macros are created the same way — you don't need to set up your action bar again.
 
 ## Settings Dashboard
 
-Open **Configure Settings → Module Settings → Manage Sync** to view and manage synced actors.
+Open **Configure Settings → Module Settings → Manage Sync** to view and manage synced documents. Enrolled actors and journals appear in separate tables with the same controls.
 
-**GMs** see all enrolled actors across all users with controls to:
+**GMs** see all enrolled actors and journals across all users with controls to:
 - Force push (overwrite compendium with local version)
 - Force pull (overwrite local with compendium version)
 - Remove from sync
-- Force sync all enrolled actors at once
+- Force sync all enrolled documents at once
 
-**Players** see only their own actors, with controls to force pull (overwrite the local copy with the shared version) or remove from sync. Players cannot force push — only a GM can write to the shared compendium.
+**Players** see only their own documents, with controls to force pull (overwrite the local copy with the shared version) or remove from sync. Players cannot force push — only a GM can write to the shared compendium.
 
 ## Per-User Sync Preferences
 
@@ -66,14 +78,15 @@ Click your username in the top-right corner of any world to open **User Configur
 
 - **Synchronize player characters across worlds** — when off, actor sync is paused entirely: enrolled actors are not pushed or pulled, and the enroll/unenroll context menu items are hidden.
 - **Synchronize hotbar macros across worlds** — when off, macros are neither pushed on edit nor pulled on login.
+- **Synchronize journals across worlds** — when off, journal sync is paused the same way: no pushes, pulls, or journal context menu items.
 
 Preferences are saved immediately on change and persist per-world.
 
 ## Conflict Resolution
 
-A conflict occurs when the same actor has been modified both locally and in the shared compendium since the last sync. This can happen when a character is edited in two different worlds between logins.
+A conflict occurs when the same document has been modified both locally and in the shared compendium since the last sync. This can happen when a character or journal is edited in two different worlds between logins.
 
-When conflicts are detected on login, all of your conflicting characters are shown together in a single **Resolve Sync Conflicts** dialog — one row per character, each showing when you last edited it locally and when the shared copy was last updated. Resolve each from its row:
+When conflicts are detected on login, all of your conflicting documents — actors and journals together — are shown in a single **Resolve Sync Conflicts** dialog, one row per document, each showing when you last edited it locally and when the shared copy was last updated. Resolve each from its row:
 
 - **Use shared** (force pull) overwrites your local copy with the shared version.
 - **Remove from sync** stops tracking that character.
@@ -85,7 +98,8 @@ Because only a GM can write to the shared compendium, players resolve conflicts 
 ## Notes
 
 - Same-server only. Cross-server sync is not supported in this version.
-- System-agnostic. The full actor document is synced without interpreting system-specific data, so Omnipresence works with any game system.
-- Deleting an enrolled actor from a world removes it from that world's sync registry but leaves the compendium entry intact. The next time you log into any world, the actor is automatically re-imported.
+- System-agnostic. Full documents are synced without interpreting system-specific data, so Omnipresence works with any supported game system; journals use a single system-agnostic pack.
+- Deleting an enrolled actor or journal from a world removes it from that world's sync registry but leaves the compendium entry intact. The next time you log into any world, the document is automatically re-imported.
+- Cross-world links only work between enrolled documents. Scenes are not synced, so scene links (and journal map pins) stay world-local.
 - Macro sync is all-or-nothing per user — there is no per-macro opt-in. If you want a macro local-only, keep it off your hotbar.
 - Sync preferences are world-scoped. A preference set in World A does not carry to World B automatically, since user IDs differ between worlds.
