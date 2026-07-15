@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-15
+
 ### Added
 - **Journal synchronization (Increment 1).** Enrolled `JournalEntry` documents
   now sync across worlds, mirroring actor sync: owner-aware enrollment and
@@ -168,7 +170,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/publish` slash command and a GitHub Actions release workflow (manifest,
   download, and url fields for Foundry installation).
 
-[Unreleased]: https://github.com/bularzik/Omnipresence/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/bularzik/Omnipresence/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/bularzik/Omnipresence/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/bularzik/Omnipresence/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/bularzik/Omnipresence/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/bularzik/Omnipresence/compare/v0.2.1...v0.2.2
