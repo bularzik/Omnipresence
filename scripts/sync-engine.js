@@ -59,7 +59,9 @@ export class SyncEngine {
     try {
       const existing = await this._getCompendiumActor(omnipresenceId);
       if (existing) {
-        await existing.update(actorData);
+        // recursive:false — the payload is a complete snapshot, so replace
+        // subtrees wholesale; merge would resurrect deleted keys forever.
+        await existing.update(actorData, { recursive: false });
         await this.reconcileActorEmbedded(existing, actorData);
       } else {
         await Actor.create(actorData, { pack: this.PACK_ID, keepId: true });
@@ -87,6 +89,16 @@ export class SyncEngine {
       this.push(actor);
     }, DEBOUNCE_MS);
     this._timers.set(id, timer);
+  }
+
+  /**
+   * Cancel (never flush) all pending debounced pushes. Called on page unload
+   * so no write can fire into the world-teardown window; the edits that
+   * scheduled them are already dirty-marked and push at the next login.
+   */
+  static cancelPending() {
+    for (const timer of this._timers.values()) clearTimeout(timer);
+    this._timers.clear();
   }
 
   static async trackLocalModification(actor) {
@@ -133,7 +145,7 @@ export class SyncEngine {
       });
     }
     if (toUpdate.length) {
-      await parent.updateEmbeddedDocuments(embeddedName, toUpdate, { omnipresenceInternal: true });
+      await parent.updateEmbeddedDocuments(embeddedName, toUpdate, { omnipresenceInternal: true, recursive: false });
     }
   }
 
@@ -169,7 +181,7 @@ export class SyncEngine {
     // Reset localModifiedAt to match the pulled syncedAt (no local changes outstanding).
     actorData.flags.omnipresence.localModifiedAt = actorData.flags.omnipresence.syncedAt;
     try {
-      await localActor.update(actorData, { omnipresenceInternal: true });
+      await localActor.update(actorData, { omnipresenceInternal: true, recursive: false });
       await this.reconcileActorEmbedded(localActor, actorData);
     } catch (err) {
       console.error('Omnipresence | pull failed for', localActor.name, err);

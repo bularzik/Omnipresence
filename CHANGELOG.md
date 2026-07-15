@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Hotbar macros now participate in cross-world link rewriting: document links
+  inside a macro's command are canonicalized on push and localized on pull,
+  like actors and journals.
+- Deletions now propagate across worlds: push/pull write complete snapshots
+  with subtree replacement instead of recursive merge, so a flag entry or
+  module-data key removed in one world (e.g. a deleted Monk's Enhanced
+  Journal relationship) no longer resurrects in others.
+- Pending debounced pushes are cancelled when the page unloads (world switch,
+  tab close), so no partial compendium write can fire into the shutdown
+  window. The unsent edit is dirty-marked and syncs at the next login.
+
 ## [0.3.0] - 2026-07-15
 
 ### Added

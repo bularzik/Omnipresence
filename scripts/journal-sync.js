@@ -66,7 +66,9 @@ export class JournalSync {
     try {
       const existing = await this._getCompendiumJournal(omnipresenceId);
       if (existing) {
-        await existing.update(journalData);
+        // recursive:false — the payload is a complete snapshot, so replace
+        // subtrees wholesale; merge would resurrect deleted keys forever.
+        await existing.update(journalData, { recursive: false });
         await this.reconcileJournalPages(existing, journalData);
       } else {
         await JournalEntry.create(journalData, { pack: this.PACK_ID, keepId: true });
@@ -93,6 +95,16 @@ export class JournalSync {
       this.push(journal);
     }, DEBOUNCE_MS);
     this._timers.set(id, timer);
+  }
+
+  /**
+   * Cancel (never flush) all pending debounced pushes. Called on page unload
+   * so no write can fire into the world-teardown window; the edits that
+   * scheduled them are already dirty-marked and push at the next login.
+   */
+  static cancelPending() {
+    for (const timer of this._timers.values()) clearTimeout(timer);
+    this._timers.clear();
   }
 
   static async trackLocalModification(journal) {
@@ -149,7 +161,7 @@ export class JournalSync {
       });
     }
     if (toUpdate.length) {
-      await target.updateEmbeddedDocuments('JournalEntryPage', toUpdate, { omnipresenceInternal: true });
+      await target.updateEmbeddedDocuments('JournalEntryPage', toUpdate, { omnipresenceInternal: true, recursive: false });
     }
   }
 
@@ -164,7 +176,7 @@ export class JournalSync {
     // Reset localModifiedAt to match the pulled syncedAt (no local changes outstanding).
     journalData.flags.omnipresence.localModifiedAt = journalData.flags.omnipresence.syncedAt;
     try {
-      await localJournal.update(journalData, { omnipresenceInternal: true });
+      await localJournal.update(journalData, { omnipresenceInternal: true, recursive: false });
       await this.reconcileJournalPages(localJournal, journalData);
     } catch (err) {
       console.error('Omnipresence | journal pull failed for', localJournal.name, err);

@@ -50,6 +50,17 @@ Hooks.once('ready', async () => {
   // resolve at pull time — targets imported after the linking doc, or in an
   // earlier session — heal now.
   await LinkRewriter.localizeAll();
+
+  // Cancel (never flush) pending debounced pushes when the page goes away —
+  // a timer firing into the world-teardown window produces partial pack
+  // writes. Cancellation is synchronous and lossless: the edits are already
+  // dirty-marked and push at the next login. (The inverse — flushing on
+  // unload — was removed in v0.0.3 for racing shutdown.)
+  window.addEventListener('beforeunload', () => {
+    SyncEngine.cancelPending();
+    JournalSync.cancelPending();
+    MacroSync.cancelPending();
+  });
 });
 
 // Compendium copies fire the same document hooks as world docs (our own pack

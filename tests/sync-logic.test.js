@@ -532,3 +532,17 @@ test('MEJ adapter: stale omni key + identity local key collision — local entry
     assert.equal(out.jjjjjjjjjjjjjjjj.hidden, false); // the identity (local) entry won
   }
 });
+
+test('macro-shaped data: command links round-trip through canonicalize/localize', () => {
+  const macro = {
+    name: 'Open Notes',
+    type: 'script',
+    command: "const notes = '@UUID[JournalEntry.jjjjjjjjjjjjjjjj]{Notes}'; const heroLink = '@UUID[Actor.aaaaaaaaaaaaaaaa]{Hero}';",
+    flags: { omnipresence: { id: 'MMMMMMMMMMMMMMMM', ownerName: 'User 1', hotbarSlots: [1] } }
+  };
+  const canonical = canonicalizeLinks(macro, L2O);
+  assert.ok(canonical.command.includes('JournalEntry.JJJJJJJJJJJJJJJJ'));
+  assert.ok(canonical.command.includes('@UUID[Actor.AAAAAAAAAAAAAAAA]{Hero}'));
+  assert.equal(canonical.flags.omnipresence.id, 'MMMMMMMMMMMMMMMM'); // bare flag id untouched
+  assert.deepEqual(localizeLinks(canonical, O2L), macro); // round-trip
+});

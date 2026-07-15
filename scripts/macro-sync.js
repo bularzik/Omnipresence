@@ -1,5 +1,6 @@
 import { SyncRegistry } from './sync-registry.js';
 import { stripMacroLocalFields } from './sync-logic.js';
+import { LinkRewriter } from './link-rewriter.js';
 
 const DEBOUNCE_MS = 2000;
 
@@ -64,14 +65,17 @@ export class MacroSync {
       }
 
       // Strip world-local / GM-only fields (_id, folder, ownership, author) so
-      // the pack copy never carries another world's ids and a non-GM can pull it.
-      const macroData = stripMacroLocalFields(macro.toObject());
+      // the pack copy never carries another world's ids and a non-GM can pull
+      // it, then canonicalize links so the pack copy is world-independent.
+      const macroData = LinkRewriter.canonicalize(stripMacroLocalFields(macro.toObject()));
       macroData.flags ??= {};
       macroData.flags.omnipresence = { id: ompId, ownerName: user.name, hotbarSlots: slots };
 
       const existing = compByOmpId.get(ompId);
       if (existing) {
-        await existing.update(macroData);
+        // recursive:false — the payload is a complete snapshot, so replace
+        // subtrees wholesale; merge would resurrect deleted keys forever.
+        await existing.update(macroData, { recursive: false });
       } else {
         await Macro.create(macroData, { pack: this.PACK_ID });
       }
@@ -94,6 +98,16 @@ export class MacroSync {
       this.pushForUser(user);
     }, DEBOUNCE_MS);
     this._timers.set(id, timer);
+  }
+
+  /**
+   * Cancel (never flush) all pending debounced pushes. Called on page unload
+   * so no write can fire into the world-teardown window; the hotbar/macro
+   * state is re-derived and pushed at the next GM login.
+   */
+  static cancelPending() {
+    for (const timer of this._timers.values()) clearTimeout(timer);
+    this._timers.clear();
   }
 
   static handleMacroChange(macro) {
@@ -150,12 +164,13 @@ export class MacroSync {
       // ownership and author are GM-only in Foundry; leaving them in a non-GM
       // create/update makes the server reject the whole write. On create Foundry
       // assigns the current user as author/owner.
-      const macroData = stripMacroLocalFields(compMacro.toObject());
+      // …and localize canonical omnipresence ids to this world's ids.
+      const macroData = LinkRewriter.localize(stripMacroLocalFields(compMacro.toObject()));
 
       let localMacro = localById.get(ompId);
       try {
         if (localMacro) {
-          await localMacro.update(macroData, { omnipresenceInternal: true });
+          await localMacro.update(macroData, { omnipresenceInternal: true, recursive: false });
         } else {
           localMacro = await Macro.create(macroData);
         }
