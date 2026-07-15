@@ -28,5 +28,14 @@
   "OMNIPRESENCE.userConfig.actorSync": "Sync PCs",
   "OMNIPRESENCE.userConfig.actorSyncHint": "Synchronize player characters across worlds",
   "OMNIPRESENCE.userConfig.macroSync": "Sync Hotbar",
-  "OMNIPRESENCE.userConfig.macroSyncHint": "Synchronize hotbar macros/chat commands across worlds"
+  "OMNIPRESENCE.userConfig.macroSyncHint": "Synchronize hotbar macros/chat commands across worlds",
+  "OMNIPRESENCE.contextMenu.addJournal": "Add Journal to Omnipresence Sync",
+  "OMNIPRESENCE.contextMenu.removeJournal": "Remove Journal from Omnipresence Sync",
+  "OMNIPRESENCE.dashboard.actorsHeading": "Characters",
+  "OMNIPRESENCE.dashboard.journalsHeading": "Journals",
+  "OMNIPRESENCE.dashboard.colJournal": "Journal",
+  "OMNIPRESENCE.userConfig.journalSync": "Sync Journals",
+  "OMNIPRESENCE.userConfig.journalSyncHint": "Synchronize journal entries (including Campaign Record / Monk's Enhanced Journal) across worlds",
+  "OMNIPRESENCE.notifications.missingModules": "Omnipresence: some synced journals need these modules for full fidelity: {modules}",
+  "OMNIPRESENCE.notifications.worldLocalMedia": "Omnipresence: some synced journal media use world-local paths that may not load in other worlds."
 }

@@ -50,6 +50,9 @@ export class SyncEngine {
     actorData.flags.omnipresence ??= {};
     delete actorData.flags.omnipresence.localModifiedAt;
     actorData.flags.omnipresence.syncedAt = syncedAt;
+    // Re-stamp ownerName from current ownership so the pack copy never goes
+    // stale (e.g. ownership granted after enrollment); drives cross-world import.
+    actorData.flags.omnipresence.ownerName = SyncRegistry.resolveOwnerName(actor);
 
     try {
       const existing = await this._getCompendiumActor(omnipresenceId);
@@ -214,15 +217,12 @@ export class SyncEngine {
       // 'none': in sync
     }
 
-    // Surface any conflicts in one consolidated view instead of N modals.
-    // Dynamic import avoids a static cycle (gm-dashboard imports SyncEngine).
-    if (conflicts.length > 0) {
-      const { OmnipresenceDashboard } = await import('./gm-dashboard.js');
-      new OmnipresenceDashboard({ conflictActorIds: conflicts }).render(true);
-    }
+    // Conflicts are surfaced by the caller (ready hook) in one consolidated
+    // dashboard shared with journal conflicts — return them instead of opening
+    // a second window here.
 
     // 2. Auto-import: compendium actors not present in this world (GM only).
-    if (!game.user.isGM) return;
+    if (!game.user.isGM) return conflicts;
     const localOmnipresenceIds = new Set(
       game.actors
         .filter(a => SyncRegistry.isEnrolled(a))
@@ -255,5 +255,7 @@ export class SyncEngine {
       const created = await Actor.create(actorData, { keepId: true });
       await SyncRegistry.enroll(created);
     }
+
+    return conflicts;
   }
 }

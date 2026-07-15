@@ -1,5 +1,6 @@
 <div id="omnipresence-dashboard">
   {{#if isGM}}
+  <h3 class="omnipresence-section">{{localize "OMNIPRESENCE.dashboard.actorsHeading"}}</h3>
   <table class="omnipresence-table">
     <thead>
       <tr>
@@ -39,6 +40,48 @@
       {{/each}}
     </tbody>
   </table>
+
+  <h3 class="omnipresence-section">{{localize "OMNIPRESENCE.dashboard.journalsHeading"}}</h3>
+  <table class="omnipresence-table">
+    <thead>
+      <tr>
+        <th>{{localize "OMNIPRESENCE.dashboard.colJournal"}}</th>
+        <th>{{localize "OMNIPRESENCE.dashboard.colOwner"}}</th>
+        <th>{{localize "OMNIPRESENCE.dashboard.colLastSynced"}}</th>
+        <th>{{localize "OMNIPRESENCE.dashboard.colActions"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each journals}}
+      <tr class="{{#if this.hasConflict}}conflict{{/if}}" data-journal-id="{{this.id}}">
+        <td>
+          {{this.name}}
+          {{#if this.hasConflict}}
+          <span class="conflict-badge">{{localize "OMNIPRESENCE.dashboard.conflict"}}</span>
+          {{/if}}
+        </td>
+        <td>{{this.ownerName}}</td>
+        <td>
+          {{this.syncedAtFormatted}}
+          {{#if this.hasConflict}}
+          <div style="font-size:11px;color:var(--color-text-dark-secondary);margin-top:2px">
+            <div>{{localize "OMNIPRESENCE.dashboard.yourLastEdit"}}: {{this.localModifiedAtFormatted}}</div>
+            <div>{{localize "OMNIPRESENCE.dashboard.sharedUpdated"}}: {{this.compSyncedAtFormatted}}</div>
+          </div>
+          {{/if}}
+        </td>
+        <td>
+          <a data-action="forcePushJournal" data-journal-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.forcePush"}}"><i class="fas fa-upload"></i></a>
+          <a data-action="forcePullJournal" data-journal-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.forcePull"}}"><i class="fas fa-download"></i></a>
+          <a data-action="removeSyncJournal" data-journal-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.remove"}}" style="color:#c0392b"><i class="fas fa-unlink"></i></a>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="4" style="text-align:center;padding:16px;color:var(--color-text-dark-secondary)">No journals enrolled in sync.</td></tr>
+      {{/each}}
+    </tbody>
+  </table>
+
   {{#unless conflictsOnly}}
   <div class="dashboard-footer">
     <button type="button" data-action="forceSyncAll">
@@ -47,6 +90,7 @@
   </div>
   {{/unless}}
   {{else}}
+  <h3 class="omnipresence-section">{{localize "OMNIPRESENCE.dashboard.actorsHeading"}}</h3>
   <table class="omnipresence-table">
     <thead>
       <tr>
@@ -80,6 +124,44 @@
       </tr>
       {{else}}
       <tr><td colspan="3" style="text-align:center;padding:16px;color:var(--color-text-dark-secondary)">No actors enrolled in sync.</td></tr>
+      {{/each}}
+    </tbody>
+  </table>
+
+  <h3 class="omnipresence-section">{{localize "OMNIPRESENCE.dashboard.journalsHeading"}}</h3>
+  <table class="omnipresence-table">
+    <thead>
+      <tr>
+        <th>{{localize "OMNIPRESENCE.dashboard.colJournal"}}</th>
+        <th>{{localize "OMNIPRESENCE.dashboard.colLastSynced"}}</th>
+        <th>{{localize "OMNIPRESENCE.dashboard.colActions"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each journals}}
+      <tr class="{{#if this.hasConflict}}conflict{{/if}}" data-journal-id="{{this.id}}">
+        <td>
+          {{this.name}}
+          {{#if this.hasConflict}}
+          <span class="conflict-badge">{{localize "OMNIPRESENCE.dashboard.conflict"}}</span>
+          {{/if}}
+        </td>
+        <td>
+          {{this.syncedAtFormatted}}
+          {{#if this.hasConflict}}
+          <div style="font-size:11px;color:var(--color-text-dark-secondary);margin-top:2px">
+            <div>{{localize "OMNIPRESENCE.dashboard.yourLastEdit"}}: {{this.localModifiedAtFormatted}}</div>
+            <div>{{localize "OMNIPRESENCE.dashboard.sharedUpdated"}}: {{this.compSyncedAtFormatted}}</div>
+          </div>
+          {{/if}}
+        </td>
+        <td>
+          <a data-action="forcePullJournal" data-journal-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.forcePull"}}"><i class="fas fa-download"></i></a>
+          <a data-action="removeSyncJournal" data-journal-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.remove"}}" style="color:#c0392b"><i class="fas fa-unlink"></i></a>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="3" style="text-align:center;padding:16px;color:var(--color-text-dark-secondary)">No journals enrolled in sync.</td></tr>
       {{/each}}
     </tbody>
   </table>

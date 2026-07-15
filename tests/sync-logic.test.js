@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSyncAction, stripWorldLocalFields, diffEmbedded, resolveOwningActor, deriveConflictState } from '../scripts/sync-logic.js';
+import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom } from '../scripts/sync-logic.js';
 
 const T0 = '2026-06-14T10:00:00.000Z';
 const T1 = '2026-06-14T11:00:00.000Z';
@@ -59,6 +59,29 @@ test('stripWorldLocalFields does not mutate its input', () => {
   assert.equal(input._id, 'abc');
   assert.deepEqual(input.ownership, { user1: 3 });
   assert.equal(input.folder, 'f1');
+});
+
+test('stripMacroLocalFields removes _id, ownership, folder, and author', () => {
+  const input = {
+    _id: 'abc',
+    name: 'Roll',
+    author: 'user1',
+    ownership: { default: 0, user1: 3 },
+    folder: 'folder123',
+    command: '/roll 1d20',
+    flags: { omnipresence: { id: 'k' } }
+  };
+  const out = stripMacroLocalFields(input);
+  assert.deepEqual(out, { name: 'Roll', command: '/roll 1d20', flags: { omnipresence: { id: 'k' } } });
+});
+
+test('stripMacroLocalFields does not mutate its input', () => {
+  const input = { _id: 'abc', ownership: { user1: 3 }, folder: 'f1', author: 'user1', name: 'Roll' };
+  stripMacroLocalFields(input);
+  assert.equal(input._id, 'abc');
+  assert.deepEqual(input.ownership, { user1: 3 });
+  assert.equal(input.folder, 'f1');
+  assert.equal(input.author, 'user1');
 });
 
 test('diffEmbedded: snapshot-only doc → toCreate', () => {
@@ -215,4 +238,88 @@ test('deriveConflictState: comp unavailable, never synced (null localSyncedAt), 
     deriveConflictState({ localSyncedAt: null, compSyncedAt: null, localModifiedAt: undefined, compAvailable: false }),
     false
   );
+});
+
+test('resolveOwningJournal: page directly on a journal entry', () => {
+  const journal = { documentName: 'JournalEntry', parent: null };
+  const page = { documentName: 'JournalEntryPage', parent: journal };
+  assert.equal(resolveOwningJournal(page), journal);
+});
+
+test('resolveOwningJournal: no journal ancestor → null', () => {
+  const page = { documentName: 'JournalEntryPage', parent: { documentName: 'JournalEntryPage', parent: null } };
+  assert.equal(resolveOwningJournal(page), null);
+});
+
+test('resolveOwningJournal: doc with no parent → null', () => {
+  assert.equal(resolveOwningJournal({ documentName: 'JournalEntryPage', parent: null }), null);
+});
+
+test('resolveOwningActor still resolves after generalization', () => {
+  const actor = { documentName: 'Actor', parent: null };
+  const item = { documentName: 'Item', parent: actor };
+  assert.equal(resolveOwningActor(item), actor);
+});
+
+test('requiredModulesForJournal: page-type prefixes become module ids', () => {
+  const data = { pages: [{ type: 'campaign-record.npc' }, { type: 'text' }, { type: 'image' }] };
+  assert.deepEqual(requiredModulesForJournal(data), ['campaign-record']);
+});
+
+test('requiredModulesForJournal: flag scopes on entry and pages (excluding core/omnipresence)', () => {
+  const data = {
+    flags: { core: { x: 1 }, omnipresence: { id: 'k' }, 'monks-enhanced-journal': { a: 1 } },
+    pages: [{ type: 'text', flags: { 'campaign-record': { b: 2 } } }]
+  };
+  assert.deepEqual(requiredModulesForJournal(data), ['campaign-record', 'monks-enhanced-journal']);
+});
+
+test('requiredModulesForJournal: dedupes and sorts', () => {
+  const data = {
+    pages: [
+      { type: 'campaign-record.npc' },
+      { type: 'campaign-record.place', flags: { 'monks-enhanced-journal': {} } }
+    ]
+  };
+  assert.deepEqual(requiredModulesForJournal(data), ['campaign-record', 'monks-enhanced-journal']);
+});
+
+test('requiredModulesForJournal: plain journal → empty', () => {
+  const data = { flags: { core: {} }, pages: [{ type: 'text' }] };
+  assert.deepEqual(requiredModulesForJournal(data), []);
+});
+
+test('worldLocalMediaPaths: collects page src under worlds/', () => {
+  const data = { pages: [
+    { type: 'image', src: 'worlds/world-a/art/map.jpg' },
+    { type: 'image', src: 'modules/shared/x.png' },
+    { type: 'image', src: 'https://example.com/y.png' },
+    { type: 'text' }
+  ] };
+  assert.deepEqual(worldLocalMediaPaths(data), ['worlds/world-a/art/map.jpg']);
+});
+
+test('worldLocalMediaPaths: no media → empty', () => {
+  assert.deepEqual(worldLocalMediaPaths({ pages: [{ type: 'text' }] }), []);
+});
+
+test('isEnrolledFrom: no id → false regardless of flag/registry', () => {
+  assert.equal(isEnrolledFrom({ id: null, enrolledFlag: true, inRegistry: true }), false);
+  assert.equal(isEnrolledFrom({ id: undefined, enrolledFlag: undefined, inRegistry: true }), false);
+});
+
+test('isEnrolledFrom: enrolled flag true → true', () => {
+  assert.equal(isEnrolledFrom({ id: 'k', enrolledFlag: true, inRegistry: false }), true);
+});
+
+test('isEnrolledFrom: enrolled flag false wins over registry → false', () => {
+  assert.equal(isEnrolledFrom({ id: 'k', enrolledFlag: false, inRegistry: true }), false);
+});
+
+test('isEnrolledFrom: no flag, in registry → true (legacy)', () => {
+  assert.equal(isEnrolledFrom({ id: 'k', enrolledFlag: undefined, inRegistry: true }), true);
+});
+
+test('isEnrolledFrom: no flag, not in registry → false', () => {
+  assert.equal(isEnrolledFrom({ id: 'k', enrolledFlag: undefined, inRegistry: false }), false);
 });

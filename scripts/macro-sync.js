@@ -1,4 +1,5 @@
 import { SyncRegistry } from './sync-registry.js';
+import { stripMacroLocalFields } from './sync-logic.js';
 
 const DEBOUNCE_MS = 2000;
 
@@ -62,10 +63,9 @@ export class MacroSync {
         );
       }
 
-      const macroData = macro.toObject();
-      delete macroData._id;
-      delete macroData.folder;
-      delete macroData.ownership;
+      // Strip world-local / GM-only fields (_id, folder, ownership, author) so
+      // the pack copy never carries another world's ids and a non-GM can pull it.
+      const macroData = stripMacroLocalFields(macro.toObject());
       macroData.flags ??= {};
       macroData.flags.omnipresence = { id: ompId, ownerName: user.name, hotbarSlots: slots };
 
@@ -146,9 +146,11 @@ export class MacroSync {
       const ompId = compMacro.getFlag('omnipresence', 'id');
       const slots = compMacro.getFlag('omnipresence', 'hotbarSlots') ?? [];
 
-      const macroData = compMacro.toObject();
-      delete macroData._id;
-      delete macroData.folder;
+      // Strip world-local / GM-only fields (_id, folder, ownership, author).
+      // ownership and author are GM-only in Foundry; leaving them in a non-GM
+      // create/update makes the server reject the whole write. On create Foundry
+      // assigns the current user as author/owner.
+      const macroData = stripMacroLocalFields(compMacro.toObject());
 
       let localMacro = localById.get(ompId);
       try {

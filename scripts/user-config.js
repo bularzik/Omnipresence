@@ -23,6 +23,13 @@ export function registerUserConfigInjection() {
         </div>
         <p class="hint">${game.i18n.localize('OMNIPRESENCE.userConfig.macroSyncHint')}</p>
       </div>
+      <div class="form-group">
+        <label for="omnipresence-journals">${game.i18n.localize('OMNIPRESENCE.userConfig.journalSync')}</label>
+        <div class="form-fields">
+          <input type="checkbox" id="omnipresence-journals" name="omnipresence-journals">
+        </div>
+        <p class="hint">${game.i18n.localize('OMNIPRESENCE.userConfig.journalSyncHint')}</p>
+      </div>
     `;
 
     // In v13, html is the outer <form> dialog element; the real scrollable content
@@ -37,6 +44,7 @@ export function registerUserConfigInjection() {
 
     const actorsInput = fieldset.querySelector('[name="omnipresence-actors"]');
     const macrosInput = fieldset.querySelector('[name="omnipresence-macros"]');
+    const journalsInput = fieldset.querySelector('[name="omnipresence-journals"]');
 
     // Foundry re-renders the open UserConfig when user flags change, which can fire
     // renderUserConfig again with a stale closure before our prior setTimeout fires.
@@ -46,6 +54,7 @@ export function registerUserConfigInjection() {
       const currentPrefs = SyncRegistry.getPrefs(game.user.id);
       actorsInput.checked = currentPrefs.actors !== false;
       macrosInput.checked = currentPrefs.macros !== false;
+      journalsInput.checked = currentPrefs.journals !== false;
     }, 0);
 
     actorsInput.addEventListener('change', (e) => {
@@ -54,6 +63,10 @@ export function registerUserConfigInjection() {
 
     macrosInput.addEventListener('change', (e) => {
       SyncRegistry.setPrefs(game.user.id, { macros: e.target.checked });
+    });
+
+    journalsInput.addEventListener('change', (e) => {
+      SyncRegistry.setPrefs(game.user.id, { journals: e.target.checked });
     });
   });
 }

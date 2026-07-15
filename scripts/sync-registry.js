@@ -1,3 +1,5 @@
+import { isEnrolledFrom } from './sync-logic.js';
+
 export class SyncRegistry {
   static SETTING = 'syncRegistry';
   static register() {
@@ -14,10 +16,11 @@ export class SyncRegistry {
     return game.settings.get('omnipresence', this.SETTING);
   }
 
-  static isEnrolled(actor) {
-    const id = actor.getFlag('omnipresence', 'id');
-    if (!id) return false;
-    return id in this._getAll();
+  static isEnrolled(doc) {
+    const id = doc.getFlag('omnipresence', 'id');
+    const enrolledFlag = doc.getFlag('omnipresence', 'enrolled');
+    const inRegistry = id ? id in this._getAll() : false;
+    return isEnrolledFrom({ id, enrolledFlag, inRegistry });
   }
 
   static getEnrolledIds() {
@@ -36,31 +39,40 @@ export class SyncRegistry {
     return null;
   }
 
-  static async enroll(actor) {
-    let id = actor.getFlag('omnipresence', 'id');
+  static async enroll(doc) {
+    let id = doc.getFlag('omnipresence', 'id');
+    // The owner-writable `enrolled` flag is the source of truth so non-GM owners
+    // can enroll without the GM-only world-setting write.
+    const updates = { 'flags.omnipresence.enrolled': true };
     if (!id) {
       id = foundry.utils.randomID(16);
-      const ownerName = this.resolveOwnerName(actor);
       const now = new Date().toISOString();
-      await actor.update({
-        'flags.omnipresence.id': id,
-        'flags.omnipresence.ownerName': ownerName,
-        'flags.omnipresence.syncedAt': now,
-        'flags.omnipresence.localModifiedAt': now
-      }, { omnipresenceInternal: true });
+      updates['flags.omnipresence.id'] = id;
+      updates['flags.omnipresence.ownerName'] = this.resolveOwnerName(doc);
+      updates['flags.omnipresence.syncedAt'] = now;
+      updates['flags.omnipresence.localModifiedAt'] = now;
     }
-    const registry = this._getAll();
-    registry[id] = true;
-    await game.settings.set('omnipresence', this.SETTING, registry);
+    await doc.update(updates, { omnipresenceInternal: true });
+    // Keep the legacy world registry in sync when permitted (GM only).
+    if (game.user.isGM) {
+      const registry = this._getAll();
+      registry[id] = true;
+      await game.settings.set('omnipresence', this.SETTING, registry);
+    }
     return id;
   }
 
-  static async unenroll(actor) {
-    const id = actor.getFlag('omnipresence', 'id');
+  static async unenroll(doc) {
+    const id = doc.getFlag('omnipresence', 'id');
     if (!id) return;
-    const registry = this._getAll();
-    delete registry[id];
-    await game.settings.set('omnipresence', this.SETTING, registry);
+    // Set the flag false so it wins over any stale legacy registry entry even
+    // when a non-GM cannot clear the world registry.
+    await doc.update({ 'flags.omnipresence.enrolled': false }, { omnipresenceInternal: true });
+    if (game.user.isGM) {
+      const registry = this._getAll();
+      delete registry[id];
+      await game.settings.set('omnipresence', this.SETTING, registry);
+    }
   }
 
   // Per-user sync preferences live on the User document as flags so that:
@@ -68,9 +80,13 @@ export class SyncRegistry {
   // - the GM can read any user's flags since User documents sync to all clients.
   static getPrefs(userId) {
     const user = game.users?.get(userId);
-    if (!user) return { actors: true, macros: true };
+    if (!user) return { actors: true, macros: true, journals: true };
     const stored = user.getFlag('omnipresence', 'prefs') ?? {};
-    return { actors: stored.actors !== false, macros: stored.macros !== false };
+    return {
+      actors: stored.actors !== false,
+      macros: stored.macros !== false,
+      journals: stored.journals !== false
+    };
   }
 
   static async setPrefs(userId, prefs) {
@@ -86,5 +102,9 @@ export class SyncRegistry {
 
   static isMacroSyncEnabled(userId) {
     return this.getPrefs(userId).macros !== false;
+  }
+
+  static isJournalSyncEnabled(userId) {
+    return this.getPrefs(userId).journals !== false;
   }
 }
