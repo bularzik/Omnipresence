@@ -5,6 +5,7 @@ import { JournalSync } from './scripts/journal-sync.js';
 import { registerContextMenu, registerJournalContextMenu } from './scripts/context-menu.js';
 import { OmnipresenceDashboard } from './scripts/gm-dashboard.js';
 import { registerUserConfigInjection } from './scripts/user-config.js';
+import { LinkRewriter } from './scripts/link-rewriter.js';
 
 Hooks.once('init', () => {
   SyncRegistry.register();
@@ -43,10 +44,22 @@ Hooks.once('ready', async () => {
       conflictJournalIds: journalConflicts?.length ? journalConflicts : null
     }).render(true);
   }
+
+  // Phase 2 of login link rewriting: every enrolled doc now exists locally
+  // (imports above are done), so canonical omnipresence ids that could not
+  // resolve at pull time — targets imported after the linking doc, or in an
+  // earlier session — heal now.
+  await LinkRewriter.localizeAll();
 });
 
+// Compendium copies fire the same document hooks as world docs (our own pack
+// writes included). Every handler below must ignore pack docs (`doc.pack`), or
+// a GM push feeds back on itself: the pack copy gets marked dirty and
+// re-pushed onto itself — stale-cache resurrection, ownerName wiped (its
+// ownership is stripped), and endless debounced churn.
 Hooks.on('updateActor', (actor, changes, options, userId) => {
   if (options?.omnipresenceInternal) return;
+  if (actor.pack) return;
   if (!SyncRegistry.isEnrolled(actor)) return;
   if (!SyncRegistry.isActorSyncEnabled(userId)) return;
   if (userId === game.user.id) SyncEngine.trackLocalModification(actor);
@@ -55,6 +68,7 @@ Hooks.on('updateActor', (actor, changes, options, userId) => {
 
 Hooks.on('deleteActor', (actor, options, userId) => {
   if (userId !== game.user.id) return;
+  if (actor.pack) return; // deleting a pack copy must not unenroll the world doc
   if (!SyncRegistry.isEnrolled(actor)) return;
   SyncRegistry.unenroll(actor);
 });
@@ -87,6 +101,7 @@ for (const hook of ['updateItem', 'updateActiveEffect']) {
 
 Hooks.on('updateMacro', (macro, _changes, options, _userId) => {
   if (options?.omnipresenceInternal) return;
+  if (macro.pack) return;
   MacroSync.handleMacroChange(macro);
 });
 
@@ -98,6 +113,7 @@ Hooks.on('updateUser', (user, changes, options, _userId) => {
 
 Hooks.on('updateJournalEntry', (journal, _changes, options, userId) => {
   if (options?.omnipresenceInternal) return;
+  if (journal.pack) return;
   if (!SyncRegistry.isEnrolled(journal)) return;
   if (!SyncRegistry.isJournalSyncEnabled(userId)) return;
   if (userId === game.user.id) JournalSync.trackLocalModification(journal);
@@ -106,6 +122,7 @@ Hooks.on('updateJournalEntry', (journal, _changes, options, userId) => {
 
 Hooks.on('deleteJournalEntry', (journal, _options, userId) => {
   if (userId !== game.user.id) return;
+  if (journal.pack) return; // deleting a pack copy must not unenroll the world doc
   if (!SyncRegistry.isEnrolled(journal)) return;
   SyncRegistry.unenroll(journal);
 });

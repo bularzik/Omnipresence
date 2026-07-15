@@ -215,3 +215,129 @@ export function worldLocalMediaPaths(journalData) {
   }
   return paths;
 }
+
+// ---------------------------------------------------------------------------
+// Cross-world link rewriting (Increment 2).
+//
+// The shared compendium stores links in a canonical, world-independent form:
+// every local document id whose target is enrolled is replaced by the
+// target's omnipresence id (`flags.omnipresence.id`, itself a valid
+// `randomID(16)` document id — so schema-validated fields like Foundry's
+// DocumentUUIDField accept it; an earlier `omni-<id>` prefixed form failed
+// that validation and aborted pushes). Localizing reverses that against a
+// target world's own ids. Ids absent from the translation map pass through
+// untouched, so non-enrolled targets and stable page ids are never rewritten,
+// and canonicalize is idempotent (an omniId is never a localToOmni key, and a
+// local id is never an omniToLocal key, barring negligible 16-char random
+// collisions). Unresolvable canonical ids stay dangling — they look like
+// ordinary broken links — until a later login heals them.
+
+const DOC_ID = '[A-Za-z0-9]{16}';
+const UUID_BODY = `[A-Za-z]+\\.${DOC_ID}(?:\\.[A-Za-z]+\\.${DOC_ID})*`;
+
+// The leading type segment here is `[A-Za-z]+`, not a document-type
+// whitelist, so a whole-string like `Word.<16-alnum>` is rewritten if the id
+// half collides with an enrolled local id (accepted: requires a random
+// 16-char collision; round-trips cleanly).
+/** Whole-string world-local document UUID (Compendium.* is world-independent — excluded). */
+export const UUID_PATTERN = new RegExp(`^(?!Compendium\\.)${UUID_BODY}$`);
+
+// In-string link syntaxes. Fresh RegExp per call site is not needed — these are
+// only used with String#replace, which resets lastIndex per call.
+const AT_UUID_RE = new RegExp(`@UUID\\[((?!Compendium\\.)${UUID_BODY})\\]`, 'g');
+const LEGACY_RE = new RegExp(
+  `@(Actor|JournalEntry|JournalEntryPage|Scene|Item|Macro|RollTable)\\[(${DOC_ID})\\]`, 'g'
+);
+const DATA_UUID_RE = new RegExp(`data-uuid="((?!Compendium\\.)${UUID_BODY})"`, 'g');
+
+// Translate the id segments of a dotted uuid ("Type.id.Type.id…"). Segment ids
+// the translator does not recognize come back unchanged.
+function translateUuid(uuid, translateId) {
+  const parts = uuid.split('.');
+  for (let i = 1; i < parts.length; i += 2) parts[i] = translateId(parts[i]);
+  return parts.join('.');
+}
+
+// Rewrite every link occurrence inside one string value.
+function rewriteString(value, translateId) {
+  if (UUID_PATTERN.test(value)) return translateUuid(value, translateId);
+  return value
+    .replace(AT_UUID_RE, (_m, uuid) => `@UUID[${translateUuid(uuid, translateId)}]`)
+    .replace(LEGACY_RE, (_m, type, id) => `@${type}[${translateId(id)}]`)
+    .replace(DATA_UUID_RE, (_m, uuid) => `data-uuid="${translateUuid(uuid, translateId)}"`);
+}
+
+// Deep-walk arbitrary plain data, rewriting every string. Pure — returns new
+// structures, never mutates the input. `parentKey` lets flag-scope adapters
+// hook objects under a `flags` key (see MODULE_ADAPTERS below).
+function rewriteDeep(node, translateId, parentKey = null) {
+  if (typeof node === 'string') return rewriteString(node, translateId);
+  if (Array.isArray(node)) return node.map(n => rewriteDeep(n, translateId, null));
+  if (node !== null && typeof node === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(node)) out[k] = rewriteDeep(v, translateId, k);
+    if (parentKey === 'flags') {
+      for (const [scope, adapter] of Object.entries(MODULE_ADAPTERS)) {
+        if (out[scope] && typeof out[scope] === 'object') {
+          out[scope] = adapter(out[scope], translateId);
+        }
+      }
+    }
+    return out;
+  }
+  return node;
+}
+
+// Monk's Enhanced Journal stores relationships keyed by BARE local entry id,
+// with a bare `id` property beside a full `uuid` string, and an `actor` flag
+// that may be an object with a bare `id`. The generic walk rewrites the uuid
+// strings; this adapter keeps the bare ids/keys consistent with them.
+function mejAdapter(scope, translateId) {
+  const out = { ...scope };
+  const rel = out.relationships;
+  if (rel && typeof rel === 'object' && !Array.isArray(rel)) {
+    const next = {};
+    for (const [key, value] of Object.entries(rel)) {
+      const newKey = translateId(key);
+      // A renamed entry must not clobber an identity-keyed one (and vice versa
+      // an identity entry always wins): guards against corrupted pre-fix state
+      // where both a stale omni- key and the local key coexist.
+      if (newKey !== key && newKey in next) continue;
+      const v = (value && typeof value === 'object' && typeof value.id === 'string')
+        ? { ...value, id: translateId(value.id) }
+        : value;
+      next[newKey] = v;
+    }
+    out.relationships = next;
+  }
+  if (out.actor && typeof out.actor === 'object' && typeof out.actor.id === 'string') {
+    out.actor = { ...out.actor, id: translateId(out.actor.id) };
+  }
+  return out;
+}
+
+// Per-module adapters for link storage the generic walk cannot see (bare local
+// ids without a Type. prefix). Each adapter receives the (already deep-walked)
+// flag-scope object and the bare-id translator, and returns a new scope object.
+const MODULE_ADAPTERS = {
+  'monks-enhanced-journal': mejAdapter
+};
+
+/**
+ * Replace local ids of enrolled documents with the target's canonical
+ * omnipresence id throughout `data`. @param localToOmni Map<localId, omniId>
+ */
+export function canonicalizeLinks(data, localToOmni) {
+  const translateId = id => localToOmni.get(id) ?? id;
+  return rewriteDeep(data, translateId);
+}
+
+/**
+ * Replace resolvable canonical omnipresence ids with this world's local ids
+ * throughout `data`; unresolvable ids stay dangling (healed at a later login
+ * once the target exists). @param omniToLocal Map<omniId, localId>
+ */
+export function localizeLinks(data, omniToLocal) {
+  const translateId = id => omniToLocal.get(id) ?? id;
+  return rewriteDeep(data, translateId);
+}

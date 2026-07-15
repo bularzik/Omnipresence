@@ -28,6 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   missing for full fidelity (plus world-local media paths).
 - Pure, unit-tested helpers `resolveOwningJournal`, `requiredModulesForJournal`,
   and `worldLocalMediaPaths` in `sync-logic.js`.
+- **Cross-world link rewriting (Journal sync Increment 2).** Links to enrolled
+  actors and journals — `@UUID[…]` enrichers, legacy `@Actor[…]`-style
+  enrichers, `data-uuid` attributes, and UUID-valued data fields (e.g.
+  Campaign Record relations) — now resolve in every world. The shared
+  compendium stores canonical omnipresence ids (valid document ids, so
+  schema-validated fields like Campaign Record's relations accept them); each
+  world localizes them on pull/import, and a login heal pass resolves links
+  whose targets arrived later. Includes a Monk's Enhanced Journal adapter for
+  its bare-id relationship storage. Links to non-enrolled documents are left
+  untouched.
 
 ### Changed
 - Actor and journal conflicts detected at login are now surfaced in a **single**
@@ -36,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `ready` hook opens one dashboard carrying both.
 
 ### Fixed
+- Change hooks now ignore compendium documents. Our own pack writes fire the
+  same `update*`/`delete*`/page hooks as world docs, so a GM push previously
+  fed back on itself: the pack copy was marked dirty and re-pushed onto itself
+  every 2s, resurrecting stale cached state, wiping `ownerName` (pack copies
+  carry no ownership), and — via the delete hooks — unenrolling a world doc
+  when its pack copy was deleted. All handlers now bail on `doc.pack`.
+
 - Non-GM users who own a document can now enroll it in sync. Enrollment is
   tracked by an owner-writable `flags.omnipresence.enrolled` flag instead of a
   GM-only world setting, which previously threw a permission error for players.

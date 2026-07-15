@@ -1,3 +1,4 @@
+import { LinkRewriter } from './link-rewriter.js';
 import { SyncRegistry } from './sync-registry.js';
 import {
   decideSyncAction,
@@ -49,8 +50,11 @@ export class JournalSync {
 
     const syncedAt = new Date().toISOString();
 
-    // Strip world-local fields (top-level _id/ownership/folder) and per-page ownership.
-    const journalData = this._stripPageOwnership(stripWorldLocalFields(journal.toObject()));
+    // Strip world-local fields (top-level _id/ownership/folder) and per-page
+    // ownership, then canonicalize links so the pack copy is world-independent.
+    const journalData = LinkRewriter.canonicalize(
+      this._stripPageOwnership(stripWorldLocalFields(journal.toObject()))
+    );
     journalData.flags ??= {};
     journalData.flags.omnipresence ??= {};
     delete journalData.flags.omnipresence.localModifiedAt;
@@ -104,6 +108,9 @@ export class JournalSync {
    */
   static handlePageChange(page, options, userId) {
     if (options?.omnipresenceInternal) return;
+    // Compendium copies fire these hooks too (our own pushes) — never treat a
+    // pack doc as a local enrolled doc, or the push feeds back on itself.
+    if (page.pack) return;
     const journal = resolveOwningJournal(page);
     if (!journal) return;
     if (!SyncRegistry.isEnrolled(journal)) return;
@@ -147,8 +154,11 @@ export class JournalSync {
   }
 
   static async pull(localJournal, compJournal) {
-    // Strip world-local fields so local ownership and folder are preserved.
-    const journalData = this._stripPageOwnership(stripWorldLocalFields(compJournal.toObject()));
+    // Strip world-local fields so local ownership and folder are preserved,
+    // and localize canonical omnipresence ids to this world's ids.
+    const journalData = LinkRewriter.localize(
+      this._stripPageOwnership(stripWorldLocalFields(compJournal.toObject()))
+    );
     journalData.flags ??= {};
     journalData.flags.omnipresence ??= {};
     // Reset localModifiedAt to match the pulled syncedAt (no local changes outstanding).
@@ -228,7 +238,9 @@ export class JournalSync {
           continue;
         }
 
-        const journalData = this._stripPageOwnership(stripWorldLocalFields(compJournal.toObject()));
+        const journalData = LinkRewriter.localize(
+          this._stripPageOwnership(stripWorldLocalFields(compJournal.toObject()))
+        );
         journalData.flags ??= {};
         journalData.flags.omnipresence ??= {};
         journalData.flags.omnipresence.localModifiedAt = journalData.flags.omnipresence.syncedAt;

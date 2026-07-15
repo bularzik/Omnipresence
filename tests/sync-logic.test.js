@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom } from '../scripts/sync-logic.js';
+import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks } from '../scripts/sync-logic.js';
 
 const T0 = '2026-06-14T10:00:00.000Z';
 const T1 = '2026-06-14T11:00:00.000Z';
@@ -322,4 +322,213 @@ test('isEnrolledFrom: no flag, in registry → true (legacy)', () => {
 
 test('isEnrolledFrom: no flag, not in registry → false', () => {
   assert.equal(isEnrolledFrom({ id: 'k', enrolledFlag: undefined, inRegistry: false }), false);
+});
+
+// ---------------------------------------------------------------------------
+// Link rewriting (Increment 2)
+
+// Fixture maps: two enrolled docs (an actor and a journal entry).
+const L2O = new Map([
+  ['aaaaaaaaaaaaaaaa', 'AAAAAAAAAAAAAAAA'], // enrolled actor: local id → omni id
+  ['jjjjjjjjjjjjjjjj', 'JJJJJJJJJJJJJJJJ']  // enrolled journal entry
+]);
+const O2L = new Map([...L2O.entries()].map(([l, o]) => [o, l]));
+
+test('UUID_PATTERN matches document uuids and rejects non-uuids', () => {
+  assert.ok(UUID_PATTERN.test('Actor.aaaaaaaaaaaaaaaa'));
+  assert.ok(UUID_PATTERN.test('JournalEntry.jjjjjjjjjjjjjjjj.JournalEntryPage.pppppppppppppppp'));
+  assert.equal(UUID_PATTERN.test('JournalEntry.omni-JJJJJJJJJJJJJJJJ'), false);
+  assert.equal(UUID_PATTERN.test('Compendium.dnd5e.spells24.Item.aaaaaaaaaaaaaaaa'), false);
+  assert.equal(UUID_PATTERN.test('hello world'), false);
+  assert.equal(UUID_PATTERN.test('worlds/world-a/img.png'), false);
+  assert.equal(UUID_PATTERN.test('aaaaaaaaaaaaaaaa'), false); // bare id: no type context
+});
+
+test('canonicalizeLinks: whole-string UUID value → omni id', () => {
+  assert.equal(
+    canonicalizeLinks('Actor.aaaaaaaaaaaaaaaa', L2O),
+    'Actor.AAAAAAAAAAAAAAAA'
+  );
+});
+
+test('canonicalizeLinks: page uuid — entry segment only (page id untouched)', () => {
+  assert.equal(
+    canonicalizeLinks('JournalEntry.jjjjjjjjjjjjjjjj.JournalEntryPage.pppppppppppppppp', L2O),
+    'JournalEntry.JJJJJJJJJJJJJJJJ.JournalEntryPage.pppppppppppppppp'
+  );
+});
+
+test('canonicalizeLinks: @UUID, legacy enricher, and data-uuid inside HTML', () => {
+  const html =
+    '<p>@UUID[Actor.aaaaaaaaaaaaaaaa]{Hero} and @JournalEntry[jjjjjjjjjjjjjjjj]{Notes}</p>' +
+    '<a data-uuid="JournalEntry.jjjjjjjjjjjjjjjj.JournalEntryPage.pppppppppppppppp">x</a>';
+  assert.equal(
+    canonicalizeLinks(html, L2O),
+    '<p>@UUID[Actor.AAAAAAAAAAAAAAAA]{Hero} and @JournalEntry[JJJJJJJJJJJJJJJJ]{Notes}</p>' +
+    '<a data-uuid="JournalEntry.JJJJJJJJJJJJJJJJ.JournalEntryPage.pppppppppppppppp">x</a>'
+  );
+});
+
+test('canonicalizeLinks: non-enrolled targets untouched', () => {
+  const html = '@UUID[Scene.ssssssssssssssss]{Map} and Actor.bbbbbbbbbbbbbbbb';
+  assert.equal(canonicalizeLinks(html, L2O), html);
+});
+
+test('canonicalizeLinks: idempotent on already-canonical input', () => {
+  const s = '@UUID[Actor.AAAAAAAAAAAAAAAA]{Hero}';
+  assert.equal(canonicalizeLinks(canonicalizeLinks(s, L2O), L2O), canonicalizeLinks(s, L2O));
+});
+
+test('canonicalizeLinks: deep walk over nested system/flags incl. arrays (CR shapes)', () => {
+  const page = {
+    system: {
+      actor: 'Actor.aaaaaaaaaaaaaaaa',
+      combatants: [{ actor: 'Actor.aaaaaaaaaaaaaaaa' }, { actor: 'Actor.bbbbbbbbbbbbbbbb' }]
+    },
+    flags: {
+      'campaign-record': {
+        group: { timepoints: [{ links: [{ uuid: 'JournalEntry.jjjjjjjjjjjjjjjj' }] }] }
+      }
+    }
+  };
+  const out = canonicalizeLinks(page, L2O);
+  assert.equal(out.system.actor, 'Actor.AAAAAAAAAAAAAAAA');
+  assert.equal(out.system.combatants[0].actor, 'Actor.AAAAAAAAAAAAAAAA');
+  assert.equal(out.system.combatants[1].actor, 'Actor.bbbbbbbbbbbbbbbb'); // not enrolled
+  assert.equal(
+    out.flags['campaign-record'].group.timepoints[0].links[0].uuid,
+    'JournalEntry.JJJJJJJJJJJJJJJJ'
+  );
+});
+
+test('canonicalizeLinks does not mutate its input', () => {
+  const input = { system: { actor: 'Actor.aaaaaaaaaaaaaaaa' } };
+  canonicalizeLinks(input, L2O);
+  assert.equal(input.system.actor, 'Actor.aaaaaaaaaaaaaaaa');
+});
+
+test('localizeLinks: resolves canonical ids; unknown id left dangling', () => {
+  const html = '@UUID[Actor.AAAAAAAAAAAAAAAA]{Hero} @UUID[Actor.ZZZZZZZZZZZZZZZZ]{Gone}';
+  assert.equal(
+    localizeLinks(html, O2L),
+    '@UUID[Actor.aaaaaaaaaaaaaaaa]{Hero} @UUID[Actor.ZZZZZZZZZZZZZZZZ]{Gone}'
+  );
+});
+
+test('round-trip: localize(canonicalize(x)) === x under inverse maps', () => {
+  const doc = {
+    name: 'Doc',
+    pages: [{
+      _id: 'pppppppppppppppp',
+      text: { content: '<p>@UUID[JournalEntry.jjjjjjjjjjjjjjjj.JournalEntryPage.pppppppppppppppp]{p}</p>' },
+      system: { actor: 'Actor.aaaaaaaaaaaaaaaa' }
+    }],
+    flags: { omnipresence: { id: 'JJJJJJJJJJJJJJJJ' } }
+  };
+  assert.deepEqual(localizeLinks(canonicalizeLinks(doc, L2O), O2L), doc);
+});
+
+test('canonicalizeLinks: non-string scalars pass through', () => {
+  assert.deepEqual(
+    canonicalizeLinks({ n: 3, b: true, x: null, a: [1, 'Actor.aaaaaaaaaaaaaaaa'] }, L2O),
+    { n: 3, b: true, x: null, a: [1, 'Actor.AAAAAAAAAAAAAAAA'] }
+  );
+});
+
+test('canonicalizeLinks: actor-shaped data — bio HTML, item description, effect flags', () => {
+  const actor = {
+    system: { details: { biography: { value: '<p>@UUID[JournalEntry.jjjjjjjjjjjjjjjj]{Notes}</p>' } } },
+    items: [{
+      _id: 'iiiiiiiiiiiiiiii',
+      system: { description: { value: '<a data-uuid="Actor.aaaaaaaaaaaaaaaa">Hero</a>' } },
+      effects: [{ _id: 'ffffffffffffffff', flags: { somemod: { source: 'JournalEntry.jjjjjjjjjjjjjjjj' } } }]
+    }],
+    effects: [{ _id: 'gggggggggggggggg', flags: { somemod: { origin: 'Actor.aaaaaaaaaaaaaaaa' } } }]
+  };
+  const out = canonicalizeLinks(actor, L2O);
+  assert.equal(
+    out.system.details.biography.value,
+    '<p>@UUID[JournalEntry.JJJJJJJJJJJJJJJJ]{Notes}</p>'
+  );
+  assert.equal(
+    out.items[0].system.description.value,
+    '<a data-uuid="Actor.AAAAAAAAAAAAAAAA">Hero</a>'
+  );
+  assert.equal(
+    out.items[0].effects[0].flags.somemod.source,
+    'JournalEntry.JJJJJJJJJJJJJJJJ'
+  );
+  assert.equal(out.effects[0].flags.somemod.origin, 'Actor.AAAAAAAAAAAAAAAA');
+  assert.equal(out.items[0]._id, 'iiiiiiiiiiiiiiii'); // embedded _ids never rewritten
+});
+
+test('MEJ adapter: relationships keys, id props, and uuid strings all canonicalize', () => {
+  const page = {
+    flags: {
+      'monks-enhanced-journal': {
+        type: 'person',
+        relationships: {
+          jjjjjjjjjjjjjjjj: { id: 'jjjjjjjjjjjjjjjj', uuid: 'JournalEntry.jjjjjjjjjjjjjjjj', hidden: false },
+          nnnnnnnnnnnnnnnn: { id: 'nnnnnnnnnnnnnnnn', uuid: 'JournalEntry.nnnnnnnnnnnnnnnn' } // not enrolled
+        },
+        actor: { id: 'aaaaaaaaaaaaaaaa', name: 'Hero', img: 'x.png' }
+      }
+    }
+  };
+  const out = canonicalizeLinks(page, L2O);
+  const mej = out.flags['monks-enhanced-journal'];
+  assert.deepEqual(Object.keys(mej.relationships).sort(), [
+    'JJJJJJJJJJJJJJJJ', 'nnnnnnnnnnnnnnnn'
+  ]);
+  assert.equal(mej.relationships['JJJJJJJJJJJJJJJJ'].id, 'JJJJJJJJJJJJJJJJ');
+  assert.equal(mej.relationships['JJJJJJJJJJJJJJJJ'].uuid, 'JournalEntry.JJJJJJJJJJJJJJJJ');
+  assert.equal(mej.relationships['JJJJJJJJJJJJJJJJ'].hidden, false);
+  assert.equal(mej.relationships['nnnnnnnnnnnnnnnn'].id, 'nnnnnnnnnnnnnnnn');
+  assert.equal(mej.actor.id, 'AAAAAAAAAAAAAAAA');
+  assert.equal(mej.actor.name, 'Hero');
+  assert.equal(mej.type, 'person');
+});
+
+test('MEJ adapter: round-trip restores original keys and ids', () => {
+  const page = {
+    flags: {
+      'monks-enhanced-journal': {
+        relationships: {
+          jjjjjjjjjjjjjjjj: { id: 'jjjjjjjjjjjjjjjj', uuid: 'JournalEntry.jjjjjjjjjjjjjjjj' }
+        },
+        actor: { id: 'aaaaaaaaaaaaaaaa' }
+      }
+    }
+  };
+  assert.deepEqual(localizeLinks(canonicalizeLinks(page, L2O), O2L), page);
+});
+
+test('MEJ adapter: plain-string actor flag handled by generic walk', () => {
+  const page = { flags: { 'monks-enhanced-journal': { actor: 'Actor.aaaaaaaaaaaaaaaa' } } };
+  assert.equal(
+    canonicalizeLinks(page, L2O).flags['monks-enhanced-journal'].actor,
+    'Actor.AAAAAAAAAAAAAAAA'
+  );
+});
+
+test('MEJ adapter: tolerates missing/odd shapes', () => {
+  const a = { flags: { 'monks-enhanced-journal': {} } };
+  assert.deepEqual(canonicalizeLinks(a, L2O), a);
+  const b = { flags: { 'monks-enhanced-journal': { relationships: [] } } };
+  assert.deepEqual(canonicalizeLinks(b, L2O), b); // legacy array form: leave alone
+});
+
+test('MEJ adapter: stale omni key + identity local key collision — local entry wins deterministically', () => {
+  const mk = (rel) => ({ flags: { 'monks-enhanced-journal': { relationships: rel } } });
+  const localEntry = { id: 'jjjjjjjjjjjjjjjj', uuid: 'JournalEntry.jjjjjjjjjjjjjjjj', hidden: false };
+  const staleEntry = { id: 'JJJJJJJJJJJJJJJJ', uuid: 'JournalEntry.JJJJJJJJJJJJJJJJ', hidden: true };
+  // Both orders must produce the same single, local-keyed entry.
+  for (const rel of [
+    { JJJJJJJJJJJJJJJJ: staleEntry, jjjjjjjjjjjjjjjj: localEntry },
+    { jjjjjjjjjjjjjjjj: localEntry, JJJJJJJJJJJJJJJJ: staleEntry }
+  ]) {
+    const out = localizeLinks(mk(rel), O2L).flags['monks-enhanced-journal'].relationships;
+    assert.deepEqual(Object.keys(out), ['jjjjjjjjjjjjjjjj']);
+    assert.equal(out.jjjjjjjjjjjjjjjj.hidden, false); // the identity (local) entry won
+  }
 });

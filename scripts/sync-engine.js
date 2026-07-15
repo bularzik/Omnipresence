@@ -1,3 +1,4 @@
+import { LinkRewriter } from './link-rewriter.js';
 import { SyncRegistry } from './sync-registry.js';
 import {
   decideSyncAction,
@@ -42,8 +43,9 @@ export class SyncEngine {
 
     const syncedAt = new Date().toISOString();
 
-    // Strip world-local fields (_id, ownership, folder) before writing to the shared compendium.
-    const actorData = stripWorldLocalFields(actor.toObject());
+    // Strip world-local fields (_id, ownership, folder) and canonicalize links
+    // so the pack copy is world-independent.
+    const actorData = LinkRewriter.canonicalize(stripWorldLocalFields(actor.toObject()));
 
     // Strip world-local sync metadata and stamp the shared syncedAt.
     actorData.flags ??= {};
@@ -100,6 +102,9 @@ export class SyncEngine {
    */
   static handleEmbeddedChange(doc, options, userId) {
     if (options?.omnipresenceInternal) return;
+    // Compendium copies fire these hooks too (our own pushes) — never treat a
+    // pack doc as a local enrolled doc, or the push feeds back on itself.
+    if (doc.pack) return;
     const actor = resolveOwningActor(doc);
     if (!actor) return;
     if (!SyncRegistry.isEnrolled(actor)) return;
@@ -156,8 +161,9 @@ export class SyncEngine {
   }
 
   static async pull(localActor, compActor) {
-    // Strip world-local fields so local ownership and folder are preserved.
-    const actorData = stripWorldLocalFields(compActor.toObject());
+    // Strip world-local fields so local ownership and folder are preserved,
+    // and localize canonical omnipresence ids to this world's ids.
+    const actorData = LinkRewriter.localize(stripWorldLocalFields(compActor.toObject()));
     actorData.flags ??= {};
     actorData.flags.omnipresence ??= {};
     // Reset localModifiedAt to match the pulled syncedAt (no local changes outstanding).
@@ -246,7 +252,7 @@ export class SyncEngine {
         continue;
       }
 
-      const actorData = stripWorldLocalFields(compActor.toObject());
+      const actorData = LinkRewriter.localize(stripWorldLocalFields(compActor.toObject()));
       actorData.flags ??= {};
       actorData.flags.omnipresence ??= {};
       actorData.flags.omnipresence.localModifiedAt = actorData.flags.omnipresence.syncedAt;
