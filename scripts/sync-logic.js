@@ -341,3 +341,47 @@ export function localizeLinks(data, omniToLocal) {
   const translateId = id => omniToLocal.get(id) ?? id;
   return rewriteDeep(data, translateId);
 }
+
+// ---------------------------------------------------------------------------
+// Map-pin sync (pure helpers). Pins are scene Note documents that travel with
+// their enrolled journal: captured into the pack copy's
+// flags.omnipresence.pins on push, mirrored onto same-named scenes on apply.
+
+/**
+ * Build a journal's cross-world pin payload from per-scene note snapshots.
+ * Only notes whose entryId matches journalLocalId are captured; entryId is
+ * replaced with the journal's omnipresence id (bare local ids are invisible
+ * to the generic link walk, so this substitution is explicit). Scene-name
+ * collisions: the first occurrence wins; later same-named scenes that held
+ * matching notes are reported for the caller to warn about. Input not mutated.
+ * @returns {{ pins: Array<{sceneName: string, note: object}>, duplicateSceneNames: string[] }}
+ */
+export function capturePinPayload(sceneNotes, journalLocalId, journalOmniId) {
+  const seen = new Set();
+  const duplicates = new Set();
+  const pins = [];
+  for (const { sceneName, notes } of sceneNotes ?? []) {
+    if (seen.has(sceneName)) {
+      if ((notes ?? []).some(n => n.entryId === journalLocalId)) duplicates.add(sceneName);
+      continue;
+    }
+    seen.add(sceneName);
+    for (const note of notes ?? []) {
+      if (note.entryId !== journalLocalId) continue;
+      pins.push({ sceneName, note: { ...structuredClone(note), entryId: journalOmniId } });
+    }
+  }
+  return { pins, duplicateSceneNames: [...duplicates].sort() };
+}
+
+/**
+ * Localize a pin payload for this world: point every note at the local
+ * journal id. (Every pin in a journal's payload targets that journal, so
+ * this is a constant substitution.) Input not mutated.
+ */
+export function localizePins(pins, journalLocalId) {
+  return (pins ?? []).map(p => ({
+    ...p,
+    note: { ...structuredClone(p.note), entryId: journalLocalId }
+  }));
+}

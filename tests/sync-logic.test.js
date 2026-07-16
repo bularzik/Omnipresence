@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks } from '../scripts/sync-logic.js';
+import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins } from '../scripts/sync-logic.js';
 
 const T0 = '2026-06-14T10:00:00.000Z';
 const T1 = '2026-06-14T11:00:00.000Z';
@@ -545,4 +545,59 @@ test('macro-shaped data: command links round-trip through canonicalize/localize'
   assert.ok(canonical.command.includes('@UUID[Actor.AAAAAAAAAAAAAAAA]{Hero}'));
   assert.equal(canonical.flags.omnipresence.id, 'MMMMMMMMMMMMMMMM'); // bare flag id untouched
   assert.deepEqual(localizeLinks(canonical, O2L), macro); // round-trip
+});
+
+// ---------------------------------------------------------------------------
+// Map-pin sync (pure helpers)
+
+const PIN_J = 'jrnlocal11111111';   // journal local id
+const PIN_OMNI = 'JRNOMNI111111111'; // journal omni id
+const mkNote = (id, entryId, x = 100) =>
+  ({ _id: id, entryId, pageId: null, x, y: 200, texture: { src: 'icons/svg/book.svg' }, flags: {} });
+
+test('capturePinPayload: filters to the journal and canonicalizes entryId', () => {
+  const sceneNotes = [
+    { sceneName: 'River Camp', notes: [mkNote('n1aaaaaaaaaaaaaa', PIN_J), mkNote('n2aaaaaaaaaaaaaa', 'otherjournal1111')] },
+    { sceneName: 'Cave', notes: [mkNote('n3aaaaaaaaaaaaaa', PIN_J)] }
+  ];
+  const { pins, duplicateSceneNames } = capturePinPayload(sceneNotes, PIN_J, PIN_OMNI);
+  assert.equal(pins.length, 2);
+  assert.deepEqual(pins.map(p => p.sceneName), ['River Camp', 'Cave']);
+  assert.equal(pins[0].note._id, 'n1aaaaaaaaaaaaaa');
+  assert.equal(pins[0].note.entryId, PIN_OMNI);
+  assert.equal(pins[1].note.entryId, PIN_OMNI);
+  assert.deepEqual(duplicateSceneNames, []);
+});
+
+test('capturePinPayload: duplicate scene names — first wins, losers reported', () => {
+  const sceneNotes = [
+    { sceneName: 'Cave', notes: [mkNote('n1aaaaaaaaaaaaaa', PIN_J)] },
+    { sceneName: 'Cave', notes: [mkNote('n2aaaaaaaaaaaaaa', PIN_J)] },
+    { sceneName: 'Cave', notes: [mkNote('n3aaaaaaaaaaaaaa', 'otherjournal1111')] } // no matching notes → not reported
+  ];
+  const { pins, duplicateSceneNames } = capturePinPayload(sceneNotes, PIN_J, PIN_OMNI);
+  assert.equal(pins.length, 1);
+  assert.equal(pins[0].note._id, 'n1aaaaaaaaaaaaaa');
+  assert.deepEqual(duplicateSceneNames, ['Cave']);
+});
+
+test('capturePinPayload: no pins → empty payload; does not mutate input', () => {
+  const note = mkNote('n1aaaaaaaaaaaaaa', PIN_J);
+  const sceneNotes = [{ sceneName: 'Cave', notes: [note] }];
+  const out = capturePinPayload(sceneNotes, 'unrelatedjournal', PIN_OMNI);
+  assert.deepEqual(out.pins, []);
+  capturePinPayload(sceneNotes, PIN_J, PIN_OMNI);
+  assert.equal(note.entryId, PIN_J); // input untouched
+});
+
+test('localizePins: points every note at the local journal id, without mutating', () => {
+  const pins = [
+    { sceneName: 'Cave', note: mkNote('n1aaaaaaaaaaaaaa', PIN_OMNI) },
+    { sceneName: 'River Camp', note: mkNote('n2aaaaaaaaaaaaaa', PIN_OMNI) }
+  ];
+  const out = localizePins(pins, PIN_J);
+  assert.deepEqual(out.map(p => p.note.entryId), [PIN_J, PIN_J]);
+  assert.equal(pins[0].note.entryId, PIN_OMNI); // input untouched
+  assert.equal(out[0].note._id, 'n1aaaaaaaaaaaaaa');
+  assert.deepEqual(localizePins(undefined, PIN_J), []);
 });

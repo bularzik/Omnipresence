@@ -51,6 +51,10 @@ Hooks.once('ready', async () => {
   // earlier session — heal now.
   await LinkRewriter.localizeAll();
 
+  // Phase 2b: mirror map pins once every journal/scene that will exist this
+  // session does — heals pins whose targets arrived after the journal's pull.
+  await JournalSync.applyAllPins();
+
   // Cancel (never flush) pending debounced pushes when the page goes away —
   // a timer firing into the world-teardown window produces partial pack
   // writes. Cancellation is synchronous and lossless: the edits are already
@@ -149,6 +153,18 @@ for (const hook of ['createJournalEntryPage', 'deleteJournalEntryPage']) {
   Hooks.on(hook, onPageCreateDelete);
 }
 Hooks.on('updateJournalEntryPage', onPageUpdate);
+
+// Map-pin changes (scene Note docs) don't fire journal hooks — route them to
+// the journal the pin points at. create/delete fire (doc, options, userId);
+// update fires (doc, changes, options, userId).
+const onNoteCreateDelete = (doc, options, userId) =>
+  JournalSync.handleNoteChange(doc, options, userId);
+const onNoteUpdate = (doc, _changes, options, userId) =>
+  JournalSync.handleNoteChange(doc, options, userId);
+for (const hook of ['createNote', 'deleteNote']) {
+  Hooks.on(hook, onNoteCreateDelete);
+}
+Hooks.on('updateNote', onNoteUpdate);
 
 Hooks.on('getJournalEntryContextOptions', (_directory, entryOptions) => {
   registerJournalContextMenu(entryOptions);

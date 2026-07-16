@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Map-pin sync.** An enrolled journal's map pins (scene notes) now travel
+  with it: captured on push, and mirrored — created, moved, deleted — onto
+  same-named scenes in other worlds at GM login. Scenes themselves stay
+  world-local; worlds without a matching scene skip the pins and heal at a
+  later login once the scene exists.
+
 ### Fixed
 - Hotbar macros now participate in cross-world link rewriting: document links
   inside a macro's command are canonicalized on push and localized on pull,

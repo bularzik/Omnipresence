@@ -100,6 +100,11 @@ Because only a GM can write to the shared compendium, players resolve conflicts 
 - Same-server only. Cross-server sync is not supported in this version.
 - System-agnostic. Full documents are synced without interpreting system-specific data, so Omnipresence works with any supported game system; journals use a single system-agnostic pack.
 - Deleting an enrolled actor or journal from a world removes it from that world's sync registry but leaves the compendium entry intact. The next time you log into any world, the document is automatically re-imported.
-- Cross-world links only work between enrolled documents. Scenes are not synced, so scene links (and journal map pins) stay world-local.
+- Cross-world links only work between enrolled documents. Scenes are not
+  synced, so scene links stay world-local.
+- **Map pins travel with their journal.** A synced journal's map pins are
+  mirrored onto scenes with the **same name** in other worlds (created, moved,
+  and deleted to match), applied at GM login. Rename a scene and its pins stop
+  syncing for it — nothing is deleted, they simply stop matching.
 - Macro sync is all-or-nothing per user — there is no per-macro opt-in. If you want a macro local-only, keep it off your hotbar.
 - Sync preferences are world-scoped. A preference set in World A does not carry to World B automatically, since user IDs differ between worlds.
