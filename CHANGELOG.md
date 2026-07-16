@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-16
+
 ### Fixed
 - Journal pulls no longer carry spurious page updates caused by server-managed
   `_stats` differences between worlds.
@@ -200,7 +202,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/publish` slash command and a GitHub Actions release workflow (manifest,
   download, and url fields for Foundry installation).
 
-[Unreleased]: https://github.com/bularzik/Omnipresence/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/bularzik/Omnipresence/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/bularzik/Omnipresence/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/bularzik/Omnipresence/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/bularzik/Omnipresence/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/bularzik/Omnipresence/compare/v0.2.3...v0.2.4
