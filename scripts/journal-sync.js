@@ -174,20 +174,24 @@ export class JournalSync {
 
   /**
    * Make target's pages match snapshotData.pages (matched by _id). Page-level
-   * ownership is dropped from both sides of the diff so re-applying a local
-   * ownership never registers as a change (avoids perpetual churn). Creates use
-   * keepId so page _ids stay stable across worlds (the cross-world match key).
+   * ownership and server-managed _stats are dropped from both sides of the
+   * diff so re-applying local ownership — or the pack write's own _stats
+   * stamp — never registers as a change (avoids spurious updates on pull).
+   * Creates use keepId so page _ids stay stable across worlds (the
+   * cross-world match key).
    */
   static async reconcileJournalPages(target, snapshotData) {
     const collection = target.getEmbeddedCollection('JournalEntryPage');
     const localDocs = collection.map(d => {
       const o = d.toObject();
       delete o.ownership;
+      delete o._stats;
       return o;
     });
     const snapshotDocs = (snapshotData.pages ?? []).map(p => {
       const c = structuredClone(p);
       delete c.ownership;
+      delete c._stats;
       return c;
     });
     const { toCreate, toUpdate, toDelete } = diffEmbedded(localDocs, snapshotDocs);
@@ -373,32 +377,39 @@ export class JournalSync {
         if (!omnipresenceId) continue;
         if (localOmnipresenceIds.has(omnipresenceId)) continue;
 
-        const ownerName = compJournal.getFlag('omnipresence', 'ownerName');
-        if (!ownerName) {
-          console.warn('Omnipresence | compendium journal has no ownerName, skipping auto-import:', compJournal.name);
-          continue;
+        // One malformed pack copy (e.g. tampered flags) must not abort the
+        // remaining imports — or, via ready's serial awaits, link/pin healing
+        // and the beforeunload guard.
+        try {
+          const ownerName = compJournal.getFlag('omnipresence', 'ownerName');
+          if (!ownerName) {
+            console.warn('Omnipresence | compendium journal has no ownerName, skipping auto-import:', compJournal.name);
+            continue;
+          }
+
+          const matchingUser = game.users.find(u => u.name === ownerName);
+          if (!matchingUser) {
+            console.warn('Omnipresence | no user named', ownerName, '— skipping auto-import of', compJournal.name);
+            continue;
+          }
+
+          const journalData = LinkRewriter.localize(
+            this._stripPageOwnership(stripWorldLocalFields(compJournal.toObject()))
+          );
+          journalData.flags ??= {};
+          journalData.flags.omnipresence ??= {};
+          journalData.flags.omnipresence.localModifiedAt = journalData.flags.omnipresence.syncedAt;
+          const pins = journalData.flags.omnipresence.pins;
+          delete journalData.flags.omnipresence.pins;
+          journalData.ownership = { default: 0, [matchingUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER };
+
+          const created = await JournalEntry.create(journalData, { keepId: true });
+          await SyncRegistry.enroll(created);
+          if (pins !== undefined) await this._applyPins(created, pins);
+          touched.push(created);
+        } catch (err) {
+          console.error('Omnipresence | journal auto-import failed for', compJournal.name, err);
         }
-
-        const matchingUser = game.users.find(u => u.name === ownerName);
-        if (!matchingUser) {
-          console.warn('Omnipresence | no user named', ownerName, '— skipping auto-import of', compJournal.name);
-          continue;
-        }
-
-        const journalData = LinkRewriter.localize(
-          this._stripPageOwnership(stripWorldLocalFields(compJournal.toObject()))
-        );
-        journalData.flags ??= {};
-        journalData.flags.omnipresence ??= {};
-        journalData.flags.omnipresence.localModifiedAt = journalData.flags.omnipresence.syncedAt;
-        const pins = journalData.flags.omnipresence.pins;
-        delete journalData.flags.omnipresence.pins;
-        journalData.ownership = { default: 0, [matchingUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER };
-
-        const created = await JournalEntry.create(journalData, { keepId: true });
-        await SyncRegistry.enroll(created);
-        if (pins !== undefined) await this._applyPins(created, pins);
-        touched.push(created);
       }
     }
 

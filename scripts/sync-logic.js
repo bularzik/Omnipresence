@@ -250,6 +250,13 @@ const LEGACY_RE = new RegExp(
 );
 const DATA_UUID_RE = new RegExp(`data-uuid="((?!Compendium\\.)${UUID_BODY})"`, 'g');
 
+// Quoted whole-UUID strings inside code text — e.g. fromUuid('JournalEntry.<id>')
+// in a macro command. Matching-quote delimited (', ", or `), full dotted UUID
+// shape only, Compendium.* excluded. Only ids present in the translation map
+// change, so a false positive requires a random 16-char collision with an
+// enrolled document's id.
+const QUOTED_UUID_RE = new RegExp(`(['"\`])((?!Compendium\\.)${UUID_BODY})\\1`, 'g');
+
 // Translate the id segments of a dotted uuid ("Type.id.Type.id…"). Segment ids
 // the translator does not recognize come back unchanged.
 function translateUuid(uuid, translateId) {
@@ -264,7 +271,8 @@ function rewriteString(value, translateId) {
   return value
     .replace(AT_UUID_RE, (_m, uuid) => `@UUID[${translateUuid(uuid, translateId)}]`)
     .replace(LEGACY_RE, (_m, type, id) => `@${type}[${translateId(id)}]`)
-    .replace(DATA_UUID_RE, (_m, uuid) => `data-uuid="${translateUuid(uuid, translateId)}"`);
+    .replace(DATA_UUID_RE, (_m, uuid) => `data-uuid="${translateUuid(uuid, translateId)}"`)
+    .replace(QUOTED_UUID_RE, (_m, q, uuid) => `${q}${translateUuid(uuid, translateId)}${q}`);
 }
 
 // Deep-walk arbitrary plain data, rewriting every string. Pure — returns new
@@ -378,10 +386,14 @@ export function capturePinPayload(sceneNotes, journalLocalId, journalOmniId) {
  * Localize a pin payload for this world: point every note at the local
  * journal id. (Every pin in a journal's payload targets that journal, so
  * this is a constant substitution.) Input not mutated.
+ * Malformed payloads — non-array pins, entries without an object note — are tolerated and dropped.
  */
 export function localizePins(pins, journalLocalId) {
-  return (pins ?? []).map(p => ({
-    ...p,
-    note: { ...structuredClone(p.note), entryId: journalLocalId }
-  }));
+  if (!Array.isArray(pins)) return [];
+  return pins
+    .filter(p => p && typeof p === 'object' && p.note && typeof p.note === 'object')
+    .map(p => ({
+      ...p,
+      note: { ...structuredClone(p.note), entryId: journalLocalId }
+    }));
 }

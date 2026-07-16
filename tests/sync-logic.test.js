@@ -547,6 +547,41 @@ test('macro-shaped data: command links round-trip through canonicalize/localize'
   assert.deepEqual(localizeLinks(canonical, O2L), macro); // round-trip
 });
 
+test('canonicalizeLinks: rewrites quoted uuid strings in macro-style command text', () => {
+  const localToOmni = new Map([['aaaaaaaaaaaaaaaa', 'omniidaaaaaaaaaa']]);
+  const data = {
+    command: "const j = await fromUuid('JournalEntry.aaaaaaaaaaaaaaaa'); ui.notifications.info(j.name);"
+  };
+  const out = canonicalizeLinks(data, localToOmni);
+  assert.ok(out.command.includes("fromUuid('JournalEntry.omniidaaaaaaaaaa')"));
+  assert.ok(!out.command.includes('aaaaaaaaaaaaaaaa'));
+});
+
+test('canonicalizeLinks: quoted uuids — all quote styles; Compendium, mismatched quotes, non-enrolled untouched', () => {
+  const localToOmni = new Map([['aaaaaaaaaaaaaaaa', 'omniidaaaaaaaaaa']]);
+  const out = canonicalizeLinks({
+    dq: 'fromUuid("Actor.aaaaaaaaaaaaaaaa")',
+    bt: 'fromUuid(`Actor.aaaaaaaaaaaaaaaa`)',
+    comp: "fromUuid('Compendium.dnd5e.monsters.Actor.aaaaaaaaaaaaaaaa')",
+    mismatch: 'fromUuid(\'Actor.aaaaaaaaaaaaaaaa")',
+    unenrolled: "fromUuid('Actor.bbbbbbbbbbbbbbbb')"
+  }, localToOmni);
+  assert.equal(out.dq, 'fromUuid("Actor.omniidaaaaaaaaaa")');
+  assert.equal(out.bt, 'fromUuid(`Actor.omniidaaaaaaaaaa`)');
+  assert.equal(out.comp, "fromUuid('Compendium.dnd5e.monsters.Actor.aaaaaaaaaaaaaaaa')");
+  assert.equal(out.mismatch, 'fromUuid(\'Actor.aaaaaaaaaaaaaaaa")');
+  assert.equal(out.unenrolled, "fromUuid('Actor.bbbbbbbbbbbbbbbb')");
+});
+
+test('canonicalizeLinks: quoted uuid rewriting round-trips and is idempotent', () => {
+  const localToOmni = new Map([['aaaaaaaaaaaaaaaa', 'omniidaaaaaaaaaa']]);
+  const omniToLocal = new Map([['omniidaaaaaaaaaa', 'aaaaaaaaaaaaaaaa']]);
+  const src = { command: "await fromUuid('JournalEntry.aaaaaaaaaaaaaaaa')" };
+  const canonical = canonicalizeLinks(src, localToOmni);
+  assert.deepEqual(localizeLinks(canonical, omniToLocal), src);
+  assert.deepEqual(canonicalizeLinks(canonical, localToOmni), canonical);
+});
+
 // ---------------------------------------------------------------------------
 // Map-pin sync (pure helpers)
 
@@ -600,4 +635,18 @@ test('localizePins: points every note at the local journal id, without mutating'
   assert.equal(pins[0].note.entryId, PIN_OMNI); // input untouched
   assert.equal(out[0].note._id, 'n1aaaaaaaaaaaaaa');
   assert.deepEqual(localizePins(undefined, PIN_J), []);
+});
+
+test('localizePins: malformed payloads are tolerated, never thrown on', () => {
+  assert.deepEqual(localizePins(null, PIN_J), []);
+  assert.deepEqual(localizePins('junk', PIN_J), []);
+  assert.deepEqual(localizePins({ not: 'an array' }, PIN_J), []);
+  const out = localizePins([
+    { sceneName: 'Cave', note: mkNote('n1aaaaaaaaaaaaaa', PIN_OMNI) },
+    { sceneName: 'Cave' },            // missing note → dropped
+    { sceneName: 'Cave', note: 'x' }, // non-object note → dropped
+    null                              // null entry → dropped
+  ], PIN_J);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].note.entryId, PIN_J);
 });

@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Journal pulls no longer carry spurious page updates caused by server-managed
+  `_stats` differences between worlds.
+- One bad compendium copy can no longer abort login sync: auto-import isolates
+  per-document failures (actors and journals), and a malformed map-pin payload
+  is tolerated instead of throwing.
+- Quoted UUID strings in macro commands (e.g. `fromUuid('JournalEntry.…')`)
+  now participate in cross-world link rewriting.
+
 ## [0.4.0] - 2026-07-16
 
 ### Added

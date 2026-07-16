@@ -252,26 +252,32 @@ export class SyncEngine {
       if (!omnipresenceId) continue;
       if (localOmnipresenceIds.has(omnipresenceId)) continue;
 
-      const ownerName = compActor.getFlag('omnipresence', 'ownerName');
-      if (!ownerName) {
-        console.warn('Omnipresence | compendium actor has no ownerName, skipping auto-import:', compActor.name);
-        continue;
+      // One malformed pack copy must not abort the remaining imports — or,
+      // via ready's serial awaits, macro/journal sync and login healing.
+      try {
+        const ownerName = compActor.getFlag('omnipresence', 'ownerName');
+        if (!ownerName) {
+          console.warn('Omnipresence | compendium actor has no ownerName, skipping auto-import:', compActor.name);
+          continue;
+        }
+
+        const matchingUser = game.users.find(u => u.name === ownerName);
+        if (!matchingUser) {
+          console.warn('Omnipresence | no user named', ownerName, '— skipping auto-import of', compActor.name);
+          continue;
+        }
+
+        const actorData = LinkRewriter.localize(stripWorldLocalFields(compActor.toObject()));
+        actorData.flags ??= {};
+        actorData.flags.omnipresence ??= {};
+        actorData.flags.omnipresence.localModifiedAt = actorData.flags.omnipresence.syncedAt;
+        actorData.ownership = { default: 0, [matchingUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER };
+
+        const created = await Actor.create(actorData, { keepId: true });
+        await SyncRegistry.enroll(created);
+      } catch (err) {
+        console.error('Omnipresence | actor auto-import failed for', compActor.name, err);
       }
-
-      const matchingUser = game.users.find(u => u.name === ownerName);
-      if (!matchingUser) {
-        console.warn('Omnipresence | no user named', ownerName, '— skipping auto-import of', compActor.name);
-        continue;
-      }
-
-      const actorData = LinkRewriter.localize(stripWorldLocalFields(compActor.toObject()));
-      actorData.flags ??= {};
-      actorData.flags.omnipresence ??= {};
-      actorData.flags.omnipresence.localModifiedAt = actorData.flags.omnipresence.syncedAt;
-      actorData.ownership = { default: 0, [matchingUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER };
-
-      const created = await Actor.create(actorData, { keepId: true });
-      await SyncRegistry.enroll(created);
     }
 
     return conflicts;
