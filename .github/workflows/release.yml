@@ -41,7 +41,9 @@ jobs:
             styles/ \
             templates/ \
             lang/ \
-            packs/
+            packs/ \
+            CHANGELOG.md \
+            README.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
