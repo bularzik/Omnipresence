@@ -64,6 +64,7 @@ jobs:
           files: |
             omnipresence.zip
             module.json
+            CHANGELOG.md
 
       - name: Publish release to Foundry registry
         if: ${{ env.FOUNDRY_RELEASE_TOKEN != '' }}
