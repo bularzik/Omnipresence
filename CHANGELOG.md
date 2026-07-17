@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The release package now includes `CHANGELOG.md`, so module managers that read
+  a module's bundled changelog (e.g. Big Bad Module Manager's Changelog Report)
+  can display Omnipresence's changelog. Added a `changelog` URL to the manifest
+  for tools that read it from `module.json`.
+
 ## [0.5.0] - 2026-07-17
 
 ### Added
