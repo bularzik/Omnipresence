@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- First-sync consent prompt: the first time you log into a world that hasn't
+  synced before, Omnipresence asks which of your characters and journals (by
+  name) and whether your macros should sync into that world, instead of
+  importing silently. Choices are per-world and durable; existing worlds are
+  detected and continue syncing unchanged.
+
 ## [0.4.1] - 2026-07-16
 
 ### Fixed

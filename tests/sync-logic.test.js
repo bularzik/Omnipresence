@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins } from '../scripts/sync-logic.js';
+import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected } from '../scripts/sync-logic.js';
 
 const T0 = '2026-06-14T10:00:00.000Z';
 const T1 = '2026-06-14T11:00:00.000Z';
@@ -649,4 +649,52 @@ test('localizePins: malformed payloads are tolerated, never thrown on', () => {
   ], PIN_J);
   assert.equal(out.length, 1);
   assert.equal(out[0].note.entryId, PIN_J);
+});
+
+// ---------------------------------------------------------------------------
+// First-sync consent (pure helpers)
+
+test('decideOnboarding: brand-new world (no flags, no footprint) → prompt', () => {
+  assert.equal(
+    decideOnboarding({ hasOnboardedFlag: false, hasPrefs: false, ownsSyncedDoc: false }),
+    'prompt'
+  );
+});
+
+test('decideOnboarding: already onboarded → skip', () => {
+  assert.equal(
+    decideOnboarding({ hasOnboardedFlag: true, hasPrefs: false, ownsSyncedDoc: false }),
+    'skip'
+  );
+});
+
+test('decideOnboarding: has stored prefs (existing world) → skip', () => {
+  assert.equal(
+    decideOnboarding({ hasOnboardedFlag: false, hasPrefs: true, ownsSyncedDoc: false }),
+    'skip'
+  );
+});
+
+test('decideOnboarding: owns a synced doc (existing world) → skip', () => {
+  assert.equal(
+    decideOnboarding({ hasOnboardedFlag: false, hasPrefs: false, ownsSyncedDoc: true }),
+    'skip'
+  );
+});
+
+test('isSelected: id present in allow-list → true', () => {
+  assert.equal(isSelected('abc', ['abc', 'def']), true);
+});
+
+test('isSelected: id absent from allow-list → false', () => {
+  assert.equal(isSelected('xyz', ['abc', 'def']), false);
+});
+
+test('isSelected: empty or non-array allow-list → false', () => {
+  assert.equal(isSelected('abc', []), false);
+  assert.equal(isSelected('abc', undefined), false);
+});
+
+test('isSelected: falsy id → false', () => {
+  assert.equal(isSelected(undefined, ['abc']), false);
 });

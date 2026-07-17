@@ -397,3 +397,32 @@ export function localizePins(pins, journalLocalId) {
       note: { ...structuredClone(p.note), entryId: journalLocalId }
     }));
 }
+
+// ---------------------------------------------------------------------------
+// First-sync consent (pure helpers).
+
+/**
+ * Decide whether to show the first-sync consent prompt for a user in this
+ * world. A user is prompted only on genuine first contact: no onboarding
+ * marker AND no existing Omnipresence footprint (no stored prefs, no owned
+ * enrolled actor or journal already carrying a syncedAt). Any footprint means
+ * an existing world → skip (the caller back-fills the allow-list).
+ * Foundry-independent.
+ * @returns {'prompt'|'skip'}
+ */
+export function decideOnboarding({ hasOnboardedFlag, hasPrefs, ownsSyncedDoc }) {
+  if (hasOnboardedFlag) return 'skip';
+  if (hasPrefs) return 'skip';
+  if (ownsSyncedDoc) return 'skip';
+  return 'prompt';
+}
+
+/**
+ * Whether an omnipresence id is in a per-world allow-list. A falsy id or a
+ * missing/non-array list is never selected. Foundry-independent.
+ * @returns {boolean}
+ */
+export function isSelected(id, allowList) {
+  if (!id) return false;
+  return Array.isArray(allowList) && allowList.includes(id);
+}

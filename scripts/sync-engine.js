@@ -213,6 +213,9 @@ export class SyncEngine {
       const omnipresenceId = actor.getFlag('omnipresence', 'id');
       const compActor = compActors.find(d => d.getFlag('omnipresence', 'id') === omnipresenceId);
 
+      // Allow-list gate: never sync a doc the user did not opt into for this world.
+      if (!SyncRegistry.isDocSelected(game.user.id, 'actor', omnipresenceId)) continue;
+
       if (!compActor) {
         // No compendium entry — push local copy as master (GM only; no-op for players).
         await this.push(actor);
@@ -266,6 +269,10 @@ export class SyncEngine {
           console.warn('Omnipresence | no user named', ownerName, '— skipping auto-import of', compActor.name);
           continue;
         }
+
+        // Import only what the owning user enabled and opted into for this world.
+        if (!SyncRegistry.isActorSyncEnabled(matchingUser.id)) continue;
+        if (!SyncRegistry.isDocSelected(matchingUser.id, 'actor', omnipresenceId)) continue;
 
         const actorData = LinkRewriter.localize(stripWorldLocalFields(compActor.toObject()));
         actorData.flags ??= {};
