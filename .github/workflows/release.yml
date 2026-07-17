@@ -32,6 +32,19 @@ jobs:
             module.json > module.patched.json
           mv module.patched.json module.json
 
+      - name: Strip [Unreleased] from shipped CHANGELOG
+        run: |
+          awk '
+            /^## \[Unreleased\]/     { skip=1; next }
+            skip && /^## \[/         { skip=0 }
+            skip                     { next }
+            /^\[Unreleased\]:/       { next }
+                                     { print }
+          ' CHANGELOG.md > CHANGELOG.tmp
+          mv CHANGELOG.tmp CHANGELOG.md
+          echo "Shipped CHANGELOG.md now starts at:"
+          grep -m1 '^## \[' CHANGELOG.md || true
+
       - name: Create zip
         run: |
           zip -r omnipresence.zip \
@@ -51,6 +64,7 @@ jobs:
           files: |
             omnipresence.zip
             module.json
+            CHANGELOG.md
 
       - name: Publish release to Foundry registry
         if: ${{ env.FOUNDRY_RELEASE_TOKEN != '' }}

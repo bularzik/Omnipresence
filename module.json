@@ -11,7 +11,7 @@
   "manifest": "https://github.com/bularzik/Omnipresence/releases/latest/download/module.json",
   "download": "https://github.com/bularzik/Omnipresence/releases/latest/download/omnipresence.zip",
   "url": "https://github.com/bularzik/Omnipresence",
-  "changelog": "https://raw.githubusercontent.com/bularzik/Omnipresence/main/CHANGELOG.md",
+  "changelog": "https://github.com/bularzik/Omnipresence/releases/latest/download/CHANGELOG.md",
   "esmodules": ["omnipresence.js"],
   "styles": ["styles/omnipresence.css"],
   "languages": [

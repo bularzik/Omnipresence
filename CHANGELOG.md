@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Module managers now show a released-versions-only changelog: the shipped
+  `CHANGELOG.md` (bundled and as a release asset) has its `[Unreleased]`
+  section stripped at release time, and the `changelog` manifest URL points at
+  the release asset, so tools like Big Bad Module Manager's Changelog Report no
+  longer display an empty `Unreleased` heading.
+
 ## [0.5.1] - 2026-07-17
 
 ### Fixed
