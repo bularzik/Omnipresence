@@ -1,4 +1,4 @@
-import { isEnrolledFrom } from './sync-logic.js';
+import { isEnrolledFrom, isSelected } from './sync-logic.js';
 
 export class SyncRegistry {
   static SETTING = 'syncRegistry';
@@ -59,6 +59,14 @@ export class SyncRegistry {
       registry[id] = true;
       await game.settings.set('omnipresence', this.SETTING, registry);
     }
+    // Add to the enrolling user's per-world allow-list so it syncs into this
+    // world. (Imports of another user's doc run under the GM, who owns all docs
+    // by role — adding the imported id to the GM's list keeps the GM's own
+    // login-sync of that doc working, mirroring pre-allow-list behaviour.)
+    if (doc.isOwner) {
+      const kind = doc.documentName === 'JournalEntry' ? 'journal' : 'actor';
+      await this.addToSelection(game.user.id, kind, id);
+    }
     return id;
   }
 
@@ -94,6 +102,51 @@ export class SyncRegistry {
     if (!user) return;
     const existing = user.getFlag('omnipresence', 'prefs') ?? {};
     await user.setFlag('omnipresence', 'prefs', { ...existing, ...prefs });
+  }
+
+  // --- First-sync consent (per-world User flags) ---------------------------
+
+  static isOnboarded(userId) {
+    const user = game.users?.get(userId);
+    return !!user?.getFlag('omnipresence', 'onboarded');
+  }
+
+  static async setOnboarded(userId) {
+    const user = game.users?.get(userId);
+    if (!user) return;
+    await user.setFlag('omnipresence', 'onboarded', true);
+  }
+
+  // Per-world, per-user allow-list of omnipresence ids permitted to sync into
+  // this world. A doc syncs only if its category pref is on AND its id is here.
+  static getSelection(userId) {
+    const user = game.users?.get(userId);
+    const stored = user?.getFlag('omnipresence', 'selection') ?? {};
+    return {
+      actorIds: Array.isArray(stored.actorIds) ? stored.actorIds : [],
+      journalIds: Array.isArray(stored.journalIds) ? stored.journalIds : []
+    };
+  }
+
+  static async setSelection(userId, partial) {
+    const user = game.users?.get(userId);
+    if (!user) return;
+    const existing = user.getFlag('omnipresence', 'selection') ?? {};
+    await user.setFlag('omnipresence', 'selection', { ...existing, ...partial });
+  }
+
+  static isDocSelected(userId, kind, id) {
+    const sel = this.getSelection(userId);
+    const list = kind === 'journal' ? sel.journalIds : sel.actorIds;
+    return isSelected(id, list);
+  }
+
+  static async addToSelection(userId, kind, id) {
+    if (!id) return;
+    const sel = this.getSelection(userId);
+    const key = kind === 'journal' ? 'journalIds' : 'actorIds';
+    if (sel[key].includes(id)) return;
+    await this.setSelection(userId, { [key]: [...sel[key], id] });
   }
 
   static isActorSyncEnabled(userId) {
