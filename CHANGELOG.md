@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-17
+
 ### Added
 - First-sync consent prompt: the first time you log into a world that hasn't
   synced before, Omnipresence asks which of your characters and journals (by
@@ -209,7 +211,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/publish` slash command and a GitHub Actions release workflow (manifest,
   download, and url fields for Foundry installation).
 
-[Unreleased]: https://github.com/bularzik/Omnipresence/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/bularzik/Omnipresence/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/bularzik/Omnipresence/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/bularzik/Omnipresence/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/bularzik/Omnipresence/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/bularzik/Omnipresence/compare/v0.2.4...v0.3.0
