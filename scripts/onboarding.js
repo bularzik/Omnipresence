@@ -16,7 +16,7 @@ export class Onboarding {
       const decision = decideOnboarding({
         hasOnboardedFlag: SyncRegistry.isOnboarded(userId),
         hasPrefs: this._hasStoredPrefs(userId),
-        ownsSyncedActor: this._ownsSyncedActor()
+        ownsSyncedDoc: this._ownsSyncedDoc()
       });
 
       if (decision === 'skip') {
@@ -42,12 +42,12 @@ export class Onboarding {
     return user?.getFlag('omnipresence', 'prefs') != null;
   }
 
-  static _ownsSyncedActor() {
-    return game.actors.some(a =>
-      a.isOwner &&
-      SyncRegistry.isEnrolled(a) &&
-      a.getFlag('omnipresence', 'syncedAt')
-    );
+  static _ownsSyncedDoc() {
+    const synced = doc =>
+      doc.isOwner &&
+      SyncRegistry.isEnrolled(doc) &&
+      doc.getFlag('omnipresence', 'syncedAt');
+    return game.actors.some(synced) || game.journal.some(synced);
   }
 
   /**

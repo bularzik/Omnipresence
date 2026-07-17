@@ -656,28 +656,28 @@ test('localizePins: malformed payloads are tolerated, never thrown on', () => {
 
 test('decideOnboarding: brand-new world (no flags, no footprint) → prompt', () => {
   assert.equal(
-    decideOnboarding({ hasOnboardedFlag: false, hasPrefs: false, ownsSyncedActor: false }),
+    decideOnboarding({ hasOnboardedFlag: false, hasPrefs: false, ownsSyncedDoc: false }),
     'prompt'
   );
 });
 
 test('decideOnboarding: already onboarded → skip', () => {
   assert.equal(
-    decideOnboarding({ hasOnboardedFlag: true, hasPrefs: false, ownsSyncedActor: false }),
+    decideOnboarding({ hasOnboardedFlag: true, hasPrefs: false, ownsSyncedDoc: false }),
     'skip'
   );
 });
 
 test('decideOnboarding: has stored prefs (existing world) → skip', () => {
   assert.equal(
-    decideOnboarding({ hasOnboardedFlag: false, hasPrefs: true, ownsSyncedActor: false }),
+    decideOnboarding({ hasOnboardedFlag: false, hasPrefs: true, ownsSyncedDoc: false }),
     'skip'
   );
 });
 
-test('decideOnboarding: owns a synced actor (existing world) → skip', () => {
+test('decideOnboarding: owns a synced doc (existing world) → skip', () => {
   assert.equal(
-    decideOnboarding({ hasOnboardedFlag: false, hasPrefs: false, ownsSyncedActor: true }),
+    decideOnboarding({ hasOnboardedFlag: false, hasPrefs: false, ownsSyncedDoc: true }),
     'skip'
   );
 });
