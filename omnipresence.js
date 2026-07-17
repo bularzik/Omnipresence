@@ -6,6 +6,7 @@ import { registerContextMenu, registerJournalContextMenu } from './scripts/conte
 import { OmnipresenceDashboard } from './scripts/gm-dashboard.js';
 import { registerUserConfigInjection } from './scripts/user-config.js';
 import { LinkRewriter } from './scripts/link-rewriter.js';
+import { Onboarding } from './scripts/onboarding.js';
 
 Hooks.once('init', () => {
   SyncRegistry.register();
@@ -31,18 +32,25 @@ Hooks.once('ready', async () => {
     const journalPack = game.packs.get(JournalSync.PACK_ID);
     if (journalPack && journalPack.locked) await journalPack.configure({ locked: false });
   }
-  const actorConflicts = await SyncEngine.onLogin();
-  await MacroSync.onLogin();
-  const journalConflicts = await JournalSync.onLogin();
+  // First-sync consent gate: on a user's first contact with this world, hold
+  // all sync/import until they choose what to sync (opt-in). Existing worlds
+  // are detected and back-filled silently, returning true. A dismissed prompt
+  // returns false — skip sync this session and re-ask next login.
+  const proceed = await Onboarding.ensureOnboarded();
+  if (proceed) {
+    const actorConflicts = await SyncEngine.onLogin();
+    await MacroSync.onLogin();
+    const journalConflicts = await JournalSync.onLogin();
 
-  // Surface actor and journal conflicts together in ONE conflicts-only dashboard
-  // (both share the static id 'omnipresence-dashboard', so a single instance
-  // must carry both lists).
-  if ((actorConflicts?.length ?? 0) > 0 || (journalConflicts?.length ?? 0) > 0) {
-    new OmnipresenceDashboard({
-      conflictActorIds: actorConflicts?.length ? actorConflicts : null,
-      conflictJournalIds: journalConflicts?.length ? journalConflicts : null
-    }).render(true);
+    // Surface actor and journal conflicts together in ONE conflicts-only dashboard
+    // (both share the static id 'omnipresence-dashboard', so a single instance
+    // must carry both lists).
+    if ((actorConflicts?.length ?? 0) > 0 || (journalConflicts?.length ?? 0) > 0) {
+      new OmnipresenceDashboard({
+        conflictActorIds: actorConflicts?.length ? actorConflicts : null,
+        conflictJournalIds: journalConflicts?.length ? journalConflicts : null
+      }).render(true);
+    }
   }
 
   // Phase 2 of login link rewriting: every enrolled doc now exists locally
