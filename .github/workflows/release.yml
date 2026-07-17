@@ -43,7 +43,7 @@ jobs:
           ' CHANGELOG.md > CHANGELOG.tmp
           mv CHANGELOG.tmp CHANGELOG.md
           echo "Shipped CHANGELOG.md now starts at:"
-          grep -m1 '^## \[' CHANGELOG.md
+          grep -m1 '^## \[' CHANGELOG.md || true
 
       - name: Create zip
         run: |
