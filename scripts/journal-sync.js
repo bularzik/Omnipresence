@@ -342,6 +342,9 @@ export class JournalSync {
       const omnipresenceId = journal.getFlag('omnipresence', 'id');
       const compJournal = compJournals.find(d => d.getFlag('omnipresence', 'id') === omnipresenceId);
 
+      // Allow-list gate: never sync a journal the user did not opt into here.
+      if (!SyncRegistry.isDocSelected(game.user.id, 'journal', omnipresenceId)) continue;
+
       if (!compJournal) {
         await this.push(journal);
         touched.push(journal);
@@ -392,6 +395,10 @@ export class JournalSync {
             console.warn('Omnipresence | no user named', ownerName, '— skipping auto-import of', compJournal.name);
             continue;
           }
+
+          // Import only what the owning user enabled and opted into for this world.
+          if (!SyncRegistry.isJournalSyncEnabled(matchingUser.id)) continue;
+          if (!SyncRegistry.isDocSelected(matchingUser.id, 'journal', omnipresenceId)) continue;
 
           const journalData = LinkRewriter.localize(
             this._stripPageOwnership(stripWorldLocalFields(compJournal.toObject()))
