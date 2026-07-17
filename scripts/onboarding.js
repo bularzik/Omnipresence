@@ -12,27 +12,27 @@ export class Onboarding {
   static async ensureOnboarded() {
     const userId = game.user.id;
 
-    const decision = decideOnboarding({
-      hasOnboardedFlag: SyncRegistry.isOnboarded(userId),
-      hasPrefs: this._hasStoredPrefs(userId),
-      ownsSyncedActor: this._ownsSyncedActor()
-    });
-
-    if (decision === 'skip') {
-      await this._backfill(userId);
-      return true;
-    }
-
     try {
+      const decision = decideOnboarding({
+        hasOnboardedFlag: SyncRegistry.isOnboarded(userId),
+        hasPrefs: this._hasStoredPrefs(userId),
+        ownsSyncedActor: this._ownsSyncedActor()
+      });
+
+      if (decision === 'skip') {
+        await this._backfill(userId);
+        return true;
+      }
+
       const candidates = await this._buildCandidates();
       const result = await this._prompt(candidates);
       if (!result) return false; // dismissed → leave unonboarded, re-ask
       await this._applyResult(userId, result);
       return true;
     } catch (err) {
-      // Never hard-block login: on failure, leave the user unonboarded (they
-      // are re-prompted next login) and skip sync this session.
-      console.error('Omnipresence | onboarding prompt failed', err);
+      // Never hard-block login: on any failure, leave the user unonboarded
+      // (they are re-prompted next login) and skip sync this session.
+      console.error('Omnipresence | onboarding failed', err);
       return false;
     }
   }
