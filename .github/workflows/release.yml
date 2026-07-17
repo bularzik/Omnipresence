@@ -32,6 +32,15 @@ jobs:
             module.json > module.patched.json
           mv module.patched.json module.json
 
+      - name: Strip [Unreleased] from CHANGELOG
+        run: |
+          awk '
+            /^## \[Unreleased\]/ { skip = 1; next }
+            /^##/ && skip { skip = 0 }
+            /^\[Unreleased\]:/ { next }
+            !skip
+          ' CHANGELOG.md > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md
+
       - name: Create zip
         run: |
           zip -r omnipresence.zip \
