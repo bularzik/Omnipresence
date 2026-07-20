@@ -1,33 +1,8 @@
 // tests/e2e/sync-followups-2.spec.js — round-2 follow-ups (op-52t, op-67y, op-5a2)
 import { test, expect, chromium } from '@playwright/test';
-
-const FOUNDRY_URL = 'http://localhost:30000';
+import { FOUNDRY_URL, loginToFoundry } from './helpers.js';
 
 let browser, gmContext, gmPage;
-
-async function loginToFoundry(page, userName) {
-  await page.goto(`${FOUNDRY_URL}/join`);
-  await page.waitForFunction(
-    (name) => {
-      const sel = document.querySelector('select[name="userid"]');
-      return [...(sel?.options ?? [])].some(o => o.text === name);
-    },
-    userName,
-    { timeout: 15_000 }
-  );
-  // The option may be marked disabled if another automation session is already
-  // connected as this user — benign on this shared dev server; Foundry accepts
-  // the login, only the stale client-side attribute needs bypassing.
-  await page.evaluate((name) => {
-    const sel = document.querySelector('select[name="userid"]');
-    const opt = [...sel.options].find(o => o.text === name);
-    opt.disabled = false;
-    sel.value = opt.value;
-    sel.dispatchEvent(new Event('change', { bubbles: true }));
-  }, userName);
-  await page.click('button[type="submit"]');
-  await page.waitForFunction(() => window.game?.ready === true, { timeout: 30_000 });
-}
 
 test.beforeAll(async () => {
   browser = await chromium.launch();

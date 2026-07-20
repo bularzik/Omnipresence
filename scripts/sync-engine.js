@@ -3,7 +3,6 @@ import { SyncRegistry } from './sync-registry.js';
 import {
   decideSyncAction,
   stripWorldLocalFields,
-  diffEmbedded,
   resolveOwningActor
 } from './sync-logic.js';
 
@@ -61,8 +60,11 @@ export class SyncEngine {
       if (existing) {
         // recursive:false — the payload is a complete snapshot, so replace
         // subtrees wholesale; merge would resurrect deleted keys forever.
-        await existing.update(actorData, { recursive: false });
-        await this.reconcileActorEmbedded(existing, actorData);
+        // This one update also synchronizes the embedded collections (items,
+        // actor-level effects, and effects nested on items) in full, including
+        // deletions — measured against Foundry v13, see the op-yup spec. No
+        // separate reconcile pass is needed.
+        await existing.update(actorData, { omnipresenceInternal: true, recursive: false });
       } else {
         await Actor.create(actorData, { pack: this.PACK_ID, keepId: true });
       }
@@ -124,54 +126,6 @@ export class SyncEngine {
     if (game.user.isGM) this.debouncedPush(actor);
   }
 
-  /**
-   * Apply create/update/delete to one embedded collection so it matches
-   * `snapshotDocs`. All writes carry omnipresenceInternal so the embedded
-   * hooks ignore them. Creates use keepId so embedded _ids stay stable across
-   * worlds (the cross-world match key).
-   */
-  static async _reconcileCollection(parent, embeddedName, snapshotDocs) {
-    const collection = parent.getEmbeddedCollection(embeddedName);
-    const localDocs = collection.map(d => d.toObject());
-    const { toCreate, toUpdate, toDelete } = diffEmbedded(localDocs, snapshotDocs ?? []);
-
-    if (toDelete.length) {
-      await parent.deleteEmbeddedDocuments(embeddedName, toDelete, { omnipresenceInternal: true });
-    }
-    if (toCreate.length) {
-      await parent.createEmbeddedDocuments(embeddedName, toCreate, {
-        keepId: true,
-        omnipresenceInternal: true
-      });
-    }
-    if (toUpdate.length) {
-      await parent.updateEmbeddedDocuments(embeddedName, toUpdate, { omnipresenceInternal: true, recursive: false });
-    }
-  }
-
-  /**
-   * Make targetActor's embedded data (items, their nested effects, and
-   * actor-level effects) match snapshotData. snapshotData is plain actor data
-   * (e.g. from toObject()) whose embedded _ids are preserved.
-   */
-  static async reconcileActorEmbedded(targetActor, snapshotData) {
-    // 1. Items (inventory, spells, features).
-    await this._reconcileCollection(targetActor, 'Item', snapshotData.items ?? []);
-
-    // 2. Effects nested on items. Re-read items after the Item reconcile so newly
-    //    created items are included (their effects self-heal if keepId did not
-    //    carry to nested docs).
-    const snapItemsById = new Map((snapshotData.items ?? []).map(i => [i._id, i]));
-    for (const item of targetActor.items) {
-      const snapItem = snapItemsById.get(item._id);
-      if (!snapItem) continue;
-      await this._reconcileCollection(item, 'ActiveEffect', snapItem.effects ?? []);
-    }
-
-    // 3. Actor-level effects (buffs, conditions).
-    await this._reconcileCollection(targetActor, 'ActiveEffect', snapshotData.effects ?? []);
-  }
-
   static async pull(localActor, compActor) {
     // Strip world-local fields so local ownership and folder are preserved,
     // and localize canonical omnipresence ids to this world's ids.
@@ -182,7 +136,6 @@ export class SyncEngine {
     actorData.flags.omnipresence.localModifiedAt = actorData.flags.omnipresence.syncedAt;
     try {
       await localActor.update(actorData, { omnipresenceInternal: true, recursive: false });
-      await this.reconcileActorEmbedded(localActor, actorData);
     } catch (err) {
       console.error('Omnipresence | pull failed for', localActor.name, err);
       ui.notifications.warn(

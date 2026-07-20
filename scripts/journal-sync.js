@@ -94,8 +94,9 @@ export class JournalSync {
       if (existing) {
         // recursive:false — the payload is a complete snapshot, so replace
         // subtrees wholesale; merge would resurrect deleted keys forever.
-        await existing.update(journalData, { recursive: false });
-        await this.reconcileJournalPages(existing, journalData);
+        // This also fully synchronizes pages (create/update/delete, keepId
+        // preserved) — no separate reconcile pass needed (op-yup).
+        await existing.update(journalData, { omnipresenceInternal: true, recursive: false });
       } else {
         await JournalEntry.create(journalData, { pack: this.PACK_ID, keepId: true });
       }
@@ -170,44 +171,6 @@ export class JournalSync {
     if (!SyncRegistry.isJournalSyncEnabled(userId)) return;
     if (userId === game.user.id) this.trackLocalModification(journal);
     if (game.user.isGM) this.debouncedPush(journal);
-  }
-
-  /**
-   * Make target's pages match snapshotData.pages (matched by _id). Page-level
-   * ownership and server-managed _stats are dropped from both sides of the
-   * diff so re-applying local ownership — or the pack write's own _stats
-   * stamp — never registers as a change (avoids spurious updates on pull).
-   * Creates use keepId so page _ids stay stable across worlds (the
-   * cross-world match key).
-   */
-  static async reconcileJournalPages(target, snapshotData) {
-    const collection = target.getEmbeddedCollection('JournalEntryPage');
-    const localDocs = collection.map(d => {
-      const o = d.toObject();
-      delete o.ownership;
-      delete o._stats;
-      return o;
-    });
-    const snapshotDocs = (snapshotData.pages ?? []).map(p => {
-      const c = structuredClone(p);
-      delete c.ownership;
-      delete c._stats;
-      return c;
-    });
-    const { toCreate, toUpdate, toDelete } = diffEmbedded(localDocs, snapshotDocs);
-
-    if (toDelete.length) {
-      await target.deleteEmbeddedDocuments('JournalEntryPage', toDelete, { omnipresenceInternal: true });
-    }
-    if (toCreate.length) {
-      await target.createEmbeddedDocuments('JournalEntryPage', toCreate, {
-        keepId: true,
-        omnipresenceInternal: true
-      });
-    }
-    if (toUpdate.length) {
-      await target.updateEmbeddedDocuments('JournalEntryPage', toUpdate, { omnipresenceInternal: true, recursive: false });
-    }
   }
 
   /**
@@ -309,13 +272,12 @@ export class JournalSync {
     journalData.flags.omnipresence ??= {};
     // Reset localModifiedAt to match the pulled syncedAt (no local changes outstanding).
     journalData.flags.omnipresence.localModifiedAt = journalData.flags.omnipresence.syncedAt;
-    // The pin payload lives only on pack copies — extract it for apply (Task
-    // 3) and keep it off the local journal.
+    // The pin payload lives only on pack copies — extract it for apply and
+    // keep it off the local journal.
     const pins = journalData.flags.omnipresence.pins;
     delete journalData.flags.omnipresence.pins;
     try {
       await localJournal.update(journalData, { omnipresenceInternal: true, recursive: false });
-      await this.reconcileJournalPages(localJournal, journalData);
       if (pins !== undefined) await this._applyPins(localJournal, pins);
     } catch (err) {
       console.error('Omnipresence | journal pull failed for', localJournal.name, err);

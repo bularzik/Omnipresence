@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Syncing an actor or journal no longer fails with `The _id [...] already exists
+  within the parent collection` when syncing items, active effects, effects
+  nested on items, or journal pages. A failed sync left the document marked
+  dirty and never stamped its sync time, so the error repeated on every later
+  edit.
+
 ### Changed
 - Module managers now show a released-versions-only changelog: the shipped
   `CHANGELOG.md` (bundled and as a release asset) has its `[Unreleased]`

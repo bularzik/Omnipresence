@@ -1,30 +1,10 @@
 // tests/e2e/user-config.spec.js
 import { test, expect, chromium } from '@playwright/test';
+import { FOUNDRY_URL, loginToFoundry } from './helpers.js';
 
-const FOUNDRY_URL = 'http://localhost:30000';
 const DEBOUNCE_WAIT_MS = 4_000;
 
 let browser, gmContext, userContext, gmPage, userPage;
-
-async function loginToFoundry(page, userName) {
-  await page.goto(`${FOUNDRY_URL}/join`);
-  // Foundry briefly marks options as disabled during page init — wait until the target option is enabled
-  await page.waitForFunction(
-    (name) => {
-      const sel = document.querySelector('select[name="userid"]');
-      return [...(sel?.options ?? [])].some(o => o.text === name && !o.disabled);
-    },
-    userName,
-    { timeout: 15_000 }
-  );
-  await page.selectOption('select[name="userid"]', { label: userName });
-  // Both accounts have blank passwords — no fill needed
-  await page.click('button[type="submit"]');
-  await page.waitForFunction(
-    () => window.game?.ready === true,
-    { timeout: 30_000 }
-  );
-}
 
 test.beforeAll(async () => {
   browser = await chromium.launch();
@@ -290,25 +270,25 @@ test('GM login batch-pushes hotbars to restore entries missed while GM was offli
   await gmPage.reload();
   await gmPage.waitForFunction(() => window.game?.ready === true, { timeout: 30_000 });
 
-  // Wait until the batch push restores User 1's entries (condition-based, no fixed sleep)
-  await gmPage.waitForFunction(
-    async () => {
+  // Poll until the batch push has restored the FULL set, then assert exact
+  // equality with what was there before.
+  //
+  // This uses expect.poll rather than page.waitForFunction deliberately:
+  // waitForFunction does not await an async predicate, so a predicate declared
+  // `async` returns a Promise — always truthy — and the wait passes instantly
+  // no matter what the pack contains. That is what made this test read a
+  // half-restored pack and fail.
+  await expect.poll(
+    async () => gmPage.evaluate(async () => {
       const pack = game.packs.get('omnipresence.omnipresence-macros');
-      if (!pack) return false;
+      if (!pack) return null;
+      pack.clear?.();
       await pack.getDocuments();
-      return pack.contents.some(d => d.getFlag('omnipresence', 'ownerName') === 'User 1');
-    },
-    { timeout: 15_000 }
-  );
-
-  // Verify the restored set matches the original
-  const after = await gmPage.evaluate(async () => {
-    const pack = game.packs.get('omnipresence.omnipresence-macros');
-    await pack.getDocuments();
-    return pack.contents
-      .filter(d => d.getFlag('omnipresence', 'ownerName') === 'User 1')
-      .map(d => d.getFlag('omnipresence', 'id'))
-      .sort();
-  });
-  expect(after).toEqual(before);
+      return pack.contents
+        .filter(d => d.getFlag('omnipresence', 'ownerName') === 'User 1')
+        .map(d => d.getFlag('omnipresence', 'id'))
+        .sort();
+    }),
+    { timeout: 20_000, message: 'GM-login batch push should restore User 1 macro entries' }
+  ).toEqual(before);
 });

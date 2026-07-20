@@ -24,3 +24,9 @@
 AGENTS.md
 CLAUDE.md
 docs/
+
+# Playwright e2e output
+test-results/
+
+# Dependencies
+node_modules/

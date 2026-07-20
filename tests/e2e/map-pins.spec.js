@@ -1,36 +1,8 @@
 // tests/e2e/map-pins.spec.js
 import { test, expect, chromium } from '@playwright/test';
-
-const FOUNDRY_URL = 'http://localhost:30000';
+import { FOUNDRY_URL, loginToFoundry } from './helpers.js';
 
 let browser, gmContext, gmPage;
-
-async function loginToFoundry(page, userName) {
-  await page.goto(`${FOUNDRY_URL}/join`);
-  await page.waitForFunction(
-    (name) => {
-      const sel = document.querySelector('select[name="userid"]');
-      return [...(sel?.options ?? [])].some(o => o.text === name);
-    },
-    userName,
-    { timeout: 15_000 }
-  );
-  // The option may be marked disabled if another automation session (e.g. an
-  // unrelated MCP browser) is already connected as this user — that's an
-  // expected, benign condition in this shared dev server, not a reason to
-  // block. Foundry itself accepts the login and reconnects the socket; only
-  // the client-side <option disabled> attribute (stale UI hint) needs to be
-  // bypassed to submit the form.
-  await page.evaluate((name) => {
-    const sel = document.querySelector('select[name="userid"]');
-    const opt = [...sel.options].find(o => o.text === name);
-    opt.disabled = false;
-    sel.value = opt.value;
-    sel.dispatchEvent(new Event('change', { bubbles: true }));
-  }, userName);
-  await page.click('button[type="submit"]');
-  await page.waitForFunction(() => window.game?.ready === true, { timeout: 30_000 });
-}
 
 test.beforeAll(async () => {
   browser = await chromium.launch();

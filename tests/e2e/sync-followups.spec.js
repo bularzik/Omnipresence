@@ -1,24 +1,8 @@
 // tests/e2e/sync-followups.spec.js
 import { test, expect, chromium } from '@playwright/test';
-
-const FOUNDRY_URL = 'http://localhost:30000';
+import { FOUNDRY_URL, loginToFoundry } from './helpers.js';
 
 let browser, gmContext, gmPage;
-
-async function loginToFoundry(page, userName) {
-  await page.goto(`${FOUNDRY_URL}/join`);
-  await page.waitForFunction(
-    (name) => {
-      const sel = document.querySelector('select[name="userid"]');
-      return [...(sel?.options ?? [])].some(o => o.text === name && !o.disabled);
-    },
-    userName,
-    { timeout: 15_000 }
-  );
-  await page.selectOption('select[name="userid"]', { label: userName });
-  await page.click('button[type="submit"]');
-  await page.waitForFunction(() => window.game?.ready === true, { timeout: 30_000 });
-}
 
 test.beforeAll(async () => {
   browser = await chromium.launch();
