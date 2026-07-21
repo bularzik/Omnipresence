@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-21
+
 ### Added
 - **Manage synced documents.** User Configuration now has a "Manage synced
   documents…" button that reopens the sync picker, so you can add or remove
@@ -251,7 +253,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/publish` slash command and a GitHub Actions release workflow (manifest,
   download, and url fields for Foundry installation).
 
-[Unreleased]: https://github.com/bularzik/Omnipresence/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/bularzik/Omnipresence/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/bularzik/Omnipresence/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/bularzik/Omnipresence/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/bularzik/Omnipresence/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/bularzik/Omnipresence/compare/v0.4.1...v0.5.0
