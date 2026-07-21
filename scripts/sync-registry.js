@@ -81,6 +81,30 @@ export class SyncRegistry {
       delete registry[id];
       await game.settings.set('omnipresence', this.SETTING, registry);
     }
+    const kind = doc.documentName === 'JournalEntry' ? 'journal' : 'actor';
+    // Mirror of enroll's addToSelection. Leaving the id in the allow-list makes
+    // onLogin's auto-import — which keys off ENROLLED docs only — re-create the
+    // doc from its pack copy as a duplicate at the next GM login.
+    if (doc.isOwner) {
+      await this.removeFromSelection(game.user.id, kind, id);
+    }
+    // GMs have doc.isOwner === true on every document by role, so the removal
+    // above only clears the ACTING user's list. But onLogin's auto-import gates
+    // on the OWNING user's allow-list (resolved from the doc's ownerName flag),
+    // not the acting user's — so when a GM unenrolls another player's doc (every
+    // context-menu/dashboard unenroll path allows this), the owning player's
+    // allow-list entry must also be cleared, or the duplicate-reimport defect
+    // above still reproduces for that player at their next login. Only a GM can
+    // write another user's flags, hence the isGM guard; skip when the resolved
+    // owner is the acting user (already handled above) or ownerName is absent/
+    // unresolvable.
+    if (game.user.isGM) {
+      const ownerName = doc.getFlag('omnipresence', 'ownerName');
+      const owner = ownerName ? game.users.find(u => u.name === ownerName) : null;
+      if (owner && owner.id !== game.user.id) {
+        await this.removeFromSelection(owner.id, kind, id);
+      }
+    }
   }
 
   // Per-user sync preferences live on the User document as flags so that:
@@ -147,6 +171,14 @@ export class SyncRegistry {
     const key = kind === 'journal' ? 'journalIds' : 'actorIds';
     if (sel[key].includes(id)) return;
     await this.setSelection(userId, { [key]: [...sel[key], id] });
+  }
+
+  static async removeFromSelection(userId, kind, id) {
+    if (!id) return;
+    const sel = this.getSelection(userId);
+    const key = kind === 'journal' ? 'journalIds' : 'actorIds';
+    if (!sel[key].includes(id)) return;
+    await this.setSelection(userId, { [key]: sel[key].filter(x => x !== id) });
   }
 
   static isActorSyncEnabled(userId) {

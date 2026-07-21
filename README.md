@@ -108,3 +108,7 @@ Because only a GM can write to the shared compendium, players resolve conflicts 
   syncing for it — nothing is deleted, they simply stop matching.
 - Macro sync is all-or-nothing per user — there is no per-macro opt-in. If you want a macro local-only, keep it off your hotbar.
 - Sync preferences are world-scoped. A preference set in World A does not carry to World B automatically, since user IDs differ between worlds.
+
+## Development
+
+For running the unit and end-to-end test suites, see [`TESTING.md`](TESTING.md).

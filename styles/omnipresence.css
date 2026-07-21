@@ -47,3 +47,24 @@
   text-align: center;
   padding: 10px;
 }
+
+/* Document picker (first-sync consent and Manage Synced Documents). The list
+   is capped and scrolls so a user with hundreds of enrolled documents still
+   gets a usable dialog. */
+.omnipresence-picker-controls {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.omnipresence-picker-controls input[type="search"] {
+  flex: 1;
+}
+
+.omnipresence-picker-list {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--color-border-light-tertiary, #7a7971);
+}

@@ -1,4 +1,6 @@
 import { SyncRegistry } from './sync-registry.js';
+import { DocPicker } from './doc-picker.js';
+import { runLoginReconcile } from './reconcile.js';
 
 export function registerUserConfigInjection() {
   Hooks.on('renderUserConfig', (app, html) => {
@@ -29,6 +31,15 @@ export function registerUserConfigInjection() {
           <input type="checkbox" id="omnipresence-journals" name="omnipresence-journals">
         </div>
         <p class="hint">${game.i18n.localize('OMNIPRESENCE.userConfig.journalSyncHint')}</p>
+      </div>
+      <div class="form-group">
+        <label>${game.i18n.localize('OMNIPRESENCE.userConfig.manageDocs')}</label>
+        <div class="form-fields">
+          <button type="button" id="omnipresence-manage-docs">
+            ${game.i18n.localize('OMNIPRESENCE.userConfig.manageDocsButton')}
+          </button>
+        </div>
+        <p class="hint">${game.i18n.localize('OMNIPRESENCE.userConfig.manageDocsHint')}</p>
       </div>
     `;
 
@@ -67,6 +78,53 @@ export function registerUserConfigInjection() {
 
     journalsInput.addEventListener('change', (e) => {
       SyncRegistry.setPrefs(game.user.id, { journals: e.target.checked });
+    });
+
+    const manageButton = fieldset.querySelector('#omnipresence-manage-docs');
+    manageButton.addEventListener('click', async () => {
+      try {
+        const before = SyncRegistry.getSelection(game.user.id);
+        const result = await DocPicker.open({ mode: 'manage', preselected: before });
+        if (!result) return; // dismissed — change nothing
+
+        await SyncRegistry.setSelection(game.user.id, {
+          actorIds: result.actorIds,
+          journalIds: result.journalIds
+        });
+
+        // A newly added document only auto-imports via the GM-gated section
+        // of SyncEngine.onLogin()/JournalSync.onLogin() (both bail before it
+        // for non-GM users), so it starts syncing right away for a GM, while
+        // a player's newly added document waits for the next GM login.
+        // Removals need no action (the doc simply stops syncing and its
+        // local copy is left untouched).
+        const added =
+          result.actorIds.some(id => !before.actorIds.includes(id)) ||
+          result.journalIds.some(id => !before.journalIds.includes(id));
+
+        if (added) {
+          // The selection write above already succeeded; a failure here means
+          // "saved but not yet synced," which is a different, less alarming
+          // situation than a failed save, so it gets its own message instead
+          // of falling into the outer catch's manageFailed.
+          try {
+            await runLoginReconcile();
+            ui.notifications.info(game.i18n.localize(
+              game.user.isGM
+                ? 'OMNIPRESENCE.notifications.manageSavedSyncingNow'
+                : 'OMNIPRESENCE.notifications.manageSavedSyncsAtNextGmLogin'
+            ));
+          } catch (reconcileErr) {
+            console.error('Omnipresence | reconcile after manage save failed', reconcileErr);
+            ui.notifications.warn(game.i18n.localize('OMNIPRESENCE.notifications.manageSavedReconcileFailed'));
+          }
+        }
+      } catch (err) {
+        // Never leave partial selection state behind: setSelection above is a
+        // single write, so a failure either wrote all of it or none of it.
+        console.error('Omnipresence | manage synced documents failed', err);
+        ui.notifications.warn(game.i18n.localize('OMNIPRESENCE.notifications.manageFailed'));
+      }
     });
   });
 }

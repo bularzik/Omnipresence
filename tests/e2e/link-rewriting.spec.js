@@ -18,7 +18,7 @@ test.beforeAll(async () => {
   );
   if (!ok) {
     throw new Error(
-      'Prerequisites missing in World A: enrolled "Omnipresence Test Journal" ' +
+      'Prerequisites missing in World B: enrolled "Omnipresence Test Journal" ' +
       'and enrolled "Omnipresence Test Actor" are required.'
     );
   }

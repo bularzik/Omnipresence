@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected } from '../scripts/sync-logic.js';
+import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates } from '../scripts/sync-logic.js';
 
 const T0 = '2026-06-14T10:00:00.000Z';
 const T1 = '2026-06-14T11:00:00.000Z';
@@ -697,4 +697,39 @@ test('isSelected: empty or non-array allow-list → false', () => {
 
 test('isSelected: falsy id → false', () => {
   assert.equal(isSelected(undefined, ['abc']), false);
+});
+
+test('filterCandidates: empty query returns every item', () => {
+  const items = [{ id: 'a', name: 'Aelar' }, { id: 'b', name: 'Brom' }];
+  assert.deepEqual(filterCandidates(items, ''), items);
+  assert.deepEqual(filterCandidates(items, '   '), items);
+});
+
+test('filterCandidates: matches a case-insensitive substring', () => {
+  const items = [{ id: 'a', name: 'Aelar Moonwhisper' }, { id: 'b', name: 'Brom' }];
+  assert.deepEqual(filterCandidates(items, 'MOON'), [items[0]]);
+  assert.deepEqual(filterCandidates(items, 'whisper'), [items[0]]);
+});
+
+test('filterCandidates: ignores diacritics on both sides', () => {
+  const items = [{ id: 'a', name: 'Théodore' }, { id: 'b', name: 'Brom' }];
+  assert.deepEqual(filterCandidates(items, 'theo'), [items[0]]);
+  assert.deepEqual(filterCandidates(items, 'Théo'), [items[0]]);
+});
+
+test('filterCandidates: no match returns an empty array', () => {
+  const items = [{ id: 'a', name: 'Aelar' }];
+  assert.deepEqual(filterCandidates(items, 'zzz'), []);
+});
+
+test('filterCandidates: tolerates a missing name', () => {
+  const items = [{ id: 'a' }, { id: 'b', name: 'Brom' }];
+  assert.deepEqual(filterCandidates(items, 'brom'), [items[1]]);
+});
+
+test('filterCandidates: does not mutate or alias the input array', () => {
+  const items = [{ id: 'a', name: 'Aelar' }];
+  const result = filterCandidates(items, '');
+  result.push({ id: 'c', name: 'Ghost' });
+  assert.equal(items.length, 1);
 });

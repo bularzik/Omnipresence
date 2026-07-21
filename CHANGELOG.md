@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Manage synced documents.** User Configuration now has a "Manage synced
+  documents…" button that reopens the sync picker, so you can add or remove
+  individual characters and journals from this world's sync list at any time —
+  not just at first login. Documents you add start syncing right away for
+  GMs; a player's newly added document is imported at the next GM login.
+
+### Changed
+- The sync picker now has a name filter, All/None buttons, and a scrolling
+  list, so it stays usable with hundreds of characters or journals.
+
+### Fixed
+- Unenrolling an actor or journal now also removes it from your per-world sync
+  list. Previously the document was re-imported as a duplicate copy at the next
+  GM login.
+
 ## [0.5.2] - 2026-07-20
 
 ### Fixed

@@ -2,21 +2,34 @@
 import { test, expect, chromium } from '@playwright/test';
 import { FOUNDRY_URL, loginToFoundry } from './helpers.js';
 
-let browser, gmContext, gmPage;
+let browser, gmContext, gmPage, playerContext, playerPage, playerName;
 
 test.beforeAll(async () => {
   browser = await chromium.launch();
   gmContext = await browser.newContext();
   gmPage = await gmContext.newPage();
   await loginToFoundry(gmPage, 'Gamemaster');
-  const ok = await gmPage.evaluate(() =>
-    !!game.journal.getName('Omnipresence Test Journal') && game.scenes.size > 0
-  );
-  if (!ok) throw new Error('Prerequisites missing in World A (test journal / a scene).');
+  const prereq = await gmPage.evaluate(() => ({
+    ok: !!game.journal.getName('Omnipresence Test Journal') && game.scenes.size > 0,
+    playerName: game.users.find(u => !u.isGM)?.name ?? null
+  }));
+  if (!prereq.ok) throw new Error('Prerequisites missing in World B (test journal / a scene).');
+  if (!prereq.playerName) {
+    throw new Error('Prerequisites missing: at least one non-GM user must exist in the world.');
+  }
+  playerName = prereq.playerName;
+
+  // Second context: a real non-GM login, needed only by the macro pull test
+  // below (MacroSync.onLogin()'s GM push phase runs before its pull phase in
+  // the same call, so only a non-GM session exercises pull in isolation).
+  playerContext = await browser.newContext();
+  playerPage = await playerContext.newPage();
+  await loginToFoundry(playerPage, playerName);
 });
 
 test.afterAll(async () => {
   await gmContext?.close();
+  await playerContext?.close();
   await browser?.close();
 });
 
@@ -155,4 +168,147 @@ test('quoted fromUuid ids in macro commands are canonicalized on push', async ()
   });
   expect(result.canonical).toContain(`fromUuid('JournalEntry.${result.journalOmni}')`);
   expect(result.canonical).not.toContain(result.journalLocalId);
+});
+
+test('quoted fromUuid ids in macro commands are localized on pull', async () => {
+  // MacroSync.onLogin() runs a GM push phase before its pull phase in the
+  // same call (macro-sync.js:130-141). As GM, that push would immediately
+  // overwrite — or, per op-bhm, delete — the pack copy this test sets up. A
+  // non-GM session skips the push phase entirely and runs only the pull
+  // (macro-sync.js:130's `if (game.user.isGM)` guard), so the player page is
+  // what actually drives the assertion below.
+  const out = {};
+  let playerId, ompId, prevSlot9, hadPrevSlot9;
+
+  try {
+    // --- GM setup -----------------------------------------------------
+    const setup = await gmPage.evaluate(async (playerName) => {
+      const { MacroSync } = await import('/modules/omnipresence/scripts/macro-sync.js');
+      const journal = game.journal.getName('Omnipresence Test Journal');
+      const journalOmni = journal.getFlag('omnipresence', 'id');
+      const journalLocalId = journal.id;
+      const playerUser = game.users.find(u => u.name === playerName);
+
+      const macro = await Macro.create({
+        name: 'OmniFromUuid Pull Macro',
+        type: 'script',
+        command: `const j = await fromUuid('JournalEntry.${journalLocalId}'); console.log(j?.name);`,
+        ownership: { default: 0, [playerUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER }
+      });
+
+      // Capture whatever slot 9 held before this test so cleanup can restore
+      // it exactly, instead of clobbering it with a dangling null-valued key.
+      const prevSlot9 = playerUser.hotbar[9];
+      await playerUser.update(
+        { hotbar: { ...playerUser.hotbar, 9: macro.id } },
+        { omnipresenceInternal: true }
+      );
+      // Push-side precondition: produces the pack copy with ownerName set to
+      // the player, hotbarSlots: [9], and a canonicalized command.
+      await MacroSync.pushForUser(playerUser);
+
+      const pack = game.packs.get(MacroSync.PACK_ID);
+      const ompId = macro.getFlag('omnipresence', 'id');
+      const comp = (await pack.getDocuments()).find(d => d.getFlag('omnipresence', 'id') === ompId);
+      const canonical = comp?._source?.command ?? '';
+
+      // The trick that makes this a real test: overwrite the LOCAL macro's
+      // command so it carries the CANONICAL id instead of the local one —
+      // the exact state a genuine localizing pull must correct. A pull that
+      // merely leaves an already-present local macro untouched (e.g. a
+      // silently no-op localize, or an update call that never fires) would
+      // leave this canonical id in place and fail the assertions below.
+      await macro.update({ command: canonical }, { omnipresenceInternal: true });
+
+      return {
+        ompId,
+        canonical,
+        journalOmni,
+        journalLocalId,
+        playerId: playerUser.id,
+        prevSlot9: prevSlot9 ?? null,
+        hadPrevSlot9: prevSlot9 !== undefined
+      };
+    }, playerName);
+
+    Object.assign(out, setup);
+    playerId = setup.playerId;
+    ompId = setup.ompId;
+    prevSlot9 = setup.prevSlot9;
+    hadPrevSlot9 = setup.hadPrevSlot9;
+
+    // Push-side precondition: if this fails, setup — not the module under
+    // test — is broken.
+    expect(out.canonical).toContain(`fromUuid('JournalEntry.${out.journalOmni}')`);
+
+    // --- non-GM pull ----------------------------------------------------
+    // Wait for the player's own session to observe (via real-time doc sync)
+    // the macro carrying the canonical command and its omnipresence id flag,
+    // so onLogin's pull deterministically takes the UPDATE path — an
+    // existing local macro with a matching id — rather than racing ahead of
+    // the sync and taking the create path instead.
+    await playerPage.waitForFunction(
+      ({ ompId, canonical }) => {
+        const m = game.macros.find(mm => mm.getFlag('omnipresence', 'id') === ompId);
+        return !!m && m._source.command === canonical;
+      },
+      { ompId, canonical: out.canonical },
+      { timeout: 10_000 }
+    );
+
+    out.pulled = await playerPage.evaluate(async (id) => {
+      const { MacroSync } = await import('/modules/omnipresence/scripts/macro-sync.js');
+      await MacroSync.onLogin();
+      const macro = game.macros.find(m => m.getFlag('omnipresence', 'id') === id);
+      return macro?._source?.command ?? '';
+    }, ompId);
+  } finally {
+    // Everything below is undone independently, each step guarded so one
+    // failure cannot skip the rest.
+    try {
+      await gmPage.evaluate(async ({ playerId, prevSlot9, hadPrevSlot9 }) => {
+        const playerUser = game.users.get(playerId);
+        if (!playerUser) return;
+        if (hadPrevSlot9) {
+          await playerUser.update(
+            { hotbar: { ...playerUser.hotbar, 9: prevSlot9 } },
+            { omnipresenceInternal: true }
+          );
+        } else {
+          await playerUser.update({ 'hotbar.-=9': null }, { omnipresenceInternal: true });
+        }
+      }, { playerId, prevSlot9, hadPrevSlot9 });
+    } catch (e) {
+      console.error('Omnipresence test cleanup: failed to restore hotbar slot 9', e);
+    }
+    try {
+      await gmPage.evaluate(async (id) => {
+        const { MacroSync } = await import('/modules/omnipresence/scripts/macro-sync.js');
+        const pack = game.packs.get(MacroSync.PACK_ID);
+        pack.clear();
+        const comp = (await pack.getDocuments()).find(d => d.getFlag('omnipresence', 'id') === id);
+        await comp?.delete();
+      }, ompId);
+    } catch (e) {
+      console.error('Omnipresence test cleanup: failed to delete pack copy', e);
+    }
+    try {
+      // Delete by NAME, not a captured id — ids can change across a pull.
+      await gmPage.evaluate(async () => {
+        for (const m of game.macros.filter(m => m.name === 'OmniFromUuid Pull Macro')) {
+          await m.delete();
+        }
+      });
+    } catch (e) {
+      console.error('Omnipresence test cleanup: failed to delete macro', e);
+    }
+  }
+
+  // Push side: the pack copy carries the canonical omnipresence id.
+  expect(out.journalLocalId).not.toBe(out.journalOmni);
+  expect(out.canonical).toContain(`fromUuid('JournalEntry.${out.journalOmni}')`);
+  // Pull side (the gap op-5fh names): the re-imported macro carries this
+  // world's local id again, and no canonical id leaks into world content.
+  expect(out.pulled).toContain(`fromUuid('JournalEntry.${out.journalLocalId}')`);
+  expect(out.pulled).not.toContain(out.journalOmni);
 });

@@ -12,7 +12,7 @@ test.beforeAll(async () => {
   const ok = await gmPage.evaluate(() =>
     !!game.journal.getName('Omnipresence Test Journal') && game.scenes.size > 0
   );
-  if (!ok) throw new Error('Prerequisites missing in World A (test journal / a scene).');
+  if (!ok) throw new Error('Prerequisites missing in World B (test journal / a scene).');
 });
 
 test.afterAll(async () => {

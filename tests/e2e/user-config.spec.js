@@ -22,7 +22,7 @@ test.beforeAll(async () => {
   );
   if (!actorExists) {
     throw new Error(
-      'Prerequisite missing: "Omnipresence Test Actor" not found in World A. ' +
+      'Prerequisite missing: "Omnipresence Test Actor" not found in World B. ' +
       'Create the actor, grant User 1 OWNER permission, and enroll via context menu.'
     );
   }

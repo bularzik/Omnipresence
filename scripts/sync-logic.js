@@ -426,3 +426,24 @@ export function isSelected(id, allowList) {
   if (!id) return false;
   return Array.isArray(allowList) && allowList.includes(id);
 }
+
+/**
+ * Case- and diacritic-insensitive substring filter over named picker
+ * candidates. Lives here (not in the picker) so the matching rule is
+ * unit-testable without a browser or Foundry globals.
+ *
+ * @param {Array<{id: string, name?: string}>} items
+ * @param {string} query
+ * @returns {Array<{id: string, name?: string}>} a new array; all items when
+ *   the query is empty or whitespace-only.
+ */
+export function filterCandidates(items, query) {
+  const normalize = (s) =>
+    (s ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+  const q = normalize(query).trim();
+  if (!q) return [...items];
+  return items.filter(item => normalize(item.name).includes(q));
+}

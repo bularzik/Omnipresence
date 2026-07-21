@@ -1,6 +1,5 @@
 import { SyncRegistry } from './sync-registry.js';
-import { SyncEngine } from './sync-engine.js';
-import { JournalSync } from './journal-sync.js';
+import { DocPicker } from './doc-picker.js';
 import { decideOnboarding } from './sync-logic.js';
 
 export class Onboarding {
@@ -24,8 +23,7 @@ export class Onboarding {
         return true;
       }
 
-      const candidates = await this._buildCandidates();
-      const result = await this._prompt(candidates);
+      const result = await DocPicker.open({ mode: 'onboarding', preselected: null });
       if (!result) return false; // dismissed → leave unonboarded, re-ask
       await this._applyResult(userId, result);
       return true;
@@ -73,113 +71,6 @@ export class Onboarding {
       journalIds: [...new Set([...existing.journalIds, ...journalIds])]
     });
     await SyncRegistry.setOnboarded(userId);
-  }
-
-  static async _buildCandidates() {
-    const actors = await this._candidatesFor(SyncEngine.PACK_ID, game.actors);
-    const journals = await this._candidatesFor(JournalSync.PACK_ID, game.journal);
-    return { actors, journals };
-  }
-
-  /**
-   * Named candidate docs for the picker: the user's enrolled docs already in
-   * this world plus their enrolled docs in the shared pack (matched by
-   * ownerName), deduped by omnipresence id, sorted by name.
-   * @returns {Promise<Array<{id: string, name: string}>>}
-   */
-  static async _candidatesFor(packId, worldCollection) {
-    const byId = new Map();
-
-    for (const doc of worldCollection) {
-      if (!doc.isOwner) continue;
-      if (!SyncRegistry.isEnrolled(doc)) continue;
-      const id = doc.getFlag('omnipresence', 'id');
-      if (id) byId.set(id, doc.name);
-    }
-
-    const pack = game.packs.get(packId);
-    if (pack) {
-      const docs = await pack.getDocuments();
-      for (const doc of docs) {
-        const id = doc.getFlag('omnipresence', 'id');
-        if (!id) continue;
-        if (doc.getFlag('omnipresence', 'ownerName') !== game.user.name) continue;
-        if (!byId.has(id)) byId.set(id, doc.name);
-      }
-    }
-
-    return [...byId.entries()]
-      .map(([id, name]) => ({ id, name }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }
-
-  static _renderContent({ actors, journals }) {
-    const esc = foundry.utils.escapeHTML;
-    const L = key => game.i18n.localize(`OMNIPRESENCE.onboarding.${key}`);
-
-    const list = (items, kind, noneKey) => {
-      if (!items.length) return `<p class="notes">${L(noneKey)}</p>`;
-      return items.map(({ id, name }) => `
-        <div class="form-group">
-          <label class="checkbox">
-            <input type="checkbox" data-kind="${kind}" value="${esc(id)}" checked>
-            ${esc(name)}
-          </label>
-        </div>`).join('');
-    };
-
-    return `
-      <p>${L('intro')}</p>
-      <fieldset>
-        <legend>${L('actorsHeading')}</legend>
-        ${list(actors, 'actor', 'noneActors')}
-      </fieldset>
-      <fieldset>
-        <legend>${L('journalsHeading')}</legend>
-        ${list(journals, 'journal', 'noneJournals')}
-      </fieldset>
-      <fieldset>
-        <legend>${L('macrosHeading')}</legend>
-        <div class="form-group">
-          <label class="checkbox">
-            <input type="checkbox" name="omnipresence-macros" checked>
-            ${L('macrosLabel')}
-          </label>
-        </div>
-      </fieldset>
-    `;
-  }
-
-  /**
-   * @returns {Promise<{actorIds: string[], journalIds: string[], macros: boolean}|null>}
-   *   null when the user dismissed the dialog without confirming.
-   */
-  static async _prompt(candidates) {
-    const { DialogV2 } = foundry.applications.api;
-    const result = await DialogV2.wait({
-      window: { title: game.i18n.localize('OMNIPRESENCE.onboarding.title') },
-      content: this._renderContent(candidates),
-      buttons: [
-        {
-          action: 'confirm',
-          label: game.i18n.localize('OMNIPRESENCE.onboarding.confirm'),
-          default: true,
-          callback: (event, button) => this._collect(button.form)
-        }
-      ],
-      rejectClose: false
-    });
-    return result ?? null;
-  }
-
-  static _collect(form) {
-    const checked = sel =>
-      [...form.querySelectorAll(sel)].map(i => i.value);
-    return {
-      actorIds: checked('input[data-kind="actor"]:checked'),
-      journalIds: checked('input[data-kind="journal"]:checked'),
-      macros: form.querySelector('input[name="omnipresence-macros"]').checked
-    };
   }
 
   /**

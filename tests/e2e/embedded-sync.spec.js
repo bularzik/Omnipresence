@@ -333,3 +333,185 @@ test('a new JournalEntryPage round-trips through JournalSync.push/delete under a
   expect(result.localPageCount).toBe(BASELINE_PAGE_COUNT);
   expect(result.compPageCount).toBe(BASELINE_PAGE_COUNT);
 });
+
+test('pull applies pack-side item, effect, and nested-effect creates and deletes under stable ids', async () => {
+  const result = await gmPage.evaluate(
+    async ({ actorId, hostItemId, actorOmniId, actorPackId }) => {
+      const { SyncEngine } = await import('/modules/omnipresence/scripts/sync-engine.js');
+      const actor = game.actors.get(actorId);
+      const pack = game.packs.get(actorPackId);
+      const out = {};
+
+      const compCopy = async () => {
+        pack.clear();
+        const docs = await pack.getDocuments();
+        return docs.find(d => d.getFlag('omnipresence', 'id') === actorOmniId);
+      };
+
+      try {
+        // Establish a clean shared baseline, then mutate the PACK COPY the way
+        // another world's push would have — this is the cross-world channel.
+        await SyncEngine.push(actor);
+        let comp = await compCopy();
+
+        const [compItem] = await comp.createEmbeddedDocuments('Item', [{
+          name: 'Omni Test Pulled Item', type: 'loot'
+        }], { omnipresenceInternal: true });
+        const [compEffect] = await comp.createEmbeddedDocuments('ActiveEffect', [{
+          name: 'Omni Test Pulled Effect', img: 'icons/svg/aura.svg'
+        }], { omnipresenceInternal: true });
+        const compHostItem = comp.items.get(hostItemId);
+        const [compNested] = await compHostItem.createEmbeddedDocuments('ActiveEffect', [{
+          name: 'Omni Test Pulled Nested', img: 'icons/svg/aura.svg'
+        }], { omnipresenceInternal: true });
+
+        out.itemId = compItem.id;
+        out.effectId = compEffect.id;
+        out.nestedId = compNested.id;
+
+        // Bump the shared timestamp so the pack copy is unambiguously newer.
+        await comp.update(
+          { 'flags.omnipresence.syncedAt': new Date().toISOString() },
+          { omnipresenceInternal: true }
+        );
+
+        comp = await compCopy();
+        await SyncEngine.pull(actor, comp);
+
+        out.itemPresentAfterPull = !!actor.items.get(out.itemId);
+        out.effectPresentAfterPull = !!actor.effects.get(out.effectId);
+        out.nestedPresentAfterPull = !!actor.items.get(hostItemId)?.effects.get(out.nestedId);
+        // localModifiedAt must be reset to the pulled syncedAt, or the next
+        // login reads the freshly-pulled actor as locally dirty.
+        out.localModifiedMatchesSynced =
+          actor.getFlag('omnipresence', 'localModifiedAt') ===
+          actor.getFlag('omnipresence', 'syncedAt');
+
+        // Now delete all three on the pack side and pull again: deletions must
+        // propagate, which is the behavior the removed reconcile used to cover.
+        comp = await compCopy();
+        await comp.deleteEmbeddedDocuments('Item', [out.itemId], { omnipresenceInternal: true });
+        await comp.deleteEmbeddedDocuments('ActiveEffect', [out.effectId], { omnipresenceInternal: true });
+        await comp.items.get(hostItemId)
+          .deleteEmbeddedDocuments('ActiveEffect', [out.nestedId], { omnipresenceInternal: true });
+        await comp.update(
+          { 'flags.omnipresence.syncedAt': new Date().toISOString() },
+          { omnipresenceInternal: true }
+        );
+
+        comp = await compCopy();
+        await SyncEngine.pull(actor, comp);
+
+        out.itemPresentAfterDelete = !!actor.items.get(out.itemId);
+        out.effectPresentAfterDelete = !!actor.effects.get(out.effectId);
+        out.nestedPresentAfterDelete = !!actor.items.get(hostItemId)?.effects.get(out.nestedId);
+        out.localItemCount = actor.items.size;
+        out.localEffectCount = actor.effects.size;
+      } finally {
+        // Restore both sides to baseline whatever happened above.
+        try {
+          const stray = actor.items.filter(i => i.name?.startsWith('Omni Test'));
+          if (stray.length) {
+            await actor.deleteEmbeddedDocuments('Item', stray.map(i => i.id), { omnipresenceInternal: true });
+          }
+          const strayEffects = actor.effects.filter(e => e.name?.startsWith('Omni Test'));
+          if (strayEffects.length) {
+            await actor.deleteEmbeddedDocuments('ActiveEffect', strayEffects.map(e => e.id), { omnipresenceInternal: true });
+          }
+          const host = actor.items.get(hostItemId);
+          const strayNested = host?.effects.filter(e => e.name?.startsWith('Omni Test')) ?? [];
+          if (strayNested.length) {
+            await host.deleteEmbeddedDocuments('ActiveEffect', strayNested.map(e => e.id), { omnipresenceInternal: true });
+          }
+          await SyncEngine.push(actor);
+        } catch (e) {
+          console.error('Omnipresence test cleanup: failed to restore pull baseline', e);
+        }
+      }
+
+      return out;
+    },
+    { actorId: ACTOR_ID, hostItemId: HOST_ITEM_ID, actorOmniId: ACTOR_OMNI_ID, actorPackId: ACTOR_PACK_ID }
+  );
+
+  expect(result.itemPresentAfterPull).toBe(true);
+  expect(result.effectPresentAfterPull).toBe(true);
+  expect(result.nestedPresentAfterPull).toBe(true);
+  expect(result.localModifiedMatchesSynced).toBe(true);
+
+  expect(result.itemPresentAfterDelete).toBe(false);
+  expect(result.effectPresentAfterDelete).toBe(false);
+  expect(result.nestedPresentAfterDelete).toBe(false);
+  expect(result.localItemCount).toBe(BASELINE_ITEM_COUNT);
+  expect(result.localEffectCount).toBe(BASELINE_EFFECT_COUNT);
+});
+
+test('journal pull applies pack-side page creates and deletes under stable ids', async () => {
+  const result = await gmPage.evaluate(
+    async ({ journalOmniId, journalPackId }) => {
+      const { JournalSync } = await import('/modules/omnipresence/scripts/journal-sync.js');
+      const journal = game.journal.find(j => j.getFlag('omnipresence', 'id') === journalOmniId);
+      const pack = game.packs.get(journalPackId);
+      const out = {};
+
+      const compCopy = async () => {
+        pack.clear();
+        const docs = await pack.getDocuments();
+        return docs.find(d => d.getFlag('omnipresence', 'id') === journalOmniId);
+      };
+
+      try {
+        await JournalSync.push(journal);
+        let comp = await compCopy();
+
+        const [compPage] = await comp.createEmbeddedDocuments('JournalEntryPage', [{
+          name: 'Omni Test Pulled Page', type: 'text', text: { content: '<p>from the pack</p>' }
+        }], { omnipresenceInternal: true });
+        out.pageId = compPage.id;
+        await comp.update(
+          { 'flags.omnipresence.syncedAt': new Date().toISOString() },
+          { omnipresenceInternal: true }
+        );
+
+        comp = await compCopy();
+        await JournalSync.pull(journal, comp);
+        out.pagePresentAfterPull = !!journal.pages.get(out.pageId);
+        // localModifiedAt must be reset to the pulled syncedAt, or the next
+        // login reads the freshly-pulled journal as locally dirty.
+        out.localModifiedMatchesSynced =
+          journal.getFlag('omnipresence', 'localModifiedAt') ===
+          journal.getFlag('omnipresence', 'syncedAt');
+
+        comp = await compCopy();
+        await comp.deleteEmbeddedDocuments('JournalEntryPage', [out.pageId], { omnipresenceInternal: true });
+        await comp.update(
+          { 'flags.omnipresence.syncedAt': new Date().toISOString() },
+          { omnipresenceInternal: true }
+        );
+
+        comp = await compCopy();
+        await JournalSync.pull(journal, comp);
+        out.pagePresentAfterDelete = !!journal.pages.get(out.pageId);
+        out.localPageCount = journal.pages.size;
+      } finally {
+        try {
+          const strayPages = journal.pages.filter(p => p.name?.startsWith('Omni Test'));
+          if (strayPages.length) {
+            await journal.deleteEmbeddedDocuments('JournalEntryPage', strayPages.map(p => p.id), { omnipresenceInternal: true });
+          }
+          await JournalSync.push(journal);
+        } catch (e) {
+          console.error('Omnipresence test cleanup: failed to restore journal pull baseline', e);
+        }
+      }
+
+      return out;
+    },
+    { journalOmniId: JOURNAL_OMNI_ID, journalPackId: JOURNAL_PACK_ID }
+  );
+
+  expect(result.pagePresentAfterPull).toBe(true);
+  expect(result.localModifiedMatchesSynced).toBe(true);
+  expect(result.pagePresentAfterDelete).toBe(false);
+  expect(result.localPageCount).toBe(BASELINE_PAGE_COUNT);
+});

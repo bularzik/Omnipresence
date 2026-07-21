@@ -13,7 +13,7 @@ test.beforeAll(async () => {
     !!game.journal.getName('Omnipresence Test Journal') &&
     !!game.actors.getName('Omnipresence Test Actor')
   );
-  if (!ok) throw new Error('Prerequisites missing in World A (test journal/actor).');
+  if (!ok) throw new Error('Prerequisites missing in World B (test journal/actor).');
 });
 
 test.afterAll(async () => {

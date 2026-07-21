@@ -7,6 +7,7 @@ import { OmnipresenceDashboard } from './scripts/gm-dashboard.js';
 import { registerUserConfigInjection } from './scripts/user-config.js';
 import { LinkRewriter } from './scripts/link-rewriter.js';
 import { Onboarding } from './scripts/onboarding.js';
+import { runLoginReconcile } from './scripts/reconcile.js';
 
 Hooks.once('init', () => {
   SyncRegistry.register();
@@ -38,19 +39,7 @@ Hooks.once('ready', async () => {
   // returns false — skip sync this session and re-ask next login.
   const proceed = await Onboarding.ensureOnboarded();
   if (proceed) {
-    const actorConflicts = await SyncEngine.onLogin();
-    await MacroSync.onLogin();
-    const journalConflicts = await JournalSync.onLogin();
-
-    // Surface actor and journal conflicts together in ONE conflicts-only dashboard
-    // (both share the static id 'omnipresence-dashboard', so a single instance
-    // must carry both lists).
-    if ((actorConflicts?.length ?? 0) > 0 || (journalConflicts?.length ?? 0) > 0) {
-      new OmnipresenceDashboard({
-        conflictActorIds: actorConflicts?.length ? actorConflicts : null,
-        conflictJournalIds: journalConflicts?.length ? journalConflicts : null
-      }).render(true);
-    }
+    await runLoginReconcile();
   }
 
   // Phase 2 of login link rewriting: every enrolled doc now exists locally

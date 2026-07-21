@@ -17,7 +17,7 @@ test.beforeAll(async () => {
   );
   if (!journalExists) {
     throw new Error(
-      'Prerequisite missing: "Omnipresence Test Journal" not found in World A. ' +
+      'Prerequisite missing: "Omnipresence Test Journal" not found in World B. ' +
       'Create it, grant User 1 OWNER, and enroll it via the Journal directory context menu.'
     );
   }
