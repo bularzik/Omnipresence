@@ -360,19 +360,23 @@ export class FolderSync {
     }
   }
 
-  /** Deletes a player made with no GM connected. */
+  /** Deletes a player made with no GM connected. Entries that fail to materialize are kept for the next run. */
   static async _materializeDeletes(user) {
     const deletes = SyncRegistry.getPendingDeletes(user.id);
     if (!deletes.length) return;
     const docs = await this._getPack().getDocuments();
-    for (const { omniId, rootId } of deletes) {
+    const failed = [];
+    for (const entry of deletes) {
+      const { omniId, rootId } = entry;
       try {
         await this._removeFromPack(rootId, omniId, 'deleted', docs);
       } catch (err) {
         console.error('Omnipresence | pending folder delete failed for', omniId, err);
+        failed.push(entry);
       }
     }
-    await SyncRegistry.clearPendingDeletes(user.id);
+    if (failed.length) await SyncRegistry.setPendingDeletes(user.id, failed);
+    else await SyncRegistry.clearPendingDeletes(user.id);
   }
 
   /** Move-outs a player made with no GM connected. */
@@ -576,7 +580,12 @@ export class FolderSync {
       const omniId = journal.getFlag('omnipresence', 'id');
       if (!omniId || packMemberIds.has(omniId)) continue;
       try {
-        const action = resolveTombstoneAction(tombstones, omniId);
+        // A re-entry recorded with no GM connected must be pushed even when a
+        // stale `removed` tombstone still names this journal — the push path
+        // below prunes the tombstone once it lands.
+        const action = journal.getFlag('omnipresence', 'pendingEnter') === rootId
+          ? 'push'
+          : resolveTombstoneAction(tombstones, omniId);
         if (action === 'delete') await journal.delete({ omnipresenceInternal: true });
         else if (action === 'detach') await this._detach(journal);
         else await JournalSync.push(journal);
@@ -713,7 +722,14 @@ export class FolderSync {
 
   static async _enter(journal, rootId) {
     await SyncRegistry.enroll(journal, { viaFolder: rootId });
-    if (game.user.isGM) JournalSync.debouncedPush(journal);
+    if (game.user.isGM) {
+      JournalSync.debouncedPush(journal);
+    } else {
+      // No GM connected: record the re-entry so the GM's next login pushes
+      // this journal even if a stale `removed` tombstone still names it
+      // (it may have left and come back before the GM ever saw the leave).
+      await journal.update({ 'flags.omnipresence.pendingEnter': rootId }, { omnipresenceInternal: true });
+    }
   }
 
   /**

@@ -88,6 +88,7 @@ export class JournalSync {
     const journalData = LinkRewriter.canonicalize(rawData);
     journalData.flags.omnipresence ??= {};
     delete journalData.flags.omnipresence.localModifiedAt;
+    delete journalData.flags.omnipresence.pendingEnter;
     journalData.flags.omnipresence.syncedAt = syncedAt;
     // Re-stamp ownerName from current ownership so the pack copy never goes
     // stale (e.g. ownership granted after enrollment); drives cross-world import.
@@ -118,7 +119,14 @@ export class JournalSync {
         { 'flags.omnipresence.syncedAt': syncedAt },
         { omnipresenceInternal: true }
       );
-      if (viaFolder) await this._pruneTombstone(viaFolder, omnipresenceId);
+      if (viaFolder) {
+        await this._pruneTombstone(viaFolder, omnipresenceId);
+        // A pushed re-entry is no longer pending — clear it (guarded so a
+        // journal that never carried the flag skips a needless write).
+        if (journal.getFlag('omnipresence', 'pendingEnter') !== undefined) {
+          await journal.update({ 'flags.omnipresence.-=pendingEnter': null }, { omnipresenceInternal: true });
+        }
+      }
     } catch (err) {
       console.error('Omnipresence | journal push failed for', journal.name, err);
       ui.notifications.warn(

@@ -48,6 +48,7 @@ export class SyncRegistry {
       // Enrolled through a synced folder: the folder gates it, not journalIds.
       updates['flags.omnipresence.viaFolder'] = viaFolder;
       updates['flags.omnipresence.pendingRemove'] = null;
+      updates['flags.omnipresence.pendingEnter'] = null;
     }
     if (!id) {
       id = foundry.utils.randomID(16);
@@ -252,6 +253,13 @@ export class SyncRegistry {
     const user = game.users?.get(userId);
     if (!user) return;
     await user.update({ 'flags.omnipresence.pendingDeletes': [] }, { omnipresenceInternal: true });
+  }
+
+  /** Replace a user's pending-deletes list wholesale (e.g. keeping only entries that failed to materialize). */
+  static async setPendingDeletes(userId, entries) {
+    const user = game.users?.get(userId);
+    if (!user) return;
+    await user.update({ 'flags.omnipresence.pendingDeletes': entries }, { omnipresenceInternal: true });
   }
 
   /**
