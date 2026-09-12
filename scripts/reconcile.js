@@ -1,6 +1,7 @@
 import { SyncEngine } from './sync-engine.js';
 import { MacroSync } from './macro-sync.js';
 import { JournalSync } from './journal-sync.js';
+import { FolderSync } from './folder-sync.js';
 import { OmnipresenceDashboard } from './gm-dashboard.js';
 
 // Tracks an in-flight runLoginReconcile() call, if any. The ready hook and
@@ -34,6 +35,10 @@ export async function runLoginReconcile() {
   inFlight = (async () => {
     const actorConflicts = await SyncEngine.onLogin();
     await MacroSync.onLogin();
+
+    // Folders first: creates the mirrored tree and imports members so the
+    // per-journal loop below can sync their content and surface conflicts.
+    await FolderSync.reconcileFolders();
     const journalConflicts = await JournalSync.onLogin();
 
     if ((actorConflicts?.length ?? 0) > 0 || (journalConflicts?.length ?? 0) > 0) {
