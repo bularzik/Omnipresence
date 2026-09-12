@@ -10,7 +10,7 @@ npm test                              # run all unit tests (Node's built-in runn
 node --test tests/sync-logic.test.js  # run a single test file
 ```
 
-88 tests. Only the **pure** layer (`scripts/sync-logic.js`) is unit-tested —
+99 tests. Only the **pure** layer (`scripts/sync-logic.js`) is unit-tested —
 everything that touches Foundry globals (`game`, `Hooks`, `ui`, `ApplicationV2`)
 is not unit-testable and is covered by the Playwright suite below instead,
 plus manual verification for the onboarding dialog, which has no automated
@@ -25,9 +25,16 @@ npm run test:e2e                                    # full Playwright suite
 npx playwright test tests/e2e/allow-list.spec.js    # one spec
 ```
 
-30 tests across 9 spec files (`allow-list`, `embedded-sync`, `journal-sync`,
-`link-rewriting`, `map-pins`, `pack-staleness`, `sync-followups`,
-`sync-followups-2`, `user-config`).
+40 tests across 11 spec files (`allow-list`, `embedded-sync`,
+`folder-membership`, `folder-sync`, `journal-sync`, `link-rewriting`,
+`map-pins`, `pack-staleness`, `sync-followups`, `sync-followups-2`,
+`user-config`).
+
+`FOUNDRY_URL` overrides the server URL the e2e suite targets (default
+`http://localhost:30000`) — useful when a v13 test world runs on a
+non-default port, e.g. `FOUNDRY_URL=http://localhost:30013 npm run test:e2e`.
+Check which port a server is actually listening on with
+`curl -s http://localhost:<port>/api/status`.
 
 The e2e suite drives a **live Foundry server** — there are no fixtures or
 mocks. Before every run:
@@ -61,6 +68,10 @@ The specs assume these documents exist in World B:
 
 `embedded-sync.spec.js` asserts those baselines in `afterAll`, so a run that
 corrupts the world fails loudly rather than passing green.
+
+`folder-sync.spec.js` and `folder-membership.spec.js` need no fixtures: each
+test builds an `Omni Folder Probe` tree, marks it, and removes both the world
+documents and the pack folders/journals in `finally`.
 
 ### Run the suite twice
 

@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Journal folder sync.** Right-click a folder in the Journal directory and
+  choose "Sync Folder with Omnipresence" to sync everything inside it across
+  worlds, subfolders included. The folder tree mirrors exactly; journals added
+  to or created in the folder join the sync, journals moved out leave it (other
+  worlds keep a detached copy), and journals deleted in one world are deleted
+  in the others. Players can mark folders whose journals they own; a GM
+  completes the mark at their next login (or immediately, if connected).
+  The consent picker and Manage Synced Documents gain a "Journal Folders"
+  section, and the sync dashboard a folders table.
+
 ## [0.6.0] - 2026-07-21
 
 ### Added
