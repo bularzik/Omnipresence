@@ -1,6 +1,7 @@
 import { SyncRegistry } from './sync-registry.js';
 import { DocPicker } from './doc-picker.js';
 import { decideOnboarding } from './sync-logic.js';
+import { FolderSync } from './folder-sync.js';
 
 export class Onboarding {
   /**
@@ -66,9 +67,11 @@ export class Onboarding {
       .filter(Boolean);
 
     const existing = SyncRegistry.getSelection(userId);
+    const folderIds = existing.folderIds ?? FolderSync._eligibleLocalRootIds(userId);
     await SyncRegistry.setSelection(userId, {
       actorIds: [...new Set([...existing.actorIds, ...actorIds])],
-      journalIds: [...new Set([...existing.journalIds, ...journalIds])]
+      journalIds: [...new Set([...existing.journalIds, ...journalIds])],
+      folderIds: [...new Set([...folderIds, ...FolderSync._eligibleLocalRootIds(userId)])]
     });
     await SyncRegistry.setOnboarded(userId);
   }
@@ -79,8 +82,8 @@ export class Onboarding {
    * at their default (true) so a doc the user enrolls later still syncs. Only
    * macros (all-or-nothing, no list) is written to prefs here.
    */
-  static async _applyResult(userId, { actorIds, journalIds, macros }) {
-    await SyncRegistry.setSelection(userId, { actorIds, journalIds });
+  static async _applyResult(userId, { actorIds, journalIds, folderIds, macros }) {
+    await SyncRegistry.setSelection(userId, { actorIds, journalIds, folderIds });
     await SyncRegistry.setPrefs(userId, { macros });
     await SyncRegistry.setOnboarded(userId);
   }
