@@ -70,6 +70,10 @@ export class JournalSync {
     const omnipresenceId = journal.getFlag('omnipresence', 'id');
     if (!omnipresenceId) return;
 
+    // A journal that just left a synced folder may still have a debounced
+    // push queued from the update hook; never resurrect its pack copy.
+    if (!SyncRegistry.isEnrolled(journal)) return;
+
     const syncedAt = new Date().toISOString();
 
     // Strip world-local fields (top-level _id/ownership/folder) and per-page
@@ -89,6 +93,14 @@ export class JournalSync {
     // stale (e.g. ownership granted after enrollment); drives cross-world import.
     journalData.flags.omnipresence.ownerName = SyncRegistry.resolveOwnerName(journal);
 
+    // Folder members keep a `folder` on the pack copy — the pack folder whose
+    // _id is the local folder's omnipresence id (stripWorldLocalFields removed
+    // the local one). An unstamped subfolder falls back to the root.
+    const viaFolder = journal.getFlag('omnipresence', 'viaFolder') ?? null;
+    if (viaFolder) {
+      journalData.folder = journal.folder?.getFlag('omnipresence', 'id') ?? viaFolder;
+    }
+
     try {
       const existing = await this._getCompendiumJournal(omnipresenceId);
       if (existing) {
@@ -106,12 +118,32 @@ export class JournalSync {
         { 'flags.omnipresence.syncedAt': syncedAt },
         { omnipresenceInternal: true }
       );
+      if (viaFolder) await this._pruneTombstone(viaFolder, omnipresenceId);
     } catch (err) {
       console.error('Omnipresence | journal push failed for', journal.name, err);
       ui.notifications.warn(
         game.i18n.format('OMNIPRESENCE.notifications.syncFailed', { name: journal.name })
       );
     }
+  }
+
+  /** A re-pushed member is alive again: drop any tombstone the root pack folder held for it. */
+  static async _pruneTombstone(rootId, omnipresenceId) {
+    const packRoot = this._getPack()?.folders.get(rootId);
+    if (!packRoot) return;
+    const tombstones = packRoot.getFlag('omnipresence', 'tombstones') ?? {};
+    if (!(omnipresenceId in tombstones)) return;
+    await packRoot.update(
+      { [`flags.omnipresence.tombstones.-=${omnipresenceId}`]: null },
+      { omnipresenceInternal: true }
+    );
+  }
+
+  /** Cancel one journal's pending debounced push (a member leaving its folder). */
+  static cancelFor(journalId) {
+    if (!this._timers.has(journalId)) return;
+    clearTimeout(this._timers.get(journalId));
+    this._timers.delete(journalId);
   }
 
   static debouncedPush(journal) {
@@ -262,6 +294,25 @@ export class JournalSync {
     }
   }
 
+  /**
+   * Build local create data from a pack copy: strip world-local fields and
+   * per-page ownership, localize links, reset localModifiedAt to the pulled
+   * syncedAt, and lift the pin payload off (it lives only on pack copies).
+   * Shared by onLogin's auto-import and FolderSync's member import.
+   * @returns {{ journalData: object, pins: Array|undefined }}
+   */
+  static prepareImportData(compJournal) {
+    const journalData = LinkRewriter.localize(
+      this._stripPageOwnership(stripWorldLocalFields(compJournal.toObject()))
+    );
+    journalData.flags ??= {};
+    journalData.flags.omnipresence ??= {};
+    journalData.flags.omnipresence.localModifiedAt = journalData.flags.omnipresence.syncedAt;
+    const pins = journalData.flags.omnipresence.pins;
+    delete journalData.flags.omnipresence.pins;
+    return { journalData, pins };
+  }
+
   static async pull(localJournal, compJournal) {
     // Strip world-local fields so local ownership and folder are preserved,
     // and localize canonical omnipresence ids to this world's ids.
@@ -304,8 +355,16 @@ export class JournalSync {
       const omnipresenceId = journal.getFlag('omnipresence', 'id');
       const compJournal = compJournals.find(d => d.getFlag('omnipresence', 'id') === omnipresenceId);
 
-      // Allow-list gate: never sync a journal the user did not opt into here.
-      if (!SyncRegistry.isDocSelected(game.user.id, 'journal', omnipresenceId)) continue;
+      // Allow-list gate. A folder member is gated by its root's owner (or the
+      // GM for a GM-marked root) — never by journalIds.
+      const viaFolder = journal.getFlag('omnipresence', 'viaFolder') ?? null;
+      if (viaFolder) {
+        const rootOwner = pack.folders.get(viaFolder)?.getFlag('omnipresence', 'ownerName') ?? null;
+        const gateUser = SyncRegistry.folderGateUser(rootOwner) ?? game.user;
+        if (!SyncRegistry.isDocSelected(gateUser.id, 'folder', viaFolder)) continue;
+      } else if (!SyncRegistry.isDocSelected(game.user.id, 'journal', omnipresenceId)) {
+        continue;
+      }
 
       if (!compJournal) {
         await this.push(journal);
@@ -342,6 +401,10 @@ export class JournalSync {
         if (!omnipresenceId) continue;
         if (localOmnipresenceIds.has(omnipresenceId)) continue;
 
+        // Pack journals inside a synced folder are imported by
+        // FolderSync.reconcileFolders (placement + folder gate), not here.
+        if (compJournal._source.folder) continue;
+
         // One malformed pack copy (e.g. tampered flags) must not abort the
         // remaining imports — or, via ready's serial awaits, link/pin healing
         // and the beforeunload guard.
@@ -362,17 +425,10 @@ export class JournalSync {
           if (!SyncRegistry.isJournalSyncEnabled(matchingUser.id)) continue;
           if (!SyncRegistry.isDocSelected(matchingUser.id, 'journal', omnipresenceId)) continue;
 
-          const journalData = LinkRewriter.localize(
-            this._stripPageOwnership(stripWorldLocalFields(compJournal.toObject()))
-          );
-          journalData.flags ??= {};
-          journalData.flags.omnipresence ??= {};
-          journalData.flags.omnipresence.localModifiedAt = journalData.flags.omnipresence.syncedAt;
-          const pins = journalData.flags.omnipresence.pins;
-          delete journalData.flags.omnipresence.pins;
+          const { journalData, pins } = this.prepareImportData(compJournal);
           journalData.ownership = { default: 0, [matchingUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER };
 
-          const created = await JournalEntry.create(journalData, { keepId: true });
+          const created = await JournalEntry.create(journalData, { keepId: true, omnipresenceInternal: true });
           await SyncRegistry.enroll(created);
           if (pins !== undefined) await this._applyPins(created, pins);
           touched.push(created);
