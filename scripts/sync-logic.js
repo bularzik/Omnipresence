@@ -559,3 +559,45 @@ export function diffFolderTree(sourceNodes, targetNodes) {
 
   return { toCreate, toUpdate, toDelete };
 }
+
+/**
+ * Classify a journal's folder-membership transition from the root it was
+ * enrolled through (`viaFolder`) and the root its *current* folder chain
+ * resolves to (`rootId`, from findSyncedRootId). Update hooks only see the
+ * new folder, so `viaFolder` is what remembers the old membership.
+ * @returns {'none'|'enter'|'leave'|'stay'|'switch'}
+ */
+export function classifyMembership({ viaFolder, rootId }) {
+  const via = viaFolder || null;
+  const root = rootId || null;
+  if (!via && !root) return 'none';
+  if (!via) return 'enter';
+  if (!root) return 'leave';
+  if (via === root) return 'stay';
+  return 'switch';
+}
+
+/**
+ * What a target world does with a local member journal whose pack copy is
+ * gone: `delete` (the source deleted it), `detach` (the source moved it out
+ * — unenroll, keep the copy), or `push` (no tombstone: the pack copy was
+ * never written, e.g. a player enrolled it with no GM connected).
+ * @returns {'delete'|'detach'|'push'}
+ */
+export function resolveTombstoneAction(tombstones, omniId) {
+  const entry = tombstones?.[omniId];
+  if (entry?.reason === 'deleted') return 'delete';
+  if (entry?.reason === 'removed') return 'detach';
+  return 'push';
+}
+
+/**
+ * Folder allow-list gate. Unlike actors/journals, an ABSENT folder list
+ * (null/undefined — the user has never saved one) admits every root the
+ * user is eligible for; a present list gates by membership.
+ */
+export function isFolderSelected(id, allowList) {
+  if (!id) return false;
+  if (allowList == null) return true;
+  return isSelected(id, allowList);
+}

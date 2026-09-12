@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree } from '../scripts/sync-logic.js';
+import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, isFolderSelected } from '../scripts/sync-logic.js';
 
 const T0 = '2026-06-14T10:00:00.000Z';
 const T1 = '2026-06-14T11:00:00.000Z';
@@ -812,4 +812,37 @@ test('diffFolderTree: a reparented node is an update', () => {
     { id: 'B', parentId: null, name: 'b', color: null, sorting: 'a', sort: 0 }
   ];
   assert.deepEqual(diffFolderTree(source, target).toUpdate.map(n => n.id), ['B']);
+});
+
+// --- Journal folder sync: membership / tombstones / gating -----------------
+
+test('classifyMembership: the five outcomes', () => {
+  assert.equal(classifyMembership({ viaFolder: null, rootId: null }), 'none');
+  assert.equal(classifyMembership({ viaFolder: null, rootId: 'R' }), 'enter');
+  assert.equal(classifyMembership({ viaFolder: 'R', rootId: null }), 'leave');
+  assert.equal(classifyMembership({ viaFolder: 'R', rootId: 'R' }), 'stay');
+  assert.equal(classifyMembership({ viaFolder: 'R', rootId: 'Q' }), 'switch');
+  assert.equal(classifyMembership({ viaFolder: undefined, rootId: undefined }), 'none');
+});
+
+test('resolveTombstoneAction: deleted → delete, removed → detach, absent → push', () => {
+  const tombstones = {
+    a: { reason: 'deleted', at: '2026-09-12T00:00:00.000Z' },
+    b: { reason: 'removed', at: '2026-09-12T00:00:00.000Z' },
+    c: { reason: 'bogus' }
+  };
+  assert.equal(resolveTombstoneAction(tombstones, 'a'), 'delete');
+  assert.equal(resolveTombstoneAction(tombstones, 'b'), 'detach');
+  assert.equal(resolveTombstoneAction(tombstones, 'c'), 'push');
+  assert.equal(resolveTombstoneAction(tombstones, 'zzz'), 'push');
+  assert.equal(resolveTombstoneAction(undefined, 'a'), 'push');
+});
+
+test('isFolderSelected: absent list admits everything, a list gates by membership', () => {
+  assert.equal(isFolderSelected('R', null), true);
+  assert.equal(isFolderSelected('R', undefined), true);
+  assert.equal(isFolderSelected('R', ['R']), true);
+  assert.equal(isFolderSelected('R', []), false);
+  assert.equal(isFolderSelected('R', ['Q']), false);
+  assert.equal(isFolderSelected('', null), false);
 });
