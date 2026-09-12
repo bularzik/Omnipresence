@@ -18,6 +18,22 @@ export async function buildTree(page) {
   }, { ROOT_NAME, SUB_NAME });
 }
 
+// Build root/sub with one journal each, then mark the root so the tree and
+// members are pushed to the pack. Returns the root's omnipresence id and the
+// sub folder's omnipresence id.
+export async function buildAndMark(page) {
+  return page.evaluate(async ({ ROOT_NAME, SUB_NAME }) => {
+    const { FolderSync } = await import('/modules/omnipresence/scripts/folder-sync.js');
+    const Folder = CONFIG.Folder.documentClass;
+    const root = await Folder.create({ name: ROOT_NAME, type: 'JournalEntry' });
+    const sub = await Folder.create({ name: SUB_NAME, type: 'JournalEntry', folder: root.id });
+    await JournalEntry.create({ name: `${ROOT_NAME} J1`, folder: root.id, pages: [{ name: 'p', type: 'text', text: { content: '<p>one</p>' } }] });
+    await JournalEntry.create({ name: `${ROOT_NAME} J2`, folder: sub.id, pages: [{ name: 'p', type: 'text', text: { content: '<p>two</p>' } }] });
+    const rootId = await FolderSync.markFolder(root);
+    return { rootId, subOmni: sub.getFlag('omnipresence', 'id') };
+  }, { ROOT_NAME, SUB_NAME });
+}
+
 // Remove every probe artefact, local and pack, regardless of state.
 export async function cleanup(page) {
   await page.evaluate(async ({ PACK, ROOT_NAME }) => {
@@ -34,3 +50,18 @@ export async function cleanup(page) {
     for (const f of [...pack.folders].reverse()) if (f.name.startsWith(ROOT_NAME)) await f.delete({ omnipresenceInternal: true });
   }, { PACK, ROOT_NAME });
 }
+
+// Snapshot the pack's probe-related documents, folders, and root tombstone
+// state for a given root omnipresence id.
+export const packState = (page, rootId) => page.evaluate(async ({ PACK, ROOT_NAME, rootId }) => {
+  const pack = game.packs.get(PACK);
+  const docs = await pack.getDocuments();
+  const packRoot = pack.folders.get(rootId);
+  return {
+    names: docs.filter(d => d.name.startsWith(ROOT_NAME)).map(d => d.name).sort(),
+    foldersByName: Object.fromEntries(docs.filter(d => d.name.startsWith(ROOT_NAME)).map(d => [d.name, d._source.folder])),
+    tombstones: packRoot?.getFlag('omnipresence', 'tombstones') ?? null,
+    deleted: packRoot?.getFlag('omnipresence', 'deleted') ?? false,
+    packFolderNames: pack.folders.filter(f => f.name.startsWith(ROOT_NAME)).map(f => f.name).sort()
+  };
+}, { PACK, ROOT_NAME, rootId });

@@ -2,7 +2,7 @@
 // server (see CLAUDE.md) rather than a fixture, so every spec needs the same
 // login dance — keep it here rather than copied per spec.
 
-export const FOUNDRY_URL = 'http://localhost:30000';
+export const FOUNDRY_URL = process.env.FOUNDRY_URL ?? 'http://localhost:30000';
 
 /**
  * Log into the active world as `userName` and wait until the game is ready.
