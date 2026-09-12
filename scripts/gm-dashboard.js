@@ -1,6 +1,7 @@
 import { SyncRegistry } from './sync-registry.js';
 import { SyncEngine } from './sync-engine.js';
 import { JournalSync } from './journal-sync.js';
+import { FolderSync } from './folder-sync.js';
 import { deriveConflictState } from './sync-logic.js';
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
@@ -27,7 +28,10 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
       forceSyncAll: this._onForceSyncAll,
       forcePushJournal: this._onForcePushJournal,
       forcePullJournal: this._onForcePullJournal,
-      removeSyncJournal: this._onRemoveSyncJournal
+      removeSyncJournal: this._onRemoveSyncJournal,
+      forcePushFolder: this._onForcePushFolder,
+      forcePullFolder: this._onForcePullFolder,
+      removeSyncFolder: this._onRemoveSyncFolder
     }
   };
 
@@ -91,7 +95,8 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
         syncedAtFormatted: fmt(syncedAt),
         localModifiedAtFormatted: fmt(localModifiedAt),
         compSyncedAtFormatted: fmt(compSyncedAt),
-        hasConflict
+        hasConflict,
+        viaFolder: !!d.getFlag('omnipresence', 'viaFolder')
       };
     });
   }
@@ -120,7 +125,24 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     let journals = await this._rowsFor(visibleJournals, JournalSync.PACK_ID);
     if (conflictsOnly) journals = journals.filter(r => r.hasConflict);
 
-    return { isGM, actors, journals, conflictsOnly };
+    // Journal folders (roots). Members stay in the journals table (badge).
+    const never = game.i18n.localize('OMNIPRESENCE.dashboard.never');
+    const roots = game.folders.filter(f => f.type === 'JournalEntry' && FolderSync._isStampedRoot(f));
+    const visibleRoots = isGM
+      ? roots
+      : roots.filter(f => f.getFlag('omnipresence', 'ownerName') === game.user.name);
+    const folders = conflictsOnly ? [] : visibleRoots.map(f => {
+      const syncedAt = f.getFlag('omnipresence', 'syncedAt');
+      return {
+        id: f.id,
+        name: f.name,
+        ownerName: f.getFlag('omnipresence', 'ownerName') ?? '—',
+        memberCount: FolderSync.members(f).length,
+        syncedAtFormatted: syncedAt ? new Date(syncedAt).toLocaleString() : never
+      };
+    });
+
+    return { isGM, actors, journals, folders, conflictsOnly };
   }
 
   /**
@@ -173,10 +195,12 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
   static async _onForceSyncAll(event, target) {
     if (!game.user.isGM) return;
     const enrolledActors = game.actors.filter(a => SyncRegistry.isEnrolled(a));
-    const enrolledJournals = game.journal.filter(j => SyncRegistry.isEnrolled(j));
+    const enrolledJournals = game.journal.filter(j => SyncRegistry.isEnrolled(j) && !j.getFlag('omnipresence', 'viaFolder'));
+    const roots = game.folders.filter(f => f.type === 'JournalEntry' && FolderSync._isStampedRoot(f));
     await Promise.all([
       ...enrolledActors.map(a => SyncEngine.push(a)),
-      ...enrolledJournals.map(j => JournalSync.push(j))
+      ...enrolledJournals.map(j => JournalSync.push(j)),
+      ...roots.map(f => FolderSync.pushFolder(f))
     ]);
     this.render();
   }
@@ -212,6 +236,30 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     if (!game.user.isGM && !journal.isOwner) return;
     await SyncRegistry.unenroll(journal);
     ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.unenrolled', { name: journal.name }));
+    this.render();
+  }
+
+  static async _onForcePushFolder(event, target) {
+    if (!game.user.isGM) return;
+    const folder = game.folders.get(target.closest('[data-folder-id]').dataset.folderId);
+    if (!folder) return;
+    await FolderSync.pushFolder(folder);
+    this.render();
+  }
+
+  static async _onForcePullFolder(event, target) {
+    if (!game.user.isGM) return;
+    const folder = game.folders.get(target.closest('[data-folder-id]').dataset.folderId);
+    if (!folder) return;
+    await FolderSync.pullFolder(folder);
+    this.render();
+  }
+
+  static async _onRemoveSyncFolder(event, target) {
+    const folder = game.folders.get(target.closest('[data-folder-id]').dataset.folderId);
+    if (!folder) return;
+    if (!game.user.isGM && !FolderSync.canUnmark(folder)) return;
+    await FolderSync.unmarkFolder(folder);
     this.render();
   }
 }

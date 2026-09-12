@@ -66,5 +66,10 @@
   "OMNIPRESENCE.onboarding.counter": "{shown} of {total} shown · {selected} selected",
   "OMNIPRESENCE.contextMenu.addFolder": "Sync Folder with Omnipresence",
   "OMNIPRESENCE.contextMenu.removeFolder": "Stop Syncing Folder",
-  "OMNIPRESENCE.notifications.folderNested": "Omnipresence: stop syncing the folder \"{name}\" first — synced folders cannot be nested."
+  "OMNIPRESENCE.notifications.folderNested": "Omnipresence: stop syncing the folder \"{name}\" first — synced folders cannot be nested.",
+  "OMNIPRESENCE.dashboard.foldersHeading": "Journal Folders",
+  "OMNIPRESENCE.dashboard.colFolder": "Folder",
+  "OMNIPRESENCE.dashboard.colMembers": "Journals",
+  "OMNIPRESENCE.dashboard.folderBadge": "folder",
+  "OMNIPRESENCE.dashboard.noFolders": "No journal folders enrolled in sync."
 }

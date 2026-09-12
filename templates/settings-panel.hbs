@@ -41,6 +41,38 @@
     </tbody>
   </table>
 
+  {{#unless conflictsOnly}}
+  <h3 class="omnipresence-section">{{localize "OMNIPRESENCE.dashboard.foldersHeading"}}</h3>
+  <table class="omnipresence-table">
+    <thead>
+      <tr>
+        <th>{{localize "OMNIPRESENCE.dashboard.colFolder"}}</th>
+        <th>{{localize "OMNIPRESENCE.dashboard.colOwner"}}</th>
+        <th>{{localize "OMNIPRESENCE.dashboard.colMembers"}}</th>
+        <th>{{localize "OMNIPRESENCE.dashboard.colLastSynced"}}</th>
+        <th>{{localize "OMNIPRESENCE.dashboard.colActions"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each folders}}
+      <tr data-folder-id="{{this.id}}">
+        <td>{{this.name}}</td>
+        <td>{{this.ownerName}}</td>
+        <td>{{this.memberCount}}</td>
+        <td>{{this.syncedAtFormatted}}</td>
+        <td>
+          <a data-action="forcePushFolder" data-folder-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.forcePush"}}"><i class="fas fa-upload"></i></a>
+          <a data-action="forcePullFolder" data-folder-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.forcePull"}}"><i class="fas fa-download"></i></a>
+          <a data-action="removeSyncFolder" data-folder-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.remove"}}" style="color:#c0392b"><i class="fas fa-unlink"></i></a>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="5" style="text-align:center;padding:16px;color:var(--color-text-dark-secondary)">{{localize "OMNIPRESENCE.dashboard.noFolders"}}</td></tr>
+      {{/each}}
+    </tbody>
+  </table>
+  {{/unless}}
+
   <h3 class="omnipresence-section">{{localize "OMNIPRESENCE.dashboard.journalsHeading"}}</h3>
   <table class="omnipresence-table">
     <thead>
@@ -56,6 +88,9 @@
       <tr class="{{#if this.hasConflict}}conflict{{/if}}" data-journal-id="{{this.id}}">
         <td>
           {{this.name}}
+          {{#if this.viaFolder}}
+          <span class="conflict-badge" style="background:#556;">{{localize "OMNIPRESENCE.dashboard.folderBadge"}}</span>
+          {{/if}}
           {{#if this.hasConflict}}
           <span class="conflict-badge">{{localize "OMNIPRESENCE.dashboard.conflict"}}</span>
           {{/if}}
@@ -128,6 +163,34 @@
     </tbody>
   </table>
 
+  {{#unless conflictsOnly}}
+  <h3 class="omnipresence-section">{{localize "OMNIPRESENCE.dashboard.foldersHeading"}}</h3>
+  <table class="omnipresence-table">
+    <thead>
+      <tr>
+        <th>{{localize "OMNIPRESENCE.dashboard.colFolder"}}</th>
+        <th>{{localize "OMNIPRESENCE.dashboard.colMembers"}}</th>
+        <th>{{localize "OMNIPRESENCE.dashboard.colLastSynced"}}</th>
+        <th>{{localize "OMNIPRESENCE.dashboard.colActions"}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each folders}}
+      <tr data-folder-id="{{this.id}}">
+        <td>{{this.name}}</td>
+        <td>{{this.memberCount}}</td>
+        <td>{{this.syncedAtFormatted}}</td>
+        <td>
+          <a data-action="removeSyncFolder" data-folder-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.remove"}}" style="color:#c0392b"><i class="fas fa-unlink"></i></a>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="4" style="text-align:center;padding:16px;color:var(--color-text-dark-secondary)">{{localize "OMNIPRESENCE.dashboard.noFolders"}}</td></tr>
+      {{/each}}
+    </tbody>
+  </table>
+  {{/unless}}
+
   <h3 class="omnipresence-section">{{localize "OMNIPRESENCE.dashboard.journalsHeading"}}</h3>
   <table class="omnipresence-table">
     <thead>
@@ -142,6 +205,9 @@
       <tr class="{{#if this.hasConflict}}conflict{{/if}}" data-journal-id="{{this.id}}">
         <td>
           {{this.name}}
+          {{#if this.viaFolder}}
+          <span class="conflict-badge" style="background:#556;">{{localize "OMNIPRESENCE.dashboard.folderBadge"}}</span>
+          {{/if}}
           {{#if this.hasConflict}}
           <span class="conflict-badge">{{localize "OMNIPRESENCE.dashboard.conflict"}}</span>
           {{/if}}
