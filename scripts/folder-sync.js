@@ -70,6 +70,14 @@ export class FolderSync {
     return null;
   }
 
+  /** The user whose pending-roots entry names this rootId, or null (used when a root has no ownerName flag, e.g. it only exists as a queued player mark). */
+  static _pendingOwnerFor(rootId) {
+    for (const user of game.users) {
+      if (rootId in SyncRegistry.getPendingRoots(user.id)) return user;
+    }
+    return null;
+  }
+
   /** The stamped root Folder a folder belongs to (itself included), or null. */
   static rootFor(folder) {
     let node = folder;
@@ -235,7 +243,9 @@ export class FolderSync {
       await this._ensureFolderSelection(game.user.id);
       await SyncRegistry.removeFromSelection(game.user.id, 'folder', rootId);
       // The marking player's consent entry is stale too (mirror of unenroll's owner cleanup).
-      const owner = ownerName ? game.users.find(u => u.name === ownerName) : null;
+      // A folder with no ownerName flag may still be a queued player mark (players can't
+      // write Folder documents), so fall back to whoever's pendingRoots names this rootId.
+      const owner = ownerName ? game.users.find(u => u.name === ownerName) : this._pendingOwnerFor(rootId);
       if (owner && owner.id !== game.user.id) {
         await this._ensureFolderSelection(owner.id);
         await SyncRegistry.removeFromSelection(owner.id, 'folder', rootId);
@@ -408,6 +418,9 @@ export class FolderSync {
       console.warn('Omnipresence | journals pack not found:', this.PACK_ID);
       return;
     }
+    // A stale debounce timer must become a no-op, never a push: if the root was deleted
+    // since the timer was set, its local subtree is now empty and would diff as "delete everything".
+    if (!game.folders.get(root.id)) return;
     const rootId = root.getFlag('omnipresence', 'id');
     if (!rootId || !this._isStampedRoot(root)) return;
     try {
