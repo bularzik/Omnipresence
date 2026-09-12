@@ -177,8 +177,15 @@ test('a target world applies tombstones: deleted → gone, removed → detached;
     // Now delete the root with contents, then rebuild a mirror and reconcile.
     const mirror = await gmPage.evaluate(async ({ ROOT_NAME, SUB_NAME, rootId }) => {
       const { FolderSync } = await import('/modules/omnipresence/scripts/folder-sync.js');
+      const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
       await game.folders.getName(ROOT_NAME).delete({ deleteSubfolders: true, deleteContents: true });
       await new Promise(r => setTimeout(r, 1500));
+      // The delete-with-contents above narrowed this GM's own folder allow-list
+      // (via _forgetRootSelection) to no longer include rootId, since this
+      // client is playing both source and target roles. A genuine target
+      // world's own allow-list would be untouched by another world's delete;
+      // simulate that world's consent explicitly before reconciling.
+      await SyncRegistry.addToSelection(game.user.id, 'folder', rootId);
       const Folder = CONFIG.Folder.documentClass;
       const root = await Folder.create({ name: ROOT_NAME, type: 'JournalEntry', flags: { omnipresence: { id: rootId, enrolled: true, root: true, ownerName: null, syncedAt: new Date().toISOString() } } }, { omnipresenceInternal: true });
       await Folder.create({ name: SUB_NAME, type: 'JournalEntry', folder: root.id, flags: { omnipresence: { id: foundry.utils.randomID(16), rootId } } }, { omnipresenceInternal: true });

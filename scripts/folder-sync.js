@@ -415,13 +415,12 @@ export class FolderSync {
       const rootId = packRoot.id;
       seenRootIds.add(rootId);
       try {
-        // 1. Gate on the owning user's preference (the allow-list gates
-        // importing new content below, not removing a mirror that already
-        // exists — a mirror the user deselected still gets cleaned up here).
+        // 1. Gate on the owning user's preference and folder allow-list.
         const ownerName = packRoot.getFlag('omnipresence', 'ownerName') ?? null;
         const gateUser = SyncRegistry.folderGateUser(ownerName);
         if (!gateUser) continue;
         if (!SyncRegistry.isJournalSyncEnabled(gateUser.id)) continue;
+        if (!SyncRegistry.isDocSelected(gateUser.id, 'folder', rootId)) continue;
 
         let root = this.findRootById(rootId);
 
@@ -431,7 +430,6 @@ export class FolderSync {
           continue;
         }
 
-        if (!SyncRegistry.isDocSelected(gateUser.id, 'folder', rootId)) continue;
         if (!game.user.isGM) continue; // players cannot create or edit folders
 
         // 2. / 3. Import the tree, or make the local tree match the pack.
