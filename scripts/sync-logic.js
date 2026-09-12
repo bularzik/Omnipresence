@@ -447,3 +447,115 @@ export function filterCandidates(items, query) {
   if (!q) return [...items];
   return items.filter(item => normalize(item.name).includes(q));
 }
+
+// ---------------------------------------------------------------------------
+// Journal folder sync (pure helpers). A marked folder (a "root") syncs its
+// whole subtree. These helpers work on plain records so they run under Node:
+//   FolderRecord \u2014 the shape of Folder#toObject():
+//     { _id, folder (parent local id | null), name, color, sorting, sort, flags }
+//   TreeNode \u2014 one folder keyed by omnipresence id, for diffing:
+//     { id, parentId (omni id | null), name, color, sorting, sort }
+
+/**
+ * Walk a folder's parent chain (the folder itself included) to the nearest
+ * folder flagged as a synced root. Returns that root's omnipresence id, or
+ * null when no folder in the chain is a root. Cycles and unknown ids stop
+ * the walk.
+ * @param {string|null} folderLocalId
+ * @param {Map<string, object>} foldersById  local id \u2192 FolderRecord
+ */
+export function findSyncedRootId(folderLocalId, foldersById) {
+  let id = folderLocalId;
+  const seen = new Set();
+  while (id && !seen.has(id)) {
+    seen.add(id);
+    const record = foldersById.get(id);
+    if (!record) return null;
+    const omni = record.flags?.omnipresence;
+    if (omni?.root === true && omni.id) return omni.id;
+    id = record.folder ?? null;
+  }
+  return null;
+}
+
+/**
+ * Flatten a root's subtree. `folders` comes back in breadth-first order \u2014
+ * the root first, then each level \u2014 so callers can create parents before
+ * children (and reverse it to delete children first). `journalIds` lists
+ * every journal whose folder is in the subtree.
+ * @returns {{ folders: object[], journalIds: string[] }}
+ */
+export function collectFolderTree(rootLocalId, folderRecords, journalRecords) {
+  const root = folderRecords.find(f => f._id === rootLocalId);
+  if (!root) return { folders: [], journalIds: [] };
+
+  const byParent = new Map();
+  for (const f of folderRecords) {
+    const parent = f.folder ?? null;
+    if (!byParent.has(parent)) byParent.set(parent, []);
+    byParent.get(parent).push(f);
+  }
+
+  const folders = [];
+  const queue = [root];
+  const seen = new Set();
+  while (queue.length) {
+    const f = queue.shift();
+    if (seen.has(f._id)) continue;
+    seen.add(f._id);
+    folders.push(f);
+    for (const child of byParent.get(f._id) ?? []) queue.push(child);
+  }
+
+  const ids = new Set(folders.map(f => f._id));
+  const journalIds = journalRecords
+    .filter(j => j.folder && ids.has(j.folder))
+    .map(j => j._id);
+  return { folders, journalIds };
+}
+
+const FOLDER_SYNCED_FIELDS = ['parentId', 'name', 'color', 'sorting', 'sort'];
+
+// Depth of a node within its own list (unknown/cyclic parents stop the count).
+function treeDepth(node, byId) {
+  let depth = 0;
+  let parent = node.parentId ?? null;
+  const seen = new Set();
+  while (parent && byId.has(parent) && !seen.has(parent)) {
+    seen.add(parent);
+    depth++;
+    parent = byId.get(parent).parentId ?? null;
+  }
+  return depth;
+}
+
+/**
+ * Diff two folder trees keyed by omnipresence id. `toCreate` and `toUpdate`
+ * are source nodes (parents before children); `toDelete` is target ids
+ * (children before parents), so callers can apply the result in order.
+ * A node is an update when any of parentId/name/color/sorting/sort differ
+ * (undefined and null compare equal).
+ */
+export function diffFolderTree(sourceNodes, targetNodes) {
+  const sourceById = new Map(sourceNodes.map(n => [n.id, n]));
+  const targetById = new Map(targetNodes.map(n => [n.id, n]));
+
+  const bySourceDepth = [...sourceNodes].sort(
+    (a, b) => treeDepth(a, sourceById) - treeDepth(b, sourceById)
+  );
+  const toCreate = [];
+  const toUpdate = [];
+  for (const node of bySourceDepth) {
+    const existing = targetById.get(node.id);
+    if (!existing) { toCreate.push(node); continue; }
+    const changed = FOLDER_SYNCED_FIELDS.some(k => (existing[k] ?? null) !== (node[k] ?? null));
+    if (changed) toUpdate.push(node);
+  }
+
+  const toDelete = [...targetNodes]
+    .filter(n => !sourceById.has(n.id))
+    .sort((a, b) => treeDepth(b, targetById) - treeDepth(a, targetById))
+    .map(n => n.id);
+
+  return { toCreate, toUpdate, toDelete };
+}
