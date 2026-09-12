@@ -125,18 +125,26 @@ Hooks.on('updateUser', (user, changes, options, _userId) => {
   MacroSync.handleHotbarChange(user);
 });
 
-Hooks.on('updateJournalEntry', (journal, _changes, options, userId) => {
+Hooks.on('updateJournalEntry', (journal, changes, options, userId) => {
   if (options?.omnipresenceInternal) return;
   if (journal.pack) return;
+  // Folder membership first: a move into/out of a synced folder enrolls or
+  // unenrolls, and the ordinary dirty-mark/push below must see that state.
+  if ('folder' in changes) FolderSync.handleMemberMove(journal, changes, options, userId);
   if (!SyncRegistry.isEnrolled(journal)) return;
   if (!SyncRegistry.isJournalSyncEnabled(userId)) return;
   if (userId === game.user.id) JournalSync.trackLocalModification(journal);
   if (game.user.isGM) JournalSync.debouncedPush(journal);
 });
 
-Hooks.on('deleteJournalEntry', (journal, _options, userId) => {
-  if (userId !== game.user.id) return;
+Hooks.on('deleteJournalEntry', (journal, options, userId) => {
   if (journal.pack) return; // deleting a pack copy must not unenroll the world doc
+  // Folder members: tombstone + pack delete (or a pending record for a GM).
+  if (journal.getFlag('omnipresence', 'viaFolder')) {
+    FolderSync.handleMemberDelete(journal, options, userId);
+    return;
+  }
+  if (userId !== game.user.id) return;
   if (!SyncRegistry.isEnrolled(journal)) return;
   SyncRegistry.unenroll(journal);
 });

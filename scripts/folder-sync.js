@@ -360,9 +360,36 @@ export class FolderSync {
     }
   }
 
-  // Filled in by Task 9 (pending deletes and pendingRemove journals).
-  static async _materializeDeletes(_user) {}
-  static async _materializeRemoves() {}
+  /** Deletes a player made with no GM connected. */
+  static async _materializeDeletes(user) {
+    const deletes = SyncRegistry.getPendingDeletes(user.id);
+    if (!deletes.length) return;
+    const docs = await this._getPack().getDocuments();
+    for (const { omniId, rootId } of deletes) {
+      try {
+        await this._removeFromPack(rootId, omniId, 'deleted', docs);
+      } catch (err) {
+        console.error('Omnipresence | pending folder delete failed for', omniId, err);
+      }
+    }
+    await SyncRegistry.clearPendingDeletes(user.id);
+  }
+
+  /** Move-outs a player made with no GM connected. */
+  static async _materializeRemoves() {
+    const pending = game.journal.filter(j => typeof j.getFlag('omnipresence', 'pendingRemove') === 'string');
+    if (!pending.length) return;
+    const docs = await this._getPack().getDocuments();
+    for (const journal of pending) {
+      try {
+        const rootId = journal.getFlag('omnipresence', 'pendingRemove');
+        await this._removeFromPack(rootId, journal.getFlag('omnipresence', 'id'), 'removed', docs);
+        await journal.update({ 'flags.omnipresence.-=pendingRemove': null }, { omnipresenceInternal: true });
+      } catch (err) {
+        console.error('Omnipresence | pending folder remove failed for', journal.name, err);
+      }
+    }
+  }
 
   // --- login reconcile (target-world side) ----------------------------------
 
@@ -626,6 +653,107 @@ export class FolderSync {
     }
   }
 
+  // --- membership hooks (source-world side) --------------------------------
+
+  /**
+   * Every client sees every hook. Membership writes are done by ONE client:
+   * the connected GM when there is one (it can write any document and the
+   * pack), otherwise the acting user's own client (its own journals and its
+   * own User document only — a GM finishes the pack side later).
+   */
+  static _isResponsible(userId) {
+    const gm = game.users.activeGM;
+    return gm ? game.user.id === gm.id : game.user.id === userId;
+  }
+
+  static async handleMemberCreate(journal, options, userId) {
+    if (options?.omnipresenceInternal || journal.pack) return;
+    if (!this._isResponsible(userId) || !journal.isOwner) return;
+    const rootId = this.rootIdForJournal(journal);
+    if (!rootId) return;
+    await this._enter(journal, rootId);
+  }
+
+  /** updateJournalEntry with a `folder` change: classify against viaFolder. */
+  static async handleMemberMove(journal, changes, options, userId) {
+    if (options?.omnipresenceInternal || journal.pack) return;
+    if (!('folder' in changes)) return;
+    if (!this._isResponsible(userId) || !journal.isOwner) return;
+    const viaFolder = journal.getFlag('omnipresence', 'viaFolder') ?? null;
+    const rootId = this.rootIdForJournal(journal);
+    switch (classifyMembership({ viaFolder, rootId })) {
+      case 'enter':
+        await this._enter(journal, rootId);
+        break;
+      case 'leave':
+        await this._leave(journal, viaFolder);
+        break;
+      case 'switch':
+        await this._leave(journal, viaFolder);
+        await this._enter(journal, rootId);
+        break;
+      // 'stay': moved between subfolders of the same root. The generic
+      // updateJournalEntry hook already scheduled a push (the journal is
+      // enrolled), which re-writes the pack `folder`.
+      default:
+        break;
+    }
+  }
+
+  static async handleMemberDelete(journal, options, userId) {
+    if (options?.omnipresenceInternal || journal.pack) return;
+    const rootId = journal.getFlag('omnipresence', 'viaFolder');
+    if (!rootId) return;
+    if (!this._isResponsible(userId)) return;
+    JournalSync.cancelFor(journal.id);
+    const omniId = journal.getFlag('omnipresence', 'id');
+    if (game.user.isGM) await this._removeFromPack(rootId, omniId, 'deleted');
+    else await SyncRegistry.addPendingDelete(game.user.id, { omniId, rootId });
+  }
+
+  static async _enter(journal, rootId) {
+    await SyncRegistry.enroll(journal, { viaFolder: rootId });
+    if (game.user.isGM) JournalSync.debouncedPush(journal);
+  }
+
+  /**
+   * Leave: unenroll locally; the GM also drops the pack copy and tombstones
+   * it as `removed`. A player (no GM connected) records `pendingRemove` so
+   * the GM's login can tell this from a detached mirror copy elsewhere.
+   */
+  static async _leave(journal, rootId) {
+    JournalSync.cancelFor(journal.id);
+    await SyncRegistry.unenroll(journal);
+    if (game.user.isGM) {
+      await this._removeFromPack(rootId, journal.getFlag('omnipresence', 'id'), 'removed');
+    } else {
+      await journal.update({ 'flags.omnipresence.pendingRemove': rootId }, { omnipresenceInternal: true });
+    }
+  }
+
+  /** GM: delete a member's pack copy and record why on the root pack folder. Idempotent. */
+  static async _removeFromPack(rootId, omniId, reason, docs = null) {
+    const pack = this._getPack();
+    if (!pack || !omniId) return;
+    const all = docs ?? await pack.getDocuments();
+    const comp = all.find(d => d.getFlag('omnipresence', 'id') === omniId);
+    if (comp) {
+      // "Delete All" fires this both from the member's own delete hook and
+      // from the root's delete handler; the second delete finds a stale doc.
+      try {
+        await comp.delete({ omnipresenceInternal: true });
+      } catch (err) {
+        console.warn('Omnipresence | pack copy already removed for', omniId, err);
+      }
+    }
+    const packRoot = pack.folders.get(rootId);
+    if (!packRoot) return;
+    await packRoot.update(
+      { [`flags.omnipresence.tombstones.${omniId}`]: { reason, at: new Date().toISOString() } },
+      { omnipresenceInternal: true }
+    );
+  }
+
   // --- pack tree ------------------------------------------------------------
 
   static _nodeFromPackFolder(f) {
@@ -787,5 +915,4 @@ export class FolderSync {
   static async handleFolderUpdate() {}
   static capturePreDelete() {}
   static async handleFolderDelete() {}
-  static async handleMemberCreate() {}
 }
