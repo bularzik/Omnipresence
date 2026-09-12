@@ -926,9 +926,156 @@ export class FolderSync {
     this._timers.clear();
   }
 
-  // Filled in by the membership-mirroring increment.
-  static async handleFolderCreate() {}
-  static async handleFolderUpdate() {}
-  static capturePreDelete() {}
-  static async handleFolderDelete() {}
+  // --- folder hooks (source-world side; folder writes are GM/Assistant only) -
+
+  static _preDelete = new Map(); // folder local id → capture from preDeleteFolder
+
+  static async handleFolderCreate(folder, options, _userId) {
+    if (options?.omnipresenceInternal || folder.pack || folder.type !== FOLDER_TYPE) return;
+    if (!game.user.isGM) return;
+    const root = folder.folder ? this.rootFor(folder.folder) : null;
+    if (!root) return;
+    await folder.update({
+      'flags.omnipresence.id': foundry.utils.randomID(16),
+      'flags.omnipresence.rootId': root.getFlag('omnipresence', 'id')
+    }, { omnipresenceInternal: true });
+    this.debouncedPushFolder(root);
+  }
+
+  /**
+   * Rename / recolour / reorder: push the owning root. Reparent: if the
+   * subtree left its root, its members leave and its stamps are cleared;
+   * if it entered a root (from outside, or straight from another root),
+   * it is stamped and its members enter.
+   */
+  static async handleFolderUpdate(folder, changes, options, _userId) {
+    if (options?.omnipresenceInternal || folder.pack || folder.type !== FOLDER_TYPE) return;
+    if (!game.user.isGM) return;
+
+    if (this._isStampedRoot(folder)) {
+      // A root's own placement is world-local; name/colour/sort still sync.
+      this.debouncedPushFolder(folder);
+      return;
+    }
+
+    const stampedRootId = folder.getFlag('omnipresence', 'rootId') ?? null;
+    const currentRoot = folder.folder ? this.rootFor(folder.folder) : null;
+    const currentRootId = currentRoot?.getFlag('omnipresence', 'id') ?? null;
+
+    if ('folder' in changes && stampedRootId !== currentRootId) {
+      if (stampedRootId) {
+        await this._subtreeLeft(folder, stampedRootId);
+        const oldRoot = this.findRootById(stampedRootId);
+        if (oldRoot) this.debouncedPushFolder(oldRoot);
+      }
+      if (currentRoot) await this._subtreeEntered(folder, currentRoot);
+      return;
+    }
+    if (currentRoot) this.debouncedPushFolder(currentRoot);
+  }
+
+  /** A subtree was dragged out of its root: members leave, subfolder stamps clear. */
+  static async _subtreeLeft(folder, rootId) {
+    const { folders, journalIds } = collectFolderTree(folder.id, this._folderRecords(), this._journalRecords());
+    for (const id of journalIds) {
+      const j = game.journal.get(id);
+      if (j?.getFlag('omnipresence', 'viaFolder') === rootId) await this._leave(j, rootId);
+    }
+    for (const r of folders) {
+      await game.folders.get(r._id)?.update(
+        { 'flags.omnipresence.-=id': null, 'flags.omnipresence.-=rootId': null },
+        { omnipresenceInternal: true }
+      );
+    }
+  }
+
+  /** A subtree was dragged into a root: stamp every folder, members enter, push. */
+  static async _subtreeEntered(folder, root) {
+    const rootId = root.getFlag('omnipresence', 'id');
+    const { folders, journalIds } = collectFolderTree(folder.id, this._folderRecords(), this._journalRecords());
+    for (const r of folders) {
+      const f = game.folders.get(r._id);
+      if (!f) continue;
+      const updates = { 'flags.omnipresence.rootId': rootId };
+      if (!f.getFlag('omnipresence', 'id')) updates['flags.omnipresence.id'] = foundry.utils.randomID(16);
+      await f.update(updates, { omnipresenceInternal: true });
+    }
+    for (const id of journalIds) {
+      const j = game.journal.get(id);
+      if (j && j.getFlag('omnipresence', 'viaFolder') !== rootId) await this._enter(j, rootId);
+    }
+    this.debouncedPushFolder(root);
+  }
+
+  /**
+   * preDeleteFolder: remember what is about to vanish. By the time
+   * deleteFolder fires, contents are already deleted or moved and the
+   * subtree cannot be walked, so capture root, members, and the delete
+   * options here.
+   */
+  static capturePreDelete(folder, options, _userId) {
+    if (folder.pack || folder.type !== FOLDER_TYPE) return;
+    const isRoot = this._isStampedRoot(folder);
+    const root = isRoot ? folder : (folder.folder ? this.rootFor(folder.folder) : null);
+    if (!root) return;
+    const { journalIds } = collectFolderTree(folder.id, this._folderRecords(), this._journalRecords());
+    this._preDelete.set(folder.id, {
+      isRoot,
+      rootId: root.getFlag('omnipresence', 'id'),
+      rootLocalId: root.id,
+      ownerName: root.getFlag('omnipresence', 'ownerName') ?? null,
+      deleteContents: options?.deleteContents === true,
+      members: journalIds
+        .map(id => game.journal.get(id))
+        .filter(Boolean)
+        .map(j => ({ id: j.id, omniId: j.getFlag('omnipresence', 'id') }))
+    });
+  }
+
+  static async handleFolderDelete(folder, options, _userId) {
+    const captured = this._preDelete.get(folder.id);
+    this._preDelete.delete(folder.id);
+    if (options?.omnipresenceInternal || folder.pack) return;
+    if (!captured || !game.user.isGM) return;
+    const { isRoot, rootId, rootLocalId, ownerName, deleteContents, members } = captured;
+    const pack = this._getPack();
+    if (!pack) return;
+
+    if (!isRoot) {
+      // Subfolder gone. Its members fired their own delete/move hooks; the
+      // tree push drops the pack folder.
+      const root = game.folders.get(rootLocalId);
+      if (root) this.debouncedPushFolder(root);
+      return;
+    }
+
+    this._cancelTimer(rootLocalId);
+    if (deleteContents) {
+      // "Delete All": members' delete hooks already tombstoned them, but the
+      // capture makes this independent of hook order (idempotent). Keep the
+      // root pack folder, emptied and flagged, so mirrors delete themselves.
+      const docs = await pack.getDocuments();
+      for (const { omniId } of members) {
+        if (omniId) await this._removeFromPack(rootId, omniId, 'deleted', docs);
+      }
+      for (const node of [...this._packTreeNodes(rootId)].reverse()) {
+        if (node.id !== rootId) await pack.folders.get(node.id)?.delete({ omnipresenceInternal: true });
+      }
+      await pack.folders.get(rootId)?.update({ 'flags.omnipresence.deleted': true }, { omnipresenceInternal: true });
+    } else {
+      // "Remove Folder": contents moved up = unmark. Members that already
+      // fired `leave` are unenrolled; make sure the rest are too, then drop
+      // the pack tree so mirrors detach (keep copies) at their next login.
+      for (const { id } of members) {
+        const j = game.journal.get(id);
+        if (j && SyncRegistry.isEnrolled(j)) {
+          JournalSync.cancelFor(j.id);
+          await SyncRegistry.unenroll(j);
+        }
+      }
+      await this._deletePackTree(rootId);
+    }
+    await this._setRegistry(rootId, false);
+    await this._forgetRootSelection(rootId, ownerName);
+  }
 }

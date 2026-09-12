@@ -125,6 +125,19 @@ Hooks.on('updateUser', (user, changes, options, _userId) => {
   MacroSync.handleHotbarChange(user);
 });
 
+// A player queued a folder mark/unmark or a member delete while this GM is
+// connected: honour it now instead of at the next login. Pending writes are
+// deliberately NOT omnipresenceInternal so this fires; the GM's own clears
+// use `-=` keys (null values) and an empty array, which do not match here.
+Hooks.on('updateUser', (_user, changes, _options, _userId) => {
+  if (!game.user.isGM) return;
+  const omni = changes.flags?.omnipresence;
+  if (!omni) return;
+  const hasPendingRoot = Object.values(omni.pendingRoots ?? {}).some(v => v && typeof v === 'object');
+  const hasPendingDelete = Array.isArray(omni.pendingDeletes) && omni.pendingDeletes.length > 0;
+  if (hasPendingRoot || hasPendingDelete) FolderSync.materializePending();
+});
+
 Hooks.on('updateJournalEntry', (journal, changes, options, userId) => {
   if (options?.omnipresenceInternal) return;
   if (journal.pack) return;
