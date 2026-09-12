@@ -161,11 +161,29 @@ export class FolderSync {
   }
 
   static async _setRegistry(rootId, on) {
+    return this._setRegistryMany([rootId], on);
+  }
+
+  /** Add or remove several ids from the world registry in one settings write. */
+  static async _setRegistryMany(ids, on) {
     if (!game.user.isGM) return;
     const registry = SyncRegistry._getAll();
-    if (on) registry[rootId] = true;
-    else delete registry[rootId];
+    for (const id of ids) {
+      if (on) registry[id] = true;
+      else delete registry[id];
+    }
     await game.settings.set('omnipresence', SyncRegistry.SETTING, registry);
+  }
+
+  /** Forget rootId from the acting user's and (if different) the owning user's folder allow-lists. */
+  static async _forgetRootSelection(rootId, ownerName) {
+    await this._ensureFolderSelection(game.user.id);
+    await SyncRegistry.removeFromSelection(game.user.id, 'folder', rootId);
+    const owner = ownerName ? game.users.find(u => u.name === ownerName) : this._pendingOwnerFor(rootId);
+    if (owner && owner.id !== game.user.id) {
+      await this._ensureFolderSelection(owner.id);
+      await SyncRegistry.removeFromSelection(owner.id, 'folder', rootId);
+    }
   }
 
   // --- mark / unmark --------------------------------------------------------
@@ -240,15 +258,12 @@ export class FolderSync {
       this._cancelTimer(folder.id);
       await this._unstamp(folder, rootId);
       await this._deletePackTree(rootId);
-      await this._ensureFolderSelection(game.user.id);
-      await SyncRegistry.removeFromSelection(game.user.id, 'folder', rootId);
+      await this._forgetRootSelection(rootId, ownerName);
       // The marking player's consent entry is stale too (mirror of unenroll's owner cleanup).
       // A folder with no ownerName flag may still be a queued player mark (players can't
       // write Folder documents), so fall back to whoever's pendingRoots names this rootId.
       const owner = ownerName ? game.users.find(u => u.name === ownerName) : this._pendingOwnerFor(rootId);
       if (owner && owner.id !== game.user.id) {
-        await this._ensureFolderSelection(owner.id);
-        await SyncRegistry.removeFromSelection(owner.id, 'folder', rootId);
         await SyncRegistry.clearPendingRoot(owner.id, rootId);
       }
     } else {
@@ -405,8 +420,13 @@ export class FolderSync {
       const rootId = root.getFlag('omnipresence', 'id');
       if (seenRootIds.has(rootId)) continue;
       try {
-        if (!root.getFlag('omnipresence', 'syncedAt')) await this.pushFolder(root);
-        else await this._unstamp(root, rootId);
+        if (!root.getFlag('omnipresence', 'syncedAt')) {
+          await this.pushFolder(root);
+        } else {
+          const ownerName = root.getFlag('omnipresence', 'ownerName') ?? null;
+          await this._unstamp(root, rootId);
+          await this._forgetRootSelection(rootId, ownerName);
+        }
       } catch (err) {
         console.error('Omnipresence | folder reconcile failed for local root', root.name, err);
       }
@@ -510,12 +530,12 @@ export class FolderSync {
       try {
         const local = localByOmni.get(omniId);
         if (local) {
-          const updates = {};
-          if (local.folder?.id !== targetFolder.id) updates.folder = targetFolder.id;
-          if (local.getFlag('omnipresence', 'viaFolder') !== rootId) updates['flags.omnipresence.viaFolder'] = rootId;
-          if (local.getFlag('omnipresence', 'enrolled') !== true) updates['flags.omnipresence.enrolled'] = true;
-          if (Object.keys(updates).length) await local.update(updates, { omnipresenceInternal: true });
-          await this._setRegistry(rootId, true);
+          if (local.getFlag('omnipresence', 'viaFolder') !== rootId || local.getFlag('omnipresence', 'enrolled') !== true) {
+            await SyncRegistry.enroll(local, { viaFolder: rootId });
+          }
+          if (local.folder?.id !== targetFolder.id) {
+            await local.update({ folder: targetFolder.id }, { omnipresenceInternal: true });
+          }
         } else {
           await this._importMember(comp, targetFolder, rootId);
         }
@@ -575,15 +595,17 @@ export class FolderSync {
   /** The source deleted the root with its contents: delete the mirror. */
   static async _deleteLocalRoot(root, rootId) {
     this._cancelTimer(root.id);
-    for (const j of this.members(root)) {
+    const ownerName = root.getFlag('omnipresence', 'ownerName') ?? null;
+    const members = this.members(root);
+    const memberIds = members.map(j => j.getFlag('omnipresence', 'id')).filter(Boolean);
+    for (const j of members) {
       JournalSync.cancelFor(j.id);
       await j.delete({ omnipresenceInternal: true });
     }
     for (const sub of this.subfolders(root).reverse()) await sub.delete({ omnipresenceInternal: true });
     await root.delete({ omnipresenceInternal: true });
-    await this._setRegistry(rootId, false);
-    await this._ensureFolderSelection(game.user.id);
-    await SyncRegistry.removeFromSelection(game.user.id, 'folder', rootId);
+    await this._setRegistryMany([rootId, ...memberIds], false);
+    await this._forgetRootSelection(rootId, ownerName);
   }
 
   /** Dashboard "force pull": pack wins for tree and every member's content. */

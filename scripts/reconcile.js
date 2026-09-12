@@ -38,7 +38,12 @@ export async function runLoginReconcile() {
 
     // Folders first: creates the mirrored tree and imports members so the
     // per-journal loop below can sync their content and surface conflicts.
-    await FolderSync.reconcileFolders();
+    // Guarded so a rejection here never skips JournalSync.onLogin() below.
+    try {
+      await FolderSync.reconcileFolders();
+    } catch (err) {
+      console.error('Omnipresence | folder reconcile failed', err);
+    }
     const journalConflicts = await JournalSync.onLogin();
 
     if ((actorConflicts?.length ?? 0) > 0 || (journalConflicts?.length ?? 0) > 0) {
