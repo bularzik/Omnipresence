@@ -926,13 +926,13 @@ export class FolderSync {
     this._timers.clear();
   }
 
-  // --- folder hooks (source-world side; folder writes are GM/Assistant only) -
+  // --- folder hooks (source-world side; folder writes are done by the responsible client: the connected GM, else the acting user) -
 
   static _preDelete = new Map(); // folder local id → capture from preDeleteFolder
 
-  static async handleFolderCreate(folder, options, _userId) {
+  static async handleFolderCreate(folder, options, userId) {
     if (options?.omnipresenceInternal || folder.pack || folder.type !== FOLDER_TYPE) return;
-    if (!game.user.isGM) return;
+    if (!this._isResponsible(userId)) return;
     const root = folder.folder ? this.rootFor(folder.folder) : null;
     if (!root) return;
     await folder.update({
@@ -948,9 +948,9 @@ export class FolderSync {
    * if it entered a root (from outside, or straight from another root),
    * it is stamped and its members enter.
    */
-  static async handleFolderUpdate(folder, changes, options, _userId) {
+  static async handleFolderUpdate(folder, changes, options, userId) {
     if (options?.omnipresenceInternal || folder.pack || folder.type !== FOLDER_TYPE) return;
-    if (!game.user.isGM) return;
+    if (!this._isResponsible(userId)) return;
 
     if (this._isStampedRoot(folder)) {
       // A root's own placement is world-local; name/colour/sort still sync.
@@ -1032,11 +1032,11 @@ export class FolderSync {
     });
   }
 
-  static async handleFolderDelete(folder, options, _userId) {
+  static async handleFolderDelete(folder, options, userId) {
     const captured = this._preDelete.get(folder.id);
     this._preDelete.delete(folder.id);
     if (options?.omnipresenceInternal || folder.pack) return;
-    if (!captured || !game.user.isGM) return;
+    if (!captured || !this._isResponsible(userId)) return;
     const { isRoot, rootId, rootLocalId, ownerName, deleteContents, members } = captured;
     const pack = this._getPack();
     if (!pack) return;
@@ -1050,32 +1050,37 @@ export class FolderSync {
     }
 
     this._cancelTimer(rootLocalId);
-    if (deleteContents) {
-      // "Delete All": members' delete hooks already tombstoned them, but the
-      // capture makes this independent of hook order (idempotent). Keep the
-      // root pack folder, emptied and flagged, so mirrors delete themselves.
-      const docs = await pack.getDocuments();
-      for (const { omniId } of members) {
-        if (omniId) await this._removeFromPack(rootId, omniId, 'deleted', docs);
-      }
-      for (const node of [...this._packTreeNodes(rootId)].reverse()) {
-        if (node.id !== rootId) await pack.folders.get(node.id)?.delete({ omnipresenceInternal: true });
-      }
-      await pack.folders.get(rootId)?.update({ 'flags.omnipresence.deleted': true }, { omnipresenceInternal: true });
-    } else {
-      // "Remove Folder": contents moved up = unmark. Members that already
-      // fired `leave` are unenrolled; make sure the rest are too, then drop
-      // the pack tree so mirrors detach (keep copies) at their next login.
-      for (const { id } of members) {
-        const j = game.journal.get(id);
-        if (j && SyncRegistry.isEnrolled(j)) {
-          JournalSync.cancelFor(j.id);
-          await SyncRegistry.unenroll(j);
+    try {
+      if (deleteContents) {
+        // "Delete All": members' delete hooks already tombstoned them, but the
+        // capture makes this independent of hook order (idempotent). Keep the
+        // root pack folder, emptied and flagged, so mirrors delete themselves.
+        const docs = await pack.getDocuments();
+        for (const { omniId } of members) {
+          if (omniId) await this._removeFromPack(rootId, omniId, 'deleted', docs);
         }
+        for (const node of [...this._packTreeNodes(rootId)].reverse()) {
+          if (node.id !== rootId) await pack.folders.get(node.id)?.delete({ omnipresenceInternal: true });
+        }
+        await pack.folders.get(rootId)?.update({ 'flags.omnipresence.deleted': true }, { omnipresenceInternal: true });
+      } else {
+        // "Remove Folder": contents moved up = unmark. Members that already
+        // fired `leave` are unenrolled; make sure the rest are too, then drop
+        // the pack tree so mirrors detach (keep copies) at their next login.
+        for (const { id } of members) {
+          const j = game.journal.get(id);
+          if (j && SyncRegistry.isEnrolled(j)) {
+            JournalSync.cancelFor(j.id);
+            await SyncRegistry.unenroll(j);
+          }
+        }
+        await this._deletePackTree(rootId);
       }
-      await this._deletePackTree(rootId);
+    } catch (err) {
+      console.error('Omnipresence | folder delete mirroring failed for', rootId, err);
+    } finally {
+      await this._setRegistry(rootId, false);
+      await this._forgetRootSelection(rootId, ownerName);
     }
-    await this._setRegistry(rootId, false);
-    await this._forgetRootSelection(rootId, ownerName);
   }
 }

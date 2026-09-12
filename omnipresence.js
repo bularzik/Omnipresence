@@ -135,7 +135,7 @@ Hooks.on('updateUser', (_user, changes, _options, _userId) => {
   if (!omni) return;
   const hasPendingRoot = Object.values(omni.pendingRoots ?? {}).some(v => v && typeof v === 'object');
   const hasPendingDelete = Array.isArray(omni.pendingDeletes) && omni.pendingDeletes.length > 0;
-  if (hasPendingRoot || hasPendingDelete) FolderSync.materializePending();
+  if (hasPendingRoot || hasPendingDelete) FolderSync.materializePending().catch(err => console.error('Omnipresence | pending folder materialize failed', err));
 });
 
 Hooks.on('updateJournalEntry', (journal, changes, options, userId) => {
