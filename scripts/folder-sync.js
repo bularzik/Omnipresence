@@ -453,4 +453,11 @@ export class FolderSync {
     for (const timer of this._timers.values()) clearTimeout(timer);
     this._timers.clear();
   }
+
+  // Filled in by the membership-mirroring increment.
+  static async handleFolderCreate() {}
+  static async handleFolderUpdate() {}
+  static capturePreDelete() {}
+  static async handleFolderDelete() {}
+  static async handleMemberCreate() {}
 }

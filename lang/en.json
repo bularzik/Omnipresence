@@ -60,5 +60,8 @@
   "OMNIPRESENCE.onboarding.filterPlaceholder": "Filter by name…",
   "OMNIPRESENCE.onboarding.selectAll": "All",
   "OMNIPRESENCE.onboarding.selectNone": "None",
-  "OMNIPRESENCE.onboarding.counter": "{shown} of {total} shown · {selected} selected"
+  "OMNIPRESENCE.onboarding.counter": "{shown} of {total} shown · {selected} selected",
+  "OMNIPRESENCE.contextMenu.addFolder": "Sync Folder with Omnipresence",
+  "OMNIPRESENCE.contextMenu.removeFolder": "Stop Syncing Folder",
+  "OMNIPRESENCE.notifications.folderNested": "Omnipresence: stop syncing the folder \"{name}\" first — synced folders cannot be nested."
 }

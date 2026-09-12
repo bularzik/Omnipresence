@@ -2,7 +2,8 @@ import { SyncRegistry } from './scripts/sync-registry.js';
 import { SyncEngine } from './scripts/sync-engine.js';
 import { MacroSync } from './scripts/macro-sync.js';
 import { JournalSync } from './scripts/journal-sync.js';
-import { registerContextMenu, registerJournalContextMenu } from './scripts/context-menu.js';
+import { registerContextMenu, registerJournalContextMenu, registerFolderContextMenu } from './scripts/context-menu.js';
+import { FolderSync } from './scripts/folder-sync.js';
 import { OmnipresenceDashboard } from './scripts/gm-dashboard.js';
 import { registerUserConfigInjection } from './scripts/user-config.js';
 import { LinkRewriter } from './scripts/link-rewriter.js';
@@ -61,6 +62,7 @@ Hooks.once('ready', async () => {
     SyncEngine.cancelPending();
     JournalSync.cancelPending();
     MacroSync.cancelPending();
+    FolderSync.cancelPending();
   });
 });
 
@@ -166,3 +168,23 @@ Hooks.on('updateNote', onNoteUpdate);
 Hooks.on('getJournalEntryContextOptions', (_directory, entryOptions) => {
   registerJournalContextMenu(entryOptions);
 });
+
+// --- Journal folder sync -----------------------------------------------------
+// Folder hooks: create/delete fire (doc, options, userId); update fires
+// (doc, changes, options, userId). preDeleteFolder captures the subtree before
+// Foundry removes or moves it, because deleteFolder fires too late to see it.
+Hooks.on('getFolderContextOptions', (_directory, entryOptions) => {
+  registerFolderContextMenu(entryOptions);
+});
+Hooks.on('createFolder', (folder, options, userId) =>
+  FolderSync.handleFolderCreate(folder, options, userId));
+Hooks.on('updateFolder', (folder, changes, options, userId) =>
+  FolderSync.handleFolderUpdate(folder, changes, options, userId));
+Hooks.on('preDeleteFolder', (folder, options, userId) =>
+  FolderSync.capturePreDelete(folder, options, userId));
+Hooks.on('deleteFolder', (folder, options, userId) =>
+  FolderSync.handleFolderDelete(folder, options, userId));
+// A journal created inside a synced folder joins the sync (the single-journal
+// path never enrolled on create; this fires only for folder members).
+Hooks.on('createJournalEntry', (journal, options, userId) =>
+  FolderSync.handleMemberCreate(journal, options, userId));

@@ -1,6 +1,7 @@
 import { SyncRegistry } from './sync-registry.js';
 import { SyncEngine } from './sync-engine.js';
 import { JournalSync } from './journal-sync.js';
+import { FolderSync } from './folder-sync.js';
 
 /**
  * Resolve the actor document id from a context-menu target that may be a
@@ -115,6 +116,57 @@ export function registerJournalContextMenu(entryOptions) {
         if (!journal) return;
         await SyncRegistry.unenroll(journal);
         ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.unenrolled', { name: journal.name }));
+      }
+    }
+  );
+}
+
+/**
+ * Resolve the Folder document for a folder-header context target. v13's
+ * ContextMenu passes the `.folder-header` element; the enclosing
+ * `.directory-item` carries `data-folder-id` (see DocumentDirectory's own
+ * _getFolderContextOptions, which uses the same closest() walk).
+ */
+function getFolder(header) {
+  const el = header instanceof HTMLElement ? header : header?.[0];
+  const li = el?.closest?.('.directory-item');
+  const id = li?.dataset?.folderId;
+  return id ? game.folders.get(id) : null;
+}
+
+export function registerFolderContextMenu(entryOptions) {
+  entryOptions.push(
+    {
+      name: 'OMNIPRESENCE.contextMenu.addFolder',
+      icon: '<i class="fas fa-link"></i>',
+      condition: (header) => {
+        if (!journalSyncAvailable()) return false;
+        if (!SyncRegistry.isJournalSyncEnabled(game.user.id)) return false;
+        const folder = getFolder(header);
+        if (!folder || folder.type !== 'JournalEntry') return false;
+        if (FolderSync.isRoot(folder)) return false;
+        // Shown even when nested inside/around another root — markFolder
+        // then explains why it refuses, which keeps the rule discoverable.
+        return FolderSync.canManage(folder);
+      },
+      callback: async (header) => {
+        const folder = getFolder(header);
+        if (folder) await FolderSync.markFolder(folder);
+      }
+    },
+    {
+      name: 'OMNIPRESENCE.contextMenu.removeFolder',
+      icon: '<i class="fas fa-unlink"></i>',
+      condition: (header) => {
+        if (!journalSyncAvailable()) return false;
+        if (!SyncRegistry.isJournalSyncEnabled(game.user.id)) return false;
+        const folder = getFolder(header);
+        if (!folder || folder.type !== 'JournalEntry') return false;
+        return FolderSync.isRoot(folder) && FolderSync.canUnmark(folder);
+      },
+      callback: async (header) => {
+        const folder = getFolder(header);
+        if (folder) await FolderSync.unmarkFolder(folder);
       }
     }
   );

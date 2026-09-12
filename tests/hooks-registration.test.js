@@ -59,3 +59,23 @@ test('registers journal sync hooks (v13 names) via omnipresence.js', async () =>
     assert.ok(names.includes(h), `expected hook '${h}', got: ${names.join(', ')}`);
   }
 });
+
+test('registers folder sync hooks (v13 names) via omnipresence.js', async () => {
+  const onCalls = [];
+  globalThis.Hooks = {
+    on: (name, fn) => onCalls.push({ name, fn }),
+    once: () => {}
+  };
+  globalThis.foundry = {
+    applications: {
+      api: { ApplicationV2: class {}, HandlebarsApplicationMixin: (Base) => Base }
+    }
+  };
+
+  await import('../omnipresence.js?folder-hooks');
+
+  const names = onCalls.map((c) => c.name);
+  for (const h of ['getFolderContextOptions', 'createFolder', 'updateFolder', 'preDeleteFolder', 'deleteFolder', 'createJournalEntry']) {
+    assert.ok(names.includes(h), `expected hook '${h}', got: ${names.join(', ')}`);
+  }
+});
