@@ -1,4 +1,4 @@
-import { isEnrolledFrom, isSelected } from './sync-logic.js';
+import { isEnrolledFrom, isSelected, isFolderSelected } from './sync-logic.js';
 
 export class SyncRegistry {
   static SETTING = 'syncRegistry';
@@ -39,11 +39,16 @@ export class SyncRegistry {
     return null;
   }
 
-  static async enroll(doc) {
+  static async enroll(doc, { viaFolder = null } = {}) {
     let id = doc.getFlag('omnipresence', 'id');
     // The owner-writable `enrolled` flag is the source of truth so non-GM owners
     // can enroll without the GM-only world-setting write.
     const updates = { 'flags.omnipresence.enrolled': true };
+    if (viaFolder) {
+      // Enrolled through a synced folder: the folder gates it, not journalIds.
+      updates['flags.omnipresence.viaFolder'] = viaFolder;
+      updates['flags.omnipresence.pendingRemove'] = null;
+    }
     if (!id) {
       id = foundry.utils.randomID(16);
       const now = new Date().toISOString();
@@ -63,9 +68,12 @@ export class SyncRegistry {
     // world. (Imports of another user's doc run under the GM, who owns all docs
     // by role — adding the imported id to the GM's list keeps the GM's own
     // login-sync of that doc working, mirroring pre-allow-list behaviour.)
+    // A folder member is gated by its root's folderIds entry instead, so its
+    // own id is removed from journalIds if it was ever enrolled individually.
     if (doc.isOwner) {
       const kind = doc.documentName === 'JournalEntry' ? 'journal' : 'actor';
-      await this.addToSelection(game.user.id, kind, id);
+      if (viaFolder) await this.removeFromSelection(game.user.id, kind, id);
+      else await this.addToSelection(game.user.id, kind, id);
     }
     return id;
   }
@@ -75,7 +83,10 @@ export class SyncRegistry {
     if (!id) return;
     // Set the flag false so it wins over any stale legacy registry entry even
     // when a non-GM cannot clear the world registry.
-    await doc.update({ 'flags.omnipresence.enrolled': false }, { omnipresenceInternal: true });
+    await doc.update(
+      { 'flags.omnipresence.enrolled': false, 'flags.omnipresence.viaFolder': null },
+      { omnipresenceInternal: true }
+    );
     if (game.user.isGM) {
       const registry = this._getAll();
       delete registry[id];
@@ -142,13 +153,16 @@ export class SyncRegistry {
   }
 
   // Per-world, per-user allow-list of omnipresence ids permitted to sync into
-  // this world. A doc syncs only if its category pref is on AND its id is here.
+  // this world. Actors/journals: a doc syncs only if its category pref is on
+  // AND its id is here. Folders: an ABSENT list (null) means "every root the
+  // user is eligible for" — it is seeded the first time something writes it.
   static getSelection(userId) {
     const user = game.users?.get(userId);
     const stored = user?.getFlag('omnipresence', 'selection') ?? {};
     return {
       actorIds: Array.isArray(stored.actorIds) ? stored.actorIds : [],
-      journalIds: Array.isArray(stored.journalIds) ? stored.journalIds : []
+      journalIds: Array.isArray(stored.journalIds) ? stored.journalIds : [],
+      folderIds: Array.isArray(stored.folderIds) ? stored.folderIds : null
     };
   }
 
@@ -159,26 +173,32 @@ export class SyncRegistry {
     await user.setFlag('omnipresence', 'selection', { ...existing, ...partial });
   }
 
+  static _selectionKey(kind) {
+    return { actor: 'actorIds', journal: 'journalIds', folder: 'folderIds' }[kind];
+  }
+
   static isDocSelected(userId, kind, id) {
     const sel = this.getSelection(userId);
-    const list = kind === 'journal' ? sel.journalIds : sel.actorIds;
-    return isSelected(id, list);
+    if (kind === 'folder') return isFolderSelected(id, sel.folderIds);
+    return isSelected(id, sel[this._selectionKey(kind)]);
   }
 
   static async addToSelection(userId, kind, id) {
     if (!id) return;
     const sel = this.getSelection(userId);
-    const key = kind === 'journal' ? 'journalIds' : 'actorIds';
-    if (sel[key].includes(id)) return;
-    await this.setSelection(userId, { [key]: [...sel[key], id] });
+    const key = this._selectionKey(kind);
+    const list = sel[key] ?? [];
+    if (list.includes(id)) return;
+    await this.setSelection(userId, { [key]: [...list, id] });
   }
 
   static async removeFromSelection(userId, kind, id) {
     if (!id) return;
     const sel = this.getSelection(userId);
-    const key = kind === 'journal' ? 'journalIds' : 'actorIds';
-    if (!sel[key].includes(id)) return;
-    await this.setSelection(userId, { [key]: sel[key].filter(x => x !== id) });
+    const key = this._selectionKey(kind);
+    const list = sel[key] ?? [];
+    if (!list.includes(id)) return;
+    await this.setSelection(userId, { [key]: list.filter(x => x !== id) });
   }
 
   static isActorSyncEnabled(userId) {
@@ -191,5 +211,56 @@ export class SyncRegistry {
 
   static isJournalSyncEnabled(userId) {
     return this.getPrefs(userId).journals !== false;
+  }
+
+  // --- Folder sync: player-side pending records ---------------------------
+  // Players cannot write Folder documents, so a player's folder mark/unmark and
+  // a player's delete of a folder member (with no GM connected) are recorded
+  // on their own User document and drained by a GM (FolderSync.materializePending).
+  // Writes deliberately omit omnipresenceInternal: the GM's updateUser hook is
+  // what notices a new pending entry while a GM is connected.
+
+  static getPendingRoots(userId) {
+    const stored = game.users?.get(userId)?.getFlag('omnipresence', 'pendingRoots');
+    return stored && typeof stored === 'object' ? stored : {};
+  }
+
+  static async setPendingRoot(userId, rootId, entry) {
+    const user = game.users?.get(userId);
+    if (!user) return;
+    await user.update({ [`flags.omnipresence.pendingRoots.${rootId}`]: entry });
+  }
+
+  static async clearPendingRoot(userId, rootId) {
+    const user = game.users?.get(userId);
+    if (!user) return;
+    await user.update({ [`flags.omnipresence.pendingRoots.-=${rootId}`]: null }, { omnipresenceInternal: true });
+  }
+
+  static getPendingDeletes(userId) {
+    const stored = game.users?.get(userId)?.getFlag('omnipresence', 'pendingDeletes');
+    return Array.isArray(stored) ? stored : [];
+  }
+
+  static async addPendingDelete(userId, entry) {
+    const user = game.users?.get(userId);
+    if (!user) return;
+    await user.update({ 'flags.omnipresence.pendingDeletes': [...this.getPendingDeletes(userId), entry] });
+  }
+
+  static async clearPendingDeletes(userId) {
+    const user = game.users?.get(userId);
+    if (!user) return;
+    await user.update({ 'flags.omnipresence.pendingDeletes': [] }, { omnipresenceInternal: true });
+  }
+
+  /**
+   * The user whose journal-sync preference and folderIds gate a root: the
+   * user named by the root's ownerName, or — for a GM-marked root (null) —
+   * the current user when they are a GM. Null when nobody here can gate it.
+   */
+  static folderGateUser(ownerName) {
+    if (ownerName) return game.users.find(u => u.name === ownerName) ?? null;
+    return game.user.isGM ? game.user : null;
   }
 }
