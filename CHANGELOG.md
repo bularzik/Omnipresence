@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-13
+
 ### Added
 - **Foundry VTT v14 support.** Verified against Foundry 14.367 (dnd5e 5.3.3) with
   the full end-to-end suite; v13 remains the minimum. Directory context-menu
@@ -311,7 +313,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/publish` slash command and a GitHub Actions release workflow (manifest,
   download, and url fields for Foundry installation).
 
-[Unreleased]: https://github.com/bularzik/Omnipresence/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/bularzik/Omnipresence/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/bularzik/Omnipresence/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/bularzik/Omnipresence/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/bularzik/Omnipresence/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/bularzik/Omnipresence/compare/v0.5.0...v0.5.1
