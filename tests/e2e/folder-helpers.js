@@ -1,3 +1,4 @@
+import { expect } from '@playwright/test';
 // Shared helpers for the journal-folder-sync e2e specs (Increment 1 and
 // beyond): build a probe tree, and clean up every probe artefact local and
 // pack, regardless of state.
@@ -65,3 +66,13 @@ export const packState = (page, rootId) => page.evaluate(async ({ PACK, ROOT_NAM
     packFolderNames: pack.folders.filter(f => f.name.startsWith(ROOT_NAME)).map(f => f.name).sort()
   };
 }, { PACK, ROOT_NAME, rootId });
+
+// Poll packState until `predicate` holds (or `timeout` elapses, failing the
+// test with `message`). Replaces fixed waits after a debounced push or a hook
+// chain: the push debounce is ~2s but a loaded server (v14 full runs) can
+// stretch it past any fixed budget, so wait for the state itself.
+export async function waitForPackState(page, rootId, predicate, message, timeout = 20_000) {
+  let last = null;
+  await expect.poll(async () => { last = await packState(page, rootId); return predicate(last); }, { timeout, message }).toBe(true);
+  return last;
+}

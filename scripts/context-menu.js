@@ -21,6 +21,25 @@ function getDocumentId(li) {
   return null;
 }
 
+/**
+ * Build a directory context-menu entry that works on both Foundry v13 and v14.
+ *
+ * v14 renamed the entry fields (`name`→`label`, `condition`→`visible`,
+ * `callback`→`onClick`) and logs a deprecation for the old names (removed in
+ * v16). v13 only reads the old names and ignores the new ones, and v14 reads
+ * the new names first, so supplying both keeps one entry shape for both
+ * versions. The v14 click handler receives `(event, target)` where v13 passed
+ * `(target)`; both forward the target element to the same callback.
+ */
+export function menuEntry({ name, icon, condition, callback }) {
+  return {
+    name, label: name,
+    icon,
+    condition, visible: condition,
+    callback, onClick: (_event, target) => callback(target)
+  };
+}
+
 /** Sync is available only when a compendium pack exists for the active system. */
 function syncAvailable() {
   return !!game.packs.get(SyncEngine.PACK_ID);
@@ -28,7 +47,7 @@ function syncAvailable() {
 
 export function registerContextMenu(entryOptions) {
   entryOptions.push(
-    {
+    menuEntry({
       name: 'OMNIPRESENCE.contextMenu.add',
       icon: '<i class="fas fa-link"></i>',
       condition: (li) => {
@@ -49,8 +68,8 @@ export function registerContextMenu(entryOptions) {
           : 'OMNIPRESENCE.notifications.enrolledQueued';
         ui.notifications.info(game.i18n.format(key, { name: actor.name }));
       }
-    },
-    {
+    }),
+    menuEntry({
       name: 'OMNIPRESENCE.contextMenu.remove',
       icon: '<i class="fas fa-unlink"></i>',
       condition: (li) => {
@@ -67,7 +86,7 @@ export function registerContextMenu(entryOptions) {
         await SyncRegistry.unenroll(actor);
         ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.unenrolled', { name: actor.name }));
       }
-    }
+    })
   );
 }
 
@@ -78,7 +97,7 @@ function journalSyncAvailable() {
 
 export function registerJournalContextMenu(entryOptions) {
   entryOptions.push(
-    {
+    menuEntry({
       name: 'OMNIPRESENCE.contextMenu.addJournal',
       icon: '<i class="fas fa-link"></i>',
       condition: (li) => {
@@ -99,8 +118,8 @@ export function registerJournalContextMenu(entryOptions) {
           : 'OMNIPRESENCE.notifications.enrolledQueued';
         ui.notifications.info(game.i18n.format(key, { name: journal.name }));
       }
-    },
-    {
+    }),
+    menuEntry({
       name: 'OMNIPRESENCE.contextMenu.removeJournal',
       icon: '<i class="fas fa-unlink"></i>',
       condition: (li) => {
@@ -117,7 +136,7 @@ export function registerJournalContextMenu(entryOptions) {
         await SyncRegistry.unenroll(journal);
         ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.unenrolled', { name: journal.name }));
       }
-    }
+    })
   );
 }
 
@@ -136,7 +155,7 @@ function getFolder(header) {
 
 export function registerFolderContextMenu(entryOptions) {
   entryOptions.push(
-    {
+    menuEntry({
       name: 'OMNIPRESENCE.contextMenu.addFolder',
       icon: '<i class="fas fa-link"></i>',
       condition: (header) => {
@@ -153,8 +172,8 @@ export function registerFolderContextMenu(entryOptions) {
         const folder = getFolder(header);
         if (folder) await FolderSync.markFolder(folder);
       }
-    },
-    {
+    }),
+    menuEntry({
       name: 'OMNIPRESENCE.contextMenu.removeFolder',
       icon: '<i class="fas fa-unlink"></i>',
       condition: (header) => {
@@ -168,6 +187,6 @@ export function registerFolderContextMenu(entryOptions) {
         const folder = getFolder(header);
         if (folder) await FolderSync.unmarkFolder(folder);
       }
-    }
+    })
   );
 }

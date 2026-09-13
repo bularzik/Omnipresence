@@ -1,6 +1,6 @@
 // tests/e2e/user-config.spec.js
 import { test, expect, chromium } from '@playwright/test';
-import { FOUNDRY_URL, loginToFoundry } from './helpers.js';
+import { FOUNDRY_URL, loginToFoundry, waitForGameReady } from './helpers.js';
 
 const DEBOUNCE_WAIT_MS = 4_000;
 
@@ -85,6 +85,7 @@ test('prefs are retained after save', async () => {
   await userPage.waitForFunction(
     () => game.user.getFlag('omnipresence', 'prefs')?.actors === false &&
           game.user.getFlag('omnipresence', 'prefs')?.macros === false,
+    null,
     { timeout: 10_000 }
   );
   await userPage.waitForTimeout(1_000); // let updateUser + any pending re-renders complete
@@ -98,6 +99,7 @@ test('prefs are retained after save', async () => {
   await userPage.waitForFunction(
     () => document.querySelector('#omnipresence-actors')?.checked === false &&
           document.querySelector('#omnipresence-macros')?.checked === false,
+    null,
     { timeout: 5_000 }
   );
 
@@ -111,6 +113,7 @@ test('prefs are retained after save', async () => {
   await userPage.waitForFunction(
     () => document.querySelector('#omnipresence-actors')?.checked === false &&
           document.querySelector('#omnipresence-macros')?.checked === false,
+    null,
     { timeout: 5_000 }
   );
 
@@ -189,6 +192,7 @@ test('macro sync is suppressed when macros pref is false', async () => {
   );
   await userPage.waitForFunction(
     () => game.user.getFlag('omnipresence', 'prefs')?.macros === false,
+    null,
     { timeout: 10_000 }
   );
   await userPage.waitForTimeout(500);
@@ -268,7 +272,7 @@ test('GM login batch-pushes hotbars to restore entries missed while GM was offli
 
   // Simulate GM login: reload (session cookie persists; Foundry resumes the world)
   await gmPage.reload();
-  await gmPage.waitForFunction(() => window.game?.ready === true, { timeout: 30_000 });
+  await waitForGameReady(gmPage);
 
   // Poll until the batch push has restored the FULL set, then assert exact
   // equality with what was there before.

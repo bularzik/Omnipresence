@@ -185,10 +185,18 @@ export class MacroSync {
     }
 
     if (Object.keys(newHotbarEntries).length > 0) {
-      await game.user.update(
-        { hotbar: { ...game.user.hotbar, ...newHotbarEntries } },
-        { omnipresenceInternal: true }
-      );
+      // Write slot by slot and DELETE any empty slot instead of carrying it.
+      // Foundry (v14 verified) accepts a null slot on write but then rejects
+      // the whole User document at the next load, which removes that user
+      // from the join screen. A whole-object write would not clear a null
+      // already stored (the update is diffed against the source), so the
+      // `-=` deletion key is what actually repairs it.
+      const update = {};
+      for (const [slot, id] of Object.entries({ ...game.user.hotbar, ...newHotbarEntries })) {
+        if (id) update[`hotbar.${slot}`] = id;
+        else update[`hotbar.-=${slot}`] = null;
+      }
+      await game.user.update(update, { omnipresenceInternal: true });
     }
   }
 }

@@ -1,9 +1,11 @@
 // tests/e2e/folder-membership.spec.js — Increment 2: membership mirroring.
 import { test, expect, chromium } from '@playwright/test';
 import { loginToFoundry } from './helpers.js';
-import { PACK, ROOT_NAME, SUB_NAME, buildAndMark, cleanup, packState } from './folder-helpers.js';
+import { PACK, ROOT_NAME, SUB_NAME, buildAndMark, cleanup, packState, waitForPackState } from './folder-helpers.js';
 
-const DEBOUNCE_WAIT_MS = 4_000;
+// Pushes are debounced (~2s) and hook chains are async, so every assertion
+// on pack state polls for the expected outcome (waitForPackState) instead of
+// sleeping a fixed budget: a loaded server (v14 full runs) blew past 4s.
 
 let browser, gmContext, gmPage;
 
@@ -25,13 +27,12 @@ test('a journal created inside a synced subfolder joins the sync', async () => {
     await gmPage.evaluate(async ({ ROOT_NAME, SUB_NAME }) => {
       await JournalEntry.create({ name: `${ROOT_NAME} J3`, folder: game.folders.getName(SUB_NAME).id });
     }, { ROOT_NAME, SUB_NAME });
-    await gmPage.waitForTimeout(DEBOUNCE_WAIT_MS);
+    const pack = await waitForPackState(gmPage, rootId, s => s.names.includes(`${ROOT_NAME} J3`), 'J3 should be pushed to the pack');
     const local = await gmPage.evaluate(({ ROOT_NAME }) => {
       const j = game.journal.getName(`${ROOT_NAME} J3`);
       return { via: j.getFlag('omnipresence', 'viaFolder'), enrolled: j.getFlag('omnipresence', 'enrolled') };
     }, { ROOT_NAME });
     expect(local).toEqual({ via: rootId, enrolled: true });
-    const pack = await packState(gmPage, rootId);
     expect(pack.foldersByName[`${ROOT_NAME} J3`]).toBe(subOmni);
   } finally {
     await cleanup(gmPage);
@@ -47,14 +48,13 @@ test('moving a journal out unenrolls it, drops the pack copy, and tombstones it 
       await j.update({ folder: null });
       return id;
     }, { ROOT_NAME });
-    await gmPage.waitForTimeout(DEBOUNCE_WAIT_MS);
+    const pack = await waitForPackState(gmPage, rootId, s => s.tombstones?.[omniId]?.reason === 'removed', 'J1 should be tombstoned as removed');
     const local = await gmPage.evaluate(async ({ ROOT_NAME }) => {
       const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
       const j = game.journal.getName(`${ROOT_NAME} J1`);
       return { enrolled: SyncRegistry.isEnrolled(j), via: j.getFlag('omnipresence', 'viaFolder') ?? null, exists: !!j };
     }, { ROOT_NAME });
     expect(local).toEqual({ enrolled: false, via: null, exists: true });
-    const pack = await packState(gmPage, rootId);
     expect(pack.names).toEqual([`${ROOT_NAME} J2`]);
     expect(pack.tombstones?.[omniId]?.reason).toBe('removed');
   } finally {
@@ -71,10 +71,8 @@ test('deleting a member drops the pack copy and tombstones it as deleted', async
       await j.delete();
       return id;
     }, { ROOT_NAME });
-    await gmPage.waitForTimeout(1_000);
-    const pack = await packState(gmPage, rootId);
+    const pack = await waitForPackState(gmPage, rootId, s => s.tombstones?.[omniId]?.reason === 'deleted', 'J2 should be tombstoned as deleted');
     expect(pack.names).toEqual([`${ROOT_NAME} J1`]);
-    expect(pack.tombstones?.[omniId]?.reason).toBe('deleted');
   } finally {
     await cleanup(gmPage);
   }
@@ -88,15 +86,12 @@ test('re-adding a tombstoned journal prunes its tombstone', async () => {
       await j.update({ folder: null });
       return j.getFlag('omnipresence', 'id');
     }, { ROOT_NAME });
-    await gmPage.waitForTimeout(DEBOUNCE_WAIT_MS);
-    expect((await packState(gmPage, rootId)).tombstones?.[omniId]?.reason).toBe('removed');
+    await waitForPackState(gmPage, rootId, s => s.tombstones?.[omniId]?.reason === 'removed', 'J1 should be tombstoned as removed');
     await gmPage.evaluate(async ({ ROOT_NAME }) => {
       await game.journal.getName(`${ROOT_NAME} J1`).update({ folder: game.folders.getName(ROOT_NAME).id });
     }, { ROOT_NAME });
-    await gmPage.waitForTimeout(DEBOUNCE_WAIT_MS);
-    const pack = await packState(gmPage, rootId);
+    const pack = await waitForPackState(gmPage, rootId, s => s.names.length === 2 && !s.tombstones?.[omniId], 'J1 should be re-pushed and its tombstone pruned');
     expect(pack.names).toEqual([`${ROOT_NAME} J1`, `${ROOT_NAME} J2`]);
-    expect(pack.tombstones?.[omniId]).toBeUndefined();
   } finally {
     await cleanup(gmPage);
   }
@@ -113,13 +108,13 @@ test('renaming and reparenting a subfolder mirrors to the pack', async () => {
       await sub.update({ name: `${SUB_NAME} Renamed`, folder: sub2.id });
       return game.folders.get(sub2.id).getFlag('omnipresence', 'id');
     }, { ROOT_NAME, SUB_NAME });
-    await gmPage.waitForTimeout(DEBOUNCE_WAIT_MS);
-    const pack = await gmPage.evaluate(({ PACK, subOmni, sub2Omni }) => {
+    const read = () => gmPage.evaluate(({ PACK, subOmni, sub2Omni }) => {
       const pack = game.packs.get(PACK);
       const s = pack.folders.get(subOmni);
       return { name: s?._source.name, parent: s?._source.folder, sub2Exists: !!pack.folders.get(sub2Omni) };
     }, { PACK, subOmni, sub2Omni });
-    expect(pack).toEqual({ name: `${SUB_NAME} Renamed`, parent: sub2Omni, sub2Exists: true });
+    await expect.poll(read, { timeout: 20_000, message: 'subfolder rename/reparent should mirror to the pack' })
+      .toEqual({ name: `${SUB_NAME} Renamed`, parent: sub2Omni, sub2Exists: true });
   } finally {
     await cleanup(gmPage);
   }
@@ -131,9 +126,7 @@ test('deleting the root with contents flags the pack root deleted and empties it
     await gmPage.evaluate(async ({ ROOT_NAME }) => {
       await game.folders.getName(ROOT_NAME).delete({ deleteSubfolders: true, deleteContents: true });
     }, { ROOT_NAME });
-    await gmPage.waitForTimeout(2_000);
-    const pack = await packState(gmPage, rootId);
-    expect(pack.deleted).toBe(true);
+    const pack = await waitForPackState(gmPage, rootId, s => s.deleted && s.names.length === 0 && Object.keys(s.tombstones ?? {}).length === 2, 'pack root should be flagged deleted and emptied');
     expect(pack.names).toEqual([]);
     expect(pack.packFolderNames).toEqual([ROOT_NAME]);
     expect(Object.values(pack.tombstones ?? {}).map(t => t.reason)).toEqual(['deleted', 'deleted']);
@@ -154,7 +147,7 @@ test('a target world applies tombstones: deleted → gone, removed → detached;
       await j2.update({ folder: null });
       return out;
     }, { ROOT_NAME });
-    await gmPage.waitForTimeout(DEBOUNCE_WAIT_MS);
+    await waitForPackState(gmPage, rootId, s => s.tombstones?.[ids.j1]?.reason === 'deleted' && s.tombstones?.[ids.j2]?.reason === 'removed', 'J1 deleted and J2 removed tombstones should land');
 
     // Pretend to be the target world that still holds both as members.
     const applied = await gmPage.evaluate(async ({ ROOT_NAME, rootId, ids }) => {
@@ -179,7 +172,10 @@ test('a target world applies tombstones: deleted → gone, removed → detached;
       const { FolderSync } = await import('/modules/omnipresence/scripts/folder-sync.js');
       const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
       await game.folders.getName(ROOT_NAME).delete({ deleteSubfolders: true, deleteContents: true });
-      await new Promise(r => setTimeout(r, 1500));
+      // Poll for the root-delete mirror to land in the pack (async hook chain).
+      for (let i = 0; i < 40 && !game.packs.get('omnipresence.omnipresence-journals').folders.get(rootId)?.getFlag('omnipresence', 'deleted'); i++) {
+        await new Promise(r => setTimeout(r, 250));
+      }
       // The delete-with-contents above narrowed this GM's own folder allow-list
       // (via _forgetRootSelection) to no longer include rootId, since this
       // client is playing both source and target roles. A genuine target

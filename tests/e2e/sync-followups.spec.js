@@ -43,7 +43,9 @@ test('macro push canonicalizes command links; pull localizes them', async () => 
     const canonical = comp?._source?.command ?? '';
 
     // Cleanup: drop the slot and the macro, and remove the pack copy.
-    await game.user.update({ hotbar: { ...game.user.hotbar, 9: null } }, { omnipresenceInternal: true });
+    // Delete the slot key rather than writing null: a null slot fails User
+    // validation at the next load on v14 and removes the user from the join screen.
+    await game.user.update({ 'hotbar.-=9': null }, { omnipresenceInternal: true });
     await comp?.delete();
     await macro.delete();
 

@@ -223,6 +223,7 @@ test('the Manage synced documents button opens the picker seeded from the stored
     await gmPage.evaluate(() => game.user.sheet.render(true));
     await gmPage.waitForFunction(
       () => !!document.querySelector('#omnipresence-manage-docs'),
+      null,
       { timeout: 5_000 }
     );
 
@@ -276,11 +277,13 @@ test('filtering hides non-matching rows and All/None acts only on visible rows',
   await gmPage.evaluate(() => game.user.sheet.render(true));
   await gmPage.waitForFunction(
     () => !!document.querySelector('#omnipresence-manage-docs'),
+    null,
     { timeout: 5_000 }
   );
   await gmPage.click('#omnipresence-manage-docs');
   await gmPage.waitForFunction(
     () => !!document.querySelector('[data-list="actor"]'),
+    null,
     { timeout: 5_000 }
   );
 

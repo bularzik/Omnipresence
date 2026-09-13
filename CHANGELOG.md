@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Foundry VTT v14 support.** Verified against Foundry 14.367 (dnd5e 5.3.3) with
+  the full end-to-end suite; v13 remains the minimum. Directory context-menu
+  entries now carry both the v13 and v14 field names, so they render without
+  deprecation warnings on either version.
 - **Journal folder sync.** Right-click a folder in the Journal directory and
   choose "Sync Folder with Omnipresence" to sync everything inside it across
   worlds, subfolders included. The folder tree mirrors exactly; journals added
@@ -21,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   completes the mark at their next login (or immediately, if connected).
   The consent picker and Manage Synced Documents gain a "Journal Folders"
   section, and the sync dashboard a folders table.
+
+### Fixed
+- Macro pull clears empty hotbar slots instead of carrying them. Foundry (v14
+  verified) accepts a `null` slot on write but then fails to load that User
+  document, which removes the user from the join screen.
 
 ## [0.6.0] - 2026-07-21
 
