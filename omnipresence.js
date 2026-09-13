@@ -143,7 +143,10 @@ Hooks.on('updateJournalEntry', (journal, changes, options, userId) => {
   if (journal.pack) return;
   // Folder membership first: a move into/out of a synced folder enrolls or
   // unenrolls, and the ordinary dirty-mark/push below must see that state.
-  if ('folder' in changes) FolderSync.handleMemberMove(journal, changes, options, userId);
+  if ('folder' in changes) {
+    FolderSync.handleMemberMove(journal, changes, options, userId)
+      .catch(err => console.error('Omnipresence | updateJournalEntry (folder) handling failed', err));
+  }
   if (!SyncRegistry.isEnrolled(journal)) return;
   if (!SyncRegistry.isJournalSyncEnabled(userId)) return;
   if (userId === game.user.id) JournalSync.trackLocalModification(journal);
@@ -154,7 +157,8 @@ Hooks.on('deleteJournalEntry', (journal, options, userId) => {
   if (journal.pack) return; // deleting a pack copy must not unenroll the world doc
   // Folder members: tombstone + pack delete (or a pending record for a GM).
   if (journal.getFlag('omnipresence', 'viaFolder')) {
-    FolderSync.handleMemberDelete(journal, options, userId);
+    FolderSync.handleMemberDelete(journal, options, userId)
+      .catch(err => console.error('Omnipresence | deleteJournalEntry handling failed', err));
     return;
   }
   if (userId !== game.user.id) return;
@@ -198,14 +202,18 @@ Hooks.on('getFolderContextOptions', (_directory, entryOptions) => {
   registerFolderContextMenu(entryOptions);
 });
 Hooks.on('createFolder', (folder, options, userId) =>
-  FolderSync.handleFolderCreate(folder, options, userId));
+  FolderSync.handleFolderCreate(folder, options, userId)
+    .catch(err => console.error('Omnipresence | createFolder handling failed', err)));
 Hooks.on('updateFolder', (folder, changes, options, userId) =>
-  FolderSync.handleFolderUpdate(folder, changes, options, userId));
+  FolderSync.handleFolderUpdate(folder, changes, options, userId)
+    .catch(err => console.error('Omnipresence | updateFolder handling failed', err)));
 Hooks.on('preDeleteFolder', (folder, options, userId) =>
   FolderSync.capturePreDelete(folder, options, userId));
 Hooks.on('deleteFolder', (folder, options, userId) =>
-  FolderSync.handleFolderDelete(folder, options, userId));
+  FolderSync.handleFolderDelete(folder, options, userId)
+    .catch(err => console.error('Omnipresence | deleteFolder handling failed', err)));
 // A journal created inside a synced folder joins the sync (the single-journal
 // path never enrolled on create; this fires only for folder members).
 Hooks.on('createJournalEntry', (journal, options, userId) =>
-  FolderSync.handleMemberCreate(journal, options, userId));
+  FolderSync.handleMemberCreate(journal, options, userId)
+    .catch(err => console.error('Omnipresence | createJournalEntry handling failed', err)));

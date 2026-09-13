@@ -111,7 +111,7 @@ export class JournalSync {
         // preserved) — no separate reconcile pass needed (op-yup).
         await existing.update(journalData, { omnipresenceInternal: true, recursive: false });
       } else {
-        await JournalEntry.create(journalData, { pack: this.PACK_ID, keepId: true });
+        await JournalEntry.create(journalData, { pack: this.PACK_ID, keepId: true, omnipresenceInternal: true });
       }
 
       // Update local syncedAt to match (do not touch localModifiedAt).
@@ -123,7 +123,7 @@ export class JournalSync {
         await this._pruneTombstone(viaFolder, omnipresenceId);
         // A pushed re-entry is no longer pending — clear it (guarded so a
         // journal that never carried the flag skips a needless write).
-        if (journal.getFlag('omnipresence', 'pendingEnter') !== undefined) {
+        if (journal.getFlag('omnipresence', 'pendingEnter') != null) {
           await journal.update({ 'flags.omnipresence.-=pendingEnter': null }, { omnipresenceInternal: true });
         }
       }

@@ -322,6 +322,11 @@ export class FolderSync {
    * that vanished or became nested since the player queued it cannot be
    * marked: its members are unenrolled instead. Non-reentrant: a login run
    * and an updateUser-triggered run join the same promise.
+   *
+   * Pending records are untrusted input: a player can write their own User
+   * flags from the console, and those flags drive GM-privileged pack writes.
+   * Every entry is re-validated here against the queuing user before it is
+   * honoured.
    */
   static async materializePending() {
     if (!game.user.isGM) return;
@@ -333,13 +338,30 @@ export class FolderSync {
           try {
             if (entry?.action === 'unmark') {
               const root = this.findRootById(rootId);
-              if (root) await this.unmarkFolder(root);
-              else await this._unenrollMembersOf(rootId);
+              if (root) {
+                // A player may only unmark their own root.
+                if (root.getFlag('omnipresence', 'ownerName') === user.name) {
+                  await this.unmarkFolder(root);
+                } else {
+                  console.warn('Omnipresence | refusing pending folder unmark from', user.name, '— not the owner of', rootId);
+                }
+              } else {
+                await this._unenrollMembersOf(rootId);
+              }
             } else {
               const folder = game.folders.get(entry?.folderId);
               if (folder && folder.type === FOLDER_TYPE && !this._isStampedRoot(folder) && !this.nestedRoot(folder)) {
-                await this._stamp(folder, rootId, entry.ownerName ?? user.name);
-                await this.pushFolder(folder);
+                const members = this.members(folder);
+                const ownsEveryMember = members.length > 0 && members.every(j => j.testUserPermission(user, 'OWNER'));
+                if (ownsEveryMember) {
+                  // Re-apply the mark rule against the queuing user (not the acting
+                  // GM), and use their name — entry.ownerName is untrusted too.
+                  await this._stamp(folder, rootId, user.name);
+                  await this.pushFolder(folder);
+                } else {
+                  console.warn('Omnipresence | refusing pending folder mark from', user.name, '— not owner of every member');
+                  await this._unenrollMembersOf(rootId);
+                }
               } else if (!folder || !this._isStampedRoot(folder)) {
                 await this._unenrollMembersOf(rootId);
               }
@@ -360,22 +382,35 @@ export class FolderSync {
     }
   }
 
-  /** Deletes a player made with no GM connected. Entries that fail to materialize are kept for the next run. */
+  /**
+   * Deletes a player made with no GM connected. Untrusted input: honour an
+   * entry only if its pack copy exists, sits under the named root's pack
+   * tree, and its ownerName matches the queuing user — otherwise it is
+   * invalid (not merely failed) and is dropped, never retried. Entries that
+   * fail to materialize (e.g. a transient pack error) are kept for the next run.
+   */
   static async _materializeDeletes(user) {
     const deletes = SyncRegistry.getPendingDeletes(user.id);
     if (!deletes.length) return;
     const docs = await this._getPack().getDocuments();
-    const failed = [];
+    const kept = [];
     for (const entry of deletes) {
       const { omniId, rootId } = entry;
+      const comp = docs.find(d => d.getFlag('omnipresence', 'id') === omniId);
+      const treeIds = new Set(this._packTreeNodes(rootId).map(n => n.id));
+      const valid = !!comp && treeIds.has(comp._source.folder) && comp.getFlag('omnipresence', 'ownerName') === user.name;
+      if (!valid) {
+        console.warn('Omnipresence | refusing pending folder delete from', user.name, '— invalid entry for', omniId);
+        continue;
+      }
       try {
         await this._removeFromPack(rootId, omniId, 'deleted', docs);
       } catch (err) {
         console.error('Omnipresence | pending folder delete failed for', omniId, err);
-        failed.push(entry);
+        kept.push(entry);
       }
     }
-    if (failed.length) await SyncRegistry.setPendingDeletes(user.id, failed);
+    if (kept.length) await SyncRegistry.setPendingDeletes(user.id, kept);
     else await SyncRegistry.clearPendingDeletes(user.id);
   }
 
@@ -741,7 +776,15 @@ export class FolderSync {
     JournalSync.cancelFor(journal.id);
     await SyncRegistry.unenroll(journal);
     if (game.user.isGM) {
-      await this._removeFromPack(rootId, journal.getFlag('omnipresence', 'id'), 'removed');
+      try {
+        await this._removeFromPack(rootId, journal.getFlag('omnipresence', 'id'), 'removed');
+      } catch (err) {
+        // A pack failure must never leave a member unenrolled locally with a live
+        // pack copy and no tombstone — other worlds would push it back. Record
+        // pendingRemove so _materializeRemoves retries at the next GM login.
+        console.error('Omnipresence | folder member leave failed for', journal.name, err);
+        await journal.update({ 'flags.omnipresence.pendingRemove': rootId }, { omnipresenceInternal: true });
+      }
     } else {
       await journal.update({ 'flags.omnipresence.pendingRemove': rootId }, { omnipresenceInternal: true });
     }
@@ -953,6 +996,17 @@ export class FolderSync {
     if (!this._isResponsible(userId)) return;
 
     if (this._isStampedRoot(folder)) {
+      // Nested roots are refused at mark time; a drag can create the same
+      // state, so the push is skipped (and nothing unmarked) until the user
+      // drags this root back out.
+      if ('folder' in changes) {
+        const nested = this.nestedRoot(folder);
+        if (nested) {
+          ui.notifications.warn(game.i18n.format('OMNIPRESENCE.notifications.folderNested', { name: nested.name }));
+          console.warn('Omnipresence | refusing to push nested root', folder.name, 'inside', nested.name);
+          return;
+        }
+      }
       // A root's own placement is world-local; name/colour/sort still sync.
       this.debouncedPushFolder(folder);
       return;
