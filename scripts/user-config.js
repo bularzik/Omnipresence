@@ -107,6 +107,14 @@ export function registerUserConfigInjection() {
           result.journalIds.some(id => !before.journalIds.includes(id)) ||
           (before.folderIds !== null && result.folderIds.some(id => !beforeFolders.includes(id)));
 
+        // Removals-only saves used to give no feedback at all (op-tb6). The
+        // write is wholesale: the list is re-based to the rendered rows, so an
+        // id whose document is neither local nor in the pack is dropped —
+        // intended, such a doc cannot auto-import anyway.
+        if (!added) {
+          ui.notifications.info(game.i18n.localize('OMNIPRESENCE.notifications.manageSavedRemovedOnly'));
+        }
+
         if (added) {
           // The selection write above already succeeded; a failure here means
           // "saved but not yet synced," which is a different, less alarming

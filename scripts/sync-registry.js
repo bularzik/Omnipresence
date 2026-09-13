@@ -1,4 +1,4 @@
-import { isEnrolledFrom, isSelected, isFolderSelected } from './sync-logic.js';
+import { isEnrolledFrom, isSelected, isFolderSelected, isGateUser } from './sync-logic.js';
 
 export class SyncRegistry {
   static SETTING = 'syncRegistry';
@@ -46,6 +46,11 @@ export class SyncRegistry {
     const updates = { 'flags.omnipresence.enrolled': true };
     if (viaFolder) {
       // Enrolled through a synced folder: the folder gates it, not journalIds.
+      // Remember an individual enrollment so unmarking the folder can restore
+      // it (unenrollMember) instead of dropping the journal from sync.
+      if (doc.getFlag('omnipresence', 'enrolled') === true && !doc.getFlag('omnipresence', 'viaFolder')) {
+        updates['flags.omnipresence.wasIndividual'] = true;
+      }
       updates['flags.omnipresence.viaFolder'] = viaFolder;
       updates['flags.omnipresence.pendingRemove'] = null;
       updates['flags.omnipresence.pendingEnter'] = null;
@@ -65,16 +70,20 @@ export class SyncRegistry {
       registry[id] = true;
       await game.settings.set('omnipresence', this.SETTING, registry);
     }
-    // Add to the enrolling user's per-world allow-list so it syncs into this
-    // world. (Imports of another user's doc run under the GM, who owns all docs
-    // by role — adding the imported id to the GM's list keeps the GM's own
-    // login-sync of that doc working, mirroring pre-allow-list behaviour.)
+    // Consent lives on the GATE user's per-world allow-list: the user named by
+    // the doc's ownerName, or the GM for a GM-owned doc (see isGateUser). The
+    // acting user is usually the gate user; a GM enrolling a player's doc adds
+    // it to that player's list (a GM may write any user's flags) so the
+    // player's own gate admits it. Auto-imports of another user's doc run
+    // under the GM and are already on the owner's list, so nothing lands on
+    // the GM's list any more (it used to grow one orphan per import).
     // A folder member is gated by its root's folderIds entry instead, so its
-    // own id is removed from journalIds if it was ever enrolled individually.
-    if (doc.isOwner) {
+    // own id is removed from the list if it was ever enrolled individually.
+    const gateUser = this.gateUser(doc.getFlag('omnipresence', 'ownerName') ?? null);
+    if (gateUser && (gateUser.id === game.user.id || game.user.isGM)) {
       const kind = doc.documentName === 'JournalEntry' ? 'journal' : 'actor';
-      if (viaFolder) await this.removeFromSelection(game.user.id, kind, id);
-      else await this.addToSelection(game.user.id, kind, id);
+      if (viaFolder) await this.removeFromSelection(gateUser.id, kind, id);
+      else await this.addToSelection(gateUser.id, kind, id);
     }
     return id;
   }
@@ -85,7 +94,7 @@ export class SyncRegistry {
     // Set the flag false so it wins over any stale legacy registry entry even
     // when a non-GM cannot clear the world registry.
     await doc.update(
-      { 'flags.omnipresence.enrolled': false, 'flags.omnipresence.viaFolder': null },
+      { 'flags.omnipresence.enrolled': false, 'flags.omnipresence.viaFolder': null, 'flags.omnipresence.-=wasIndividual': null },
       { omnipresenceInternal: true }
     );
     if (game.user.isGM) {
@@ -116,6 +125,27 @@ export class SyncRegistry {
       if (owner && owner.id !== game.user.id) {
         await this.removeFromSelection(owner.id, kind, id);
       }
+    }
+  }
+
+  /**
+   * A folder member leaves its folder's sync (unmark, move-out, detach). A
+   * journal that was individually enrolled before the folder took it over
+   * goes back to individual enrollment — and back onto its owner's journal
+   * allow-list — instead of leaving sync altogether. Anything else unenrolls.
+   */
+  static async unenrollMember(doc) {
+    if (doc.getFlag('omnipresence', 'wasIndividual') !== true) return this.unenroll(doc);
+    await doc.update({
+      'flags.omnipresence.viaFolder': null,
+      'flags.omnipresence.-=wasIndividual': null,
+      'flags.omnipresence.-=pendingRemove': null,
+      'flags.omnipresence.-=pendingEnter': null
+    }, { omnipresenceInternal: true });
+    const id = doc.getFlag('omnipresence', 'id');
+    const gateUser = this.gateUser(doc.getFlag('omnipresence', 'ownerName') ?? null);
+    if (id && gateUser && (gateUser.id === game.user.id || game.user.isGM)) {
+      await this.addToSelection(gateUser.id, 'journal', id);
     }
   }
 
@@ -263,12 +293,27 @@ export class SyncRegistry {
   }
 
   /**
-   * The user whose journal-sync preference and folderIds gate a root: the
-   * user named by the root's ownerName, or — for a GM-marked root (null) —
-   * the current user when they are a GM. Null when nobody here can gate it.
+   * The user whose preferences and allow-list gate a document or root: the
+   * user named by its ownerName, or — for a GM-owned doc / GM-marked root
+   * (null) — the current user when they are a GM. Null when nobody here can
+   * gate it (the named user does not exist in this world).
    */
-  static folderGateUser(ownerName) {
+  static gateUser(ownerName) {
     if (ownerName) return game.users.find(u => u.name === ownerName) ?? null;
     return game.user.isGM ? game.user : null;
+  }
+
+  /** @deprecated alias kept for the folder-sync call sites; same rule as gateUser. */
+  static folderGateUser(ownerName) {
+    return this.gateUser(ownerName);
+  }
+
+  /** Whether the current user is the gate user for `doc` (see sync-logic isGateUser). */
+  static isGateUserFor(doc) {
+    return isGateUser({
+      ownerName: doc.getFlag('omnipresence', 'ownerName') ?? null,
+      isGM: game.user.isGM,
+      userName: game.user.name
+    });
   }
 }

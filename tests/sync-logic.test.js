@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, isFolderSelected } from '../scripts/sync-logic.js';
+import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, isFolderSelected, isGateUser } from '../scripts/sync-logic.js';
 
 const T0 = '2026-06-14T10:00:00.000Z';
 const T1 = '2026-06-14T11:00:00.000Z';
@@ -845,4 +845,19 @@ test('isFolderSelected: absent list admits everything, a list gates by membershi
   assert.equal(isFolderSelected('R', []), false);
   assert.equal(isFolderSelected('R', ['Q']), false);
   assert.equal(isFolderSelected('', null), false);
+});
+
+test('isGateUser: a named owner gates their own document', () => {
+  assert.equal(isGateUser({ ownerName: 'User 1', isGM: false, userName: 'User 1' }), true);
+  assert.equal(isGateUser({ ownerName: 'User 1', isGM: false, userName: 'User 2' }), false);
+});
+
+test('isGateUser: a GM does not gate a player-owned document', () => {
+  assert.equal(isGateUser({ ownerName: 'User 1', isGM: true, userName: 'Gamemaster' }), false);
+});
+
+test('isGateUser: a document with no ownerName is GM-owned', () => {
+  assert.equal(isGateUser({ ownerName: null, isGM: true, userName: 'Gamemaster' }), true);
+  assert.equal(isGateUser({ ownerName: undefined, isGM: true, userName: 'Gamemaster' }), true);
+  assert.equal(isGateUser({ ownerName: null, isGM: false, userName: 'User 1' }), false);
 });

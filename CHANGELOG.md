@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the full end-to-end suite; v13 remains the minimum. Directory context-menu
   entries now carry both the v13 and v14 field names, so they render without
   deprecation warnings on either version.
+- **GM-owned documents auto-import for the GM.** An enrolled actor or journal
+  with no player owner now appears in other worlds for the GM once the GM
+  checks it in *Manage synced documents*, the same way player documents do
+  for their owner. Previously such documents never crossed worlds.
+- The synced-documents picker has a Cancel button.
 - **Journal folder sync.** Right-click a folder in the Journal directory and
   choose "Sync Folder with Omnipresence" to sync everything inside it across
   worlds, subfolders included. The folder tree mirrors exactly; journals added
@@ -26,7 +31,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The consent picker and Manage Synced Documents gain a "Journal Folders"
   section, and the sync dashboard a folders table.
 
+### Changed
+- **Consent follows the owner, not Foundry's `isOwner`.** A document's owner
+  (its `ownerName`, or the GM when there is none) is the user whose sync
+  preference and per-world selection gate it at login, in the picker, and on
+  enrollment. A GM enrolling a player's document now writes the *player's*
+  selection, and a GM's *Manage synced documents* dialog lists only the GM's
+  own documents instead of every player's character. The GM's selection no
+  longer accumulates an entry for every auto-imported document.
+- Unmarking a synced folder returns journals that were individually enrolled
+  before the folder took them over to individual enrollment, instead of
+  dropping them from sync.
+- With two GMs connected, one client (Foundry's active GM) drains queued
+  player folder actions and imports pack folders; pending player actions are
+  drained even when that GM's own journal sync is off.
+- Folder tree pushes and deletes are batched (one create/update/delete call per
+  step) and a folder root's owner name is pushed whenever it differs from the
+  pack, not only alongside another root change.
+- *Manage synced documents* confirms a removals-only save.
+
 ### Fixed
+- Deleting an individually enrolled actor or journal keeps the documented
+  re-import contract on purpose: the delete hooks no longer attempt an
+  unenroll that only ever failed silently.
+- A hotbar slot whose macro was deleted locally no longer deletes the shared
+  pack copy at the next GM login; the login pull restores the macro and
+  re-points the slot. Only an explicitly cleared slot removes a pack copy.
+- Folder sync: a queued player delete of a co-owned member is honoured when
+  the player owns the folder; a queued mark whose root id collides with an
+  existing root is rejected; queued unmarks and failed marks release only the
+  queuing player's own journals; deleted members are dropped from the legacy
+  world registry; a `viaFolder` journal whose folder was deleted locally
+  before the source's delete arrived is detached instead of left dangling;
+  subfolders that lost their stamp are re-stamped before every push; a failed
+  root reconcile now raises the sync-failed notification.
 - Macro pull clears empty hotbar slots instead of carrying them. Foundry (v14
   verified) accepts a `null` slot on write but then fails to load that User
   document, which removes the user from the join screen.

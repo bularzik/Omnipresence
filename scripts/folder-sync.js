@@ -270,7 +270,7 @@ export class FolderSync {
       if (!this.canUnmark(folder)) return;
       const pending = SyncRegistry.getPendingRoots(game.user.id)[rootId];
       for (const journal of this.members(folder)) {
-        if (journal.isOwner) await SyncRegistry.unenroll(journal);
+        if (journal.isOwner) await SyncRegistry.unenrollMember(journal);
       }
       await this._ensureFolderSelection(game.user.id);
       await SyncRegistry.removeFromSelection(game.user.id, 'folder', rootId);
@@ -287,7 +287,7 @@ export class FolderSync {
   static async _unstamp(folder, rootId) {
     for (const journal of this.members(folder)) {
       JournalSync.cancelFor(journal.id);
-      await SyncRegistry.unenroll(journal);
+      await SyncRegistry.unenrollMember(journal);
     }
     for (const sub of this.subfolders(folder)) {
       await sub.update(
@@ -305,12 +305,24 @@ export class FolderSync {
     await this._setRegistry(rootId, false);
   }
 
-  /** Unenroll every local journal enrolled through `rootId` (used when a pending mark cannot be honoured). */
-  static async _unenrollMembersOf(rootId) {
+  /**
+   * Unenroll every local journal enrolled through `rootId` (used when a
+   * pending mark cannot be honoured). `user` limits it to journals that user
+   * owns; `within` to journals inside that folder's subtree — both guard the
+   * untrusted pending path from touching another root's members.
+   */
+  static async _unenrollMembersOf(rootId, { user = null, within = null } = {}) {
     for (const journal of game.journal.filter(j => j.getFlag('omnipresence', 'viaFolder') === rootId)) {
+      if (user && !journal.testUserPermission(user, 'OWNER')) continue;
+      if (within && journal.folder !== within && !journal.folder?.ancestors?.includes(within)) continue;
       JournalSync.cancelFor(journal.id);
-      await SyncRegistry.unenroll(journal);
+      await SyncRegistry.unenrollMember(journal);
     }
+  }
+
+  /** The one GM client that drains pending records and imports pack roots (op-nbs). */
+  static _isResponsibleGM() {
+    return game.user.isGM && game.users.activeGM?.id === game.user.id;
   }
 
   // --- pending records (player marks/unmarks; GM drains them) -------------
@@ -329,7 +341,9 @@ export class FolderSync {
    * honoured.
    */
   static async materializePending() {
-    if (!game.user.isGM) return;
+    if (!this._isResponsibleGM()) return;
+    const pack = this._getPack();
+    if (!pack) return;
     if (this._materializing) return this._materializing;
     this._materializing = (async () => {
       for (const user of game.users) {
@@ -346,11 +360,19 @@ export class FolderSync {
                   console.warn('Omnipresence | refusing pending folder unmark from', user.name, '— not the owner of', rootId);
                 }
               } else {
-                await this._unenrollMembersOf(rootId);
+                await this._unenrollMembersOf(rootId, { user });
               }
             } else {
               const folder = game.folders.get(entry?.folderId);
-              if (folder && folder.type === FOLDER_TYPE && !this._isStampedRoot(folder) && !this.nestedRoot(folder)) {
+              // The rootId is the untrusted key of the player's pendingRoots map. A
+              // key that collides with a live root (local or pack) would let the
+              // stamp/push below reshape that root's pack tree — reject it and
+              // release only the journals inside the queued folder.
+              const collides = !!this.findRootById(rootId) || !!pack.folders.get(rootId);
+              if (collides) {
+                console.warn('Omnipresence | refusing pending folder mark from', user.name, '— root id already in use', rootId);
+                if (folder) await this._unenrollMembersOf(rootId, { user, within: folder });
+              } else if (folder && folder.type === FOLDER_TYPE && !this._isStampedRoot(folder) && !this.nestedRoot(folder)) {
                 const members = this.members(folder);
                 const ownsEveryMember = members.length > 0 && members.every(j => j.testUserPermission(user, 'OWNER'));
                 if (ownsEveryMember) {
@@ -360,10 +382,10 @@ export class FolderSync {
                   await this.pushFolder(folder);
                 } else {
                   console.warn('Omnipresence | refusing pending folder mark from', user.name, '— not owner of every member');
-                  await this._unenrollMembersOf(rootId);
+                  await this._unenrollMembersOf(rootId, { user });
                 }
               } else if (!folder || !this._isStampedRoot(folder)) {
-                await this._unenrollMembersOf(rootId);
+                await this._unenrollMembersOf(rootId, { user });
               }
             }
             await SyncRegistry.clearPendingRoot(user.id, rootId);
@@ -398,7 +420,11 @@ export class FolderSync {
       const { omniId, rootId } = entry;
       const comp = docs.find(d => d.getFlag('omnipresence', 'id') === omniId);
       const treeIds = new Set(this._packTreeNodes(rootId).map(n => n.id));
-      const valid = !!comp && treeIds.has(comp._source.folder) && comp.getFlag('omnipresence', 'ownerName') === user.name;
+      // A co-owned or default-OWNER member carries another user's name (or none):
+      // the root's owner may delete any member of their own root.
+      const rootOwner = this._getPack().folders.get(rootId)?.getFlag('omnipresence', 'ownerName') ?? null;
+      const ownsIt = comp?.getFlag('omnipresence', 'ownerName') === user.name || rootOwner === user.name;
+      const valid = !!comp && treeIds.has(comp._source.folder) && ownsIt;
       if (!valid) {
         console.warn('Omnipresence | refusing pending folder delete from', user.name, '— invalid entry for', omniId);
         continue;
@@ -439,9 +465,15 @@ export class FolderSync {
   static async reconcileFolders() {
     const pack = this._getPack();
     if (!pack) return;
-    if (!SyncRegistry.isJournalSyncEnabled(game.user.id)) return;
 
+    // Other users' pending marks/unmarks/deletes are theirs, not this GM's:
+    // drain them before this client's own journal-sync preference is consulted.
     await this.materializePending();
+
+    if (!SyncRegistry.isJournalSyncEnabled(game.user.id)) return;
+    // Imports and tree edits have one writer per world: the responsible GM.
+    // A second connected GM would otherwise import the same roots twice.
+    const writer = this._isResponsibleGM();
 
     const compDocs = await pack.getDocuments();
     const seenRootIds = new Set();
@@ -461,11 +493,16 @@ export class FolderSync {
 
         // 4. The source deleted the root with its contents: mirror the delete.
         if (packRoot.getFlag('omnipresence', 'deleted') === true) {
-          if (root && game.user.isGM) await this._deleteLocalRoot(root, rootId);
+          if (!writer) continue;
+          if (root) await this._deleteLocalRoot(root, rootId);
+          // Local root already gone but journals still claim membership (the
+          // folder was removed locally before the delete arrived): detach them
+          // so they stop being dangling members.
+          else for (const j of game.journal.filter(j => j.getFlag('omnipresence', 'viaFolder') === rootId)) await this._detach(j);
           continue;
         }
 
-        if (!game.user.isGM) continue; // players cannot create or edit folders
+        if (!writer) continue; // players cannot create or edit folders; one GM writes
 
         // 2. / 3. Import the tree, or make the local tree match the pack.
         if (!root) root = await this._importTree(packRoot, rootId, ownerName);
@@ -475,13 +512,14 @@ export class FolderSync {
         await this._reconcileMembers(root, rootId, packRoot, compDocs);
       } catch (err) {
         console.error('Omnipresence | folder reconcile failed for', packRoot.name, err);
+        ui.notifications.warn(game.i18n.format('OMNIPRESENCE.notifications.syncFailed', { name: packRoot.name }));
       }
     }
 
     // 5. Local roots with no pack folder: the source unsynced them → unmark
     // the mirror, keep the copies. A root that never synced (push failed, or
     // marked while the pack was unavailable) is pushed instead.
-    if (!game.user.isGM) return;
+    if (!writer) return;
     for (const root of game.folders.filter(f => f.type === FOLDER_TYPE && this._isStampedRoot(f))) {
       const rootId = root.getFlag('omnipresence', 'id');
       if (seenRootIds.has(rootId)) continue;
@@ -543,10 +581,11 @@ export class FolderSync {
   static async _applyTree(root, rootId) {
     const { toCreate, toUpdate, toDelete } =
       diffFolderTree(this._packTreeNodes(rootId), this._localTreeNodes(root));
+    // One map, kept current as folders are created (parents come first).
+    const local = this._localFoldersByOmni();
     for (const node of toCreate) {
       if (node.id === rootId) continue;
-      const local = this._localFoldersByOmni();
-      await this._FolderClass.create({
+      const created = await this._FolderClass.create({
         name: node.name,
         type: FOLDER_TYPE,
         color: node.color,
@@ -555,9 +594,9 @@ export class FolderSync {
         folder: (local.get(node.parentId) ?? root).id,
         flags: { omnipresence: { id: node.id, rootId } }
       }, { omnipresenceInternal: true });
+      if (created) local.set(node.id, created);
     }
     for (const node of toUpdate) {
-      const local = this._localFoldersByOmni();
       const target = local.get(node.id);
       if (!target) continue;
       const data = { name: node.name, color: node.color, sorting: node.sorting, sort: node.sort };
@@ -565,7 +604,7 @@ export class FolderSync {
       await target.update(data, { omnipresenceInternal: true });
     }
     for (const id of toDelete) {
-      const target = this._localFoldersByOmni().get(id);
+      const target = local.get(id);
       if (!target || target.id === root.id) continue;
       for (const j of target.contents) await j.update({ folder: root.id }, { omnipresenceInternal: true });
       await target.delete({ omnipresenceInternal: true });
@@ -659,7 +698,7 @@ export class FolderSync {
   /** The source moved a member out: unenroll here and move it to the directory root, keeping the copy. */
   static async _detach(journal) {
     JournalSync.cancelFor(journal.id);
-    await SyncRegistry.unenroll(journal);
+    await SyncRegistry.unenrollMember(journal);
     if (journal.folder) await journal.update({ folder: null }, { omnipresenceInternal: true });
   }
 
@@ -774,7 +813,7 @@ export class FolderSync {
    */
   static async _leave(journal, rootId) {
     JournalSync.cancelFor(journal.id);
-    await SyncRegistry.unenroll(journal);
+    await SyncRegistry.unenrollMember(journal);
     if (game.user.isGM) {
       try {
         await this._removeFromPack(rootId, journal.getFlag('omnipresence', 'id'), 'removed');
@@ -805,6 +844,9 @@ export class FolderSync {
         console.warn('Omnipresence | pack copy already removed for', omniId, err);
       }
     }
+    // A deleted member's document is gone, so SyncRegistry.unenroll never ran
+    // for it: drop its legacy world-registry entry here.
+    if (reason === 'deleted') await this._setRegistry(omniId, false);
     const packRoot = pack.folders.get(rootId);
     if (!packRoot) return;
     await packRoot.update(
@@ -885,24 +927,42 @@ export class FolderSync {
   }
 
   /** GM only: make the pack tree match the local subtree. */
+  /** Stamp any subfolder that lost (or never got) its id/rootId so the tree diff sees it. */
+  static async _restampSubfolders(root, rootId) {
+    for (const sub of this.subfolders(root)) {
+      const updates = {};
+      if (!sub.getFlag('omnipresence', 'id')) updates['flags.omnipresence.id'] = foundry.utils.randomID(16);
+      if (sub.getFlag('omnipresence', 'rootId') !== rootId) updates['flags.omnipresence.rootId'] = rootId;
+      if (Object.keys(updates).length) await sub.update(updates, { omnipresenceInternal: true });
+    }
+  }
+
   static async _syncPackTree(root, rootId) {
     const pack = this._getPack();
     const ownerName = root.getFlag('omnipresence', 'ownerName') ?? null;
+    await this._restampSubfolders(root, rootId);
     const { toCreate, toUpdate, toDelete } =
       diffFolderTree(this._localTreeNodes(root), this._packTreeNodes(rootId));
-    for (const node of toCreate) {
-      const data = this._packDataFromNode(node);
-      if (node.id === rootId) data.flags = { omnipresence: { id: rootId, ownerName, tombstones: {} } };
-      await this._FolderClass.create(data, { pack: this.PACK_ID, keepId: true, omnipresenceInternal: true });
+    const packOpts = { pack: this.PACK_ID, omnipresenceInternal: true };
+    if (toCreate.length) {
+      const datas = toCreate.map(node => {
+        const data = { ...this._packDataFromNode(node), _id: node.id };
+        if (node.id === rootId) data.flags = { omnipresence: { id: rootId, ownerName, tombstones: {} } };
+        return data;
+      });
+      await this._FolderClass.createDocuments(datas, { ...packOpts, keepId: true });
     }
-    for (const node of toUpdate) {
-      const data = this._packDataFromNode(node);
-      if (node.id === rootId) data['flags.omnipresence.ownerName'] = ownerName;
-      await pack.folders.get(node.id)?.update(data, { omnipresenceInternal: true });
+    const updates = toUpdate.map(node => ({ ...this._packDataFromNode(node), _id: node.id }));
+    // ownerName is pushed whenever it differs from the pack root, not only
+    // when another root field changed (op-4r8).
+    const packRoot = pack.folders.get(rootId);
+    if (packRoot && (packRoot.getFlag('omnipresence', 'ownerName') ?? null) !== ownerName) {
+      let rootUpdate = updates.find(u => u._id === rootId);
+      if (!rootUpdate) updates.push(rootUpdate = { _id: rootId });
+      rootUpdate['flags.omnipresence.ownerName'] = ownerName;
     }
-    for (const id of toDelete) {
-      await pack.folders.get(id)?.delete({ omnipresenceInternal: true });
-    }
+    if (updates.length) await this._FolderClass.updateDocuments(updates, packOpts);
+    if (toDelete.length) await this._FolderClass.deleteDocuments(toDelete, packOpts);
   }
 
   /** GM only: delete a root's pack folders and every pack journal inside them. */
@@ -912,12 +972,10 @@ export class FolderSync {
     const nodes = this._packTreeNodes(rootId);
     if (!nodes.length) return;
     const ids = new Set(nodes.map(n => n.id));
-    for (const doc of await pack.getDocuments()) {
-      if (ids.has(doc._source.folder)) await doc.delete({ omnipresenceInternal: true });
-    }
-    for (const node of [...nodes].reverse()) {
-      await pack.folders.get(node.id)?.delete({ omnipresenceInternal: true });
-    }
+    const packOpts = { pack: this.PACK_ID, omnipresenceInternal: true };
+    const docIds = (await pack.getDocuments()).filter(d => ids.has(d._source.folder)).map(d => d.id);
+    if (docIds.length) await JournalEntry.deleteDocuments(docIds, packOpts);
+    await this._FolderClass.deleteDocuments([...nodes].reverse().map(n => n.id), packOpts);
   }
 
   /**
@@ -1109,14 +1167,25 @@ export class FolderSync {
         // "Delete All": members' delete hooks already tombstoned them, but the
         // capture makes this independent of hook order (idempotent). Keep the
         // root pack folder, emptied and flagged, so mirrors delete themselves.
+        const packOpts = { pack: this.PACK_ID, omnipresenceInternal: true };
+        const omniIds = members.map(m => m.omniId).filter(Boolean);
         const docs = await pack.getDocuments();
-        for (const { omniId } of members) {
-          if (omniId) await this._removeFromPack(rootId, omniId, 'deleted', docs);
+        const copyIds = docs.filter(d => omniIds.includes(d.getFlag('omnipresence', 'id'))).map(d => d.id);
+        try {
+          if (copyIds.length) await JournalEntry.deleteDocuments(copyIds, packOpts);
+        } catch (err) {
+          // A member's own delete hook may have removed a copy first; fall
+          // back to the idempotent per-document path.
+          console.warn('Omnipresence | batched member delete fell back to per-document', err);
+          for (const omniId of omniIds) await this._removeFromPack(rootId, omniId, 'deleted', docs);
         }
-        for (const node of [...this._packTreeNodes(rootId)].reverse()) {
-          if (node.id !== rootId) await pack.folders.get(node.id)?.delete({ omnipresenceInternal: true });
-        }
-        await pack.folders.get(rootId)?.update({ 'flags.omnipresence.deleted': true }, { omnipresenceInternal: true });
+        const subIds = this._packTreeNodes(rootId).filter(n => n.id !== rootId).map(n => n.id).reverse();
+        if (subIds.length) await this._FolderClass.deleteDocuments(subIds, packOpts);
+        const at = new Date().toISOString();
+        const rootUpdate = { 'flags.omnipresence.deleted': true };
+        for (const omniId of omniIds) rootUpdate[`flags.omnipresence.tombstones.${omniId}`] = { reason: 'deleted', at };
+        await pack.folders.get(rootId)?.update(rootUpdate, { omnipresenceInternal: true });
+        await this._setRegistryMany(omniIds, false);
       } else {
         // "Remove Folder": contents moved up = unmark. Members that already
         // fired `leave` are unenrolled; make sure the rest are too, then drop
@@ -1125,7 +1194,7 @@ export class FolderSync {
           const j = game.journal.get(id);
           if (j && SyncRegistry.isEnrolled(j)) {
             JournalSync.cancelFor(j.id);
-            await SyncRegistry.unenroll(j);
+            await SyncRegistry.unenrollMember(j);
           }
         }
         await this._deletePackTree(rootId);

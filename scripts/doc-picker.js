@@ -43,17 +43,20 @@ export class DocPicker {
   }
 
   /**
-   * Named candidate docs for the picker: the user's enrolled docs already in
-   * this world plus their enrolled docs in the shared pack (matched by
-   * ownerName), deduped by omnipresence id, sorted by name. `include` lets
-   * the journal section drop folder members.
+   * Named candidate docs for the picker: the user's OWN enrolled docs already
+   * in this world plus their own enrolled docs in the shared pack, deduped by
+   * omnipresence id, sorted by name. "Own" is the gate-user rule (ownerName
+   * flag; null means GM-owned) on both sides — never Foundry's isOwner, which
+   * a GM has on every document and which used to list every player's
+   * character under "your characters". `include` lets the journal section
+   * drop folder members.
    * @returns {Promise<Array<{id: string, name: string}>>}
    */
   static async _candidatesFor(packId, worldCollection, include = () => true) {
     const byId = new Map();
 
     for (const doc of worldCollection) {
-      if (!doc.isOwner) continue;
+      if (!doc.isOwner || !SyncRegistry.isGateUserFor(doc)) continue;
       if (!SyncRegistry.isEnrolled(doc)) continue;
       if (!include(doc)) continue;
       const id = doc.getFlag('omnipresence', 'id');
@@ -66,7 +69,7 @@ export class DocPicker {
       for (const doc of docs) {
         const id = doc.getFlag('omnipresence', 'id');
         if (!id) continue;
-        if (doc.getFlag('omnipresence', 'ownerName') !== game.user.name) continue;
+        if (!SyncRegistry.isGateUserFor(doc)) continue;
         if (!byId.has(id)) byId.set(id, doc.name);
       }
     }
@@ -252,6 +255,13 @@ export class DocPicker {
           label: game.i18n.localize(confirmKey),
           default: true,
           callback: (event, button) => this._collect(button.form, mode)
+        },
+        {
+          // Explicit discard: resolves null exactly like closing the window,
+          // so callers change nothing (op-tb6).
+          action: 'cancel',
+          label: game.i18n.localize('OMNIPRESENCE.onboarding.cancel'),
+          callback: () => null
         }
       ],
       rejectClose: false

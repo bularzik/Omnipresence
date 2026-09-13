@@ -10,7 +10,7 @@ npm test                              # run all unit tests (Node's built-in runn
 node --test tests/sync-logic.test.js  # run a single test file
 ```
 
-100 tests. Only the **pure** layer (`scripts/sync-logic.js`) is unit-tested —
+103 tests. Only the **pure** layer (`scripts/sync-logic.js`) is unit-tested —
 everything that touches Foundry globals (`game`, `Hooks`, `ui`, `ApplicationV2`)
 is not unit-testable and is covered by the Playwright suite below instead,
 plus manual verification for the onboarding dialog, which has no automated
@@ -25,10 +25,10 @@ npm run test:e2e                                    # full Playwright suite
 npx playwright test tests/e2e/allow-list.spec.js    # one spec
 ```
 
-40 tests across 11 spec files (`allow-list`, `embedded-sync`,
-`folder-membership`, `folder-sync`, `journal-sync`, `link-rewriting`,
-`map-pins`, `pack-staleness`, `sync-followups`, `sync-followups-2`,
-`user-config`).
+44 tests across 14 spec files (`allow-list`, `delete-reimport`,
+`embedded-sync`, `folder-membership`, `folder-pending`, `folder-sync`,
+`journal-sync`, `link-rewriting`, `macro-dangling`, `map-pins`,
+`pack-staleness`, `sync-followups`, `sync-followups-2`, `user-config`).
 
 `FOUNDRY_URL` overrides the server URL the e2e suite targets (default
 `http://localhost:30000`) — useful when a v13 test world runs on a
@@ -94,6 +94,10 @@ Never write `null` into a hotbar slot from a spec (delete the key with
 `'hotbar.-=N': null`). Foundry accepts the null on write and then fails to load
 that User at the next login, which drops the user from the join screen and
 takes every later spec down with it.
+
+`folder-pending.spec.js` logs in as `User 1` and closes/reopens the GM session
+mid-test to exercise the no-GM pending path; it needs both accounts and no
+other GM client connected.
 
 `folder-sync.spec.js` and `folder-membership.spec.js` need no fixtures: each
 test builds an `Omni Folder Probe` tree, marks it, and removes both the world

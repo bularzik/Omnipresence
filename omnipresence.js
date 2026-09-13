@@ -80,12 +80,14 @@ Hooks.on('updateActor', (actor, changes, options, userId) => {
   if (game.user.isGM) SyncEngine.debouncedPush(actor);
 });
 
-Hooks.on('deleteActor', (actor, options, userId) => {
-  if (userId !== game.user.id) return;
-  if (actor.pack) return; // deleting a pack copy must not unenroll the world doc
-  if (!SyncRegistry.isEnrolled(actor)) return;
-  SyncRegistry.unenroll(actor);
-});
+// Deleting an enrolled actor is deliberately NOT an unenroll (README, Notes):
+// the pack copy stays and the actor is re-imported at the next login, so an
+// accidental delete recovers. Unenrolling here would also strip the owner's
+// allow-list entry and block that re-import for good. (An earlier version
+// called unenroll from this hook; it silently rejected because the document
+// was already gone, which is the only reason the contract held — op-74f.)
+// Folder members are the exception and are handled in deleteJournalEntry.
+Hooks.on('deleteActor', (_actor, _options, _userId) => {});
 
 // v13 renamed directory context-menu hooks to get{DocumentName}ContextOptions;
 // the v12 name (getActorDirectoryEntryContext) no longer fires. The callback
@@ -161,9 +163,7 @@ Hooks.on('deleteJournalEntry', (journal, options, userId) => {
       .catch(err => console.error('Omnipresence | deleteJournalEntry handling failed', err));
     return;
   }
-  if (userId !== game.user.id) return;
-  if (!SyncRegistry.isEnrolled(journal)) return;
-  SyncRegistry.unenroll(journal);
+  // Individually enrolled journals keep the re-import contract (see deleteActor).
 });
 
 // Page changes don't fire updateJournalEntry — route them to the owning journal.

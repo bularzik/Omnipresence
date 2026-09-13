@@ -49,10 +49,19 @@ export class MacroSync {
     );
 
     const pushedOmpIds = new Set();
+    // Slots whose macro no longer exists locally (Foundry never clears a slot
+    // when its macro is deleted). The user still wants those: keep their pack
+    // copies (matched by the slots recorded on the copy) so the pull phase
+    // restores the local macro, instead of deleting the shared copy from
+    // every world (op-bhm). Only an explicitly cleared slot removes a copy.
+    const danglingSlots = new Set();
 
     for (const [macroId, slots] of macroSlots) {
       const macro = game.macros.get(macroId);
-      if (!macro) continue;
+      if (!macro) {
+        for (const slot of slots) danglingSlots.add(slot);
+        continue;
+      }
 
       // Stamp a stable omnipresence.id on the local doc if it lacks one.
       let ompId = macro.getFlag('omnipresence', 'id');
@@ -82,11 +91,13 @@ export class MacroSync {
       pushedOmpIds.add(ompId);
     }
 
-    // Delete compendium entries for macros no longer on this user's hotbar.
+    // Delete compendium entries for macros no longer on this user's hotbar —
+    // except copies a dangling slot still points at (restored on pull).
     for (const doc of userCompDocs) {
-      if (!pushedOmpIds.has(doc.getFlag('omnipresence', 'id'))) {
-        await doc.delete();
-      }
+      if (pushedOmpIds.has(doc.getFlag('omnipresence', 'id'))) continue;
+      const copySlots = doc.getFlag('omnipresence', 'hotbarSlots') ?? [];
+      if (copySlots.some(slot => danglingSlots.has(slot))) continue;
+      await doc.delete();
     }
   }
 

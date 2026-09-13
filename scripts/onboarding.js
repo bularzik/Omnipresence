@@ -57,12 +57,14 @@ export class Onboarding {
   static async _backfill(userId) {
     if (SyncRegistry.isOnboarded(userId)) return;
 
+    // Seed only the docs this user gates (ownerName rule), not everything a
+    // GM happens to own by role.
     const actorIds = game.actors
-      .filter(a => a.isOwner && SyncRegistry.isEnrolled(a))
+      .filter(a => a.isOwner && SyncRegistry.isGateUserFor(a) && SyncRegistry.isEnrolled(a))
       .map(a => a.getFlag('omnipresence', 'id'))
       .filter(Boolean);
     const journalIds = game.journal
-      .filter(j => j.isOwner && SyncRegistry.isEnrolled(j))
+      .filter(j => j.isOwner && SyncRegistry.isGateUserFor(j) && SyncRegistry.isEnrolled(j))
       .map(j => j.getFlag('omnipresence', 'id'))
       .filter(Boolean);
 

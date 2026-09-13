@@ -601,3 +601,14 @@ export function isFolderSelected(id, allowList) {
   if (allowList == null) return true;
   return isSelected(id, allowList);
 }
+
+/**
+ * Whether the current user is the one whose preferences and allow-list gate a
+ * document. Ownership for sync is decided by the `ownerName` flag, not by
+ * Foundry's `isOwner`: a GM has isOwner on every document, so isOwner alone
+ * would let the GM's list gate every player's document and fill the picker
+ * with everyone's characters. A document with no ownerName is GM-owned.
+ */
+export function isGateUser({ ownerName, isGM, userName }) {
+  return ownerName ? ownerName === userName : !!isGM;
+}

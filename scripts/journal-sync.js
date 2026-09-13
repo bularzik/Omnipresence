@@ -322,19 +322,10 @@ export class JournalSync {
   }
 
   static async pull(localJournal, compJournal) {
-    // Strip world-local fields so local ownership and folder are preserved,
-    // and localize canonical omnipresence ids to this world's ids.
-    const journalData = LinkRewriter.localize(
-      this._stripPageOwnership(stripWorldLocalFields(compJournal.toObject()))
-    );
-    journalData.flags ??= {};
-    journalData.flags.omnipresence ??= {};
-    // Reset localModifiedAt to match the pulled syncedAt (no local changes outstanding).
-    journalData.flags.omnipresence.localModifiedAt = journalData.flags.omnipresence.syncedAt;
-    // The pin payload lives only on pack copies — extract it for apply and
-    // keep it off the local journal.
-    const pins = journalData.flags.omnipresence.pins;
-    delete journalData.flags.omnipresence.pins;
+    // Same shaping as an import: world-local fields stripped (local ownership
+    // and folder preserved), links localized, localModifiedAt reset to the
+    // pulled syncedAt, pins split off for _applyPins.
+    const { journalData, pins } = this.prepareImportData(compJournal);
     try {
       await localJournal.update(journalData, { omnipresenceInternal: true, recursive: false });
       if (pins !== undefined) await this._applyPins(localJournal, pins);
@@ -363,15 +354,19 @@ export class JournalSync {
       const omnipresenceId = journal.getFlag('omnipresence', 'id');
       const compJournal = compJournals.find(d => d.getFlag('omnipresence', 'id') === omnipresenceId);
 
-      // Allow-list gate. A folder member is gated by its root's owner (or the
-      // GM for a GM-marked root) — never by journalIds.
+      // Allow-list gate on the OWNER (the user named by ownerName, or this GM
+      // for a GM-owned journal) — never the acting GM's own list. A folder
+      // member is gated by its root's owner and folderIds, never by journalIds.
       const viaFolder = journal.getFlag('omnipresence', 'viaFolder') ?? null;
       if (viaFolder) {
         const rootOwner = pack.folders.get(viaFolder)?.getFlag('omnipresence', 'ownerName') ?? null;
-        const gateUser = SyncRegistry.folderGateUser(rootOwner) ?? game.user;
+        const gateUser = SyncRegistry.gateUser(rootOwner) ?? game.user;
         if (!SyncRegistry.isDocSelected(gateUser.id, 'folder', viaFolder)) continue;
-      } else if (!SyncRegistry.isDocSelected(game.user.id, 'journal', omnipresenceId)) {
-        continue;
+      } else {
+        const gateUser = SyncRegistry.gateUser(journal.getFlag('omnipresence', 'ownerName') ?? null);
+        if (!gateUser) continue;
+        if (!SyncRegistry.isJournalSyncEnabled(gateUser.id)) continue;
+        if (!SyncRegistry.isDocSelected(gateUser.id, 'journal', omnipresenceId)) continue;
       }
 
       if (!compJournal) {
@@ -417,13 +412,10 @@ export class JournalSync {
         // remaining imports — or, via ready's serial awaits, link/pin healing
         // and the beforeunload guard.
         try {
-          const ownerName = compJournal.getFlag('omnipresence', 'ownerName');
-          if (!ownerName) {
-            console.warn('Omnipresence | compendium journal has no ownerName, skipping auto-import:', compJournal.name);
-            continue;
-          }
-
-          const matchingUser = game.users.find(u => u.name === ownerName);
+          // Gate user: the named owner, or this GM for a GM-owned copy (no
+          // ownerName), which imports GM-only via the GM's own allow-list.
+          const ownerName = compJournal.getFlag('omnipresence', 'ownerName') ?? null;
+          const matchingUser = SyncRegistry.gateUser(ownerName);
           if (!matchingUser) {
             console.warn('Omnipresence | no user named', ownerName, '— skipping auto-import of', compJournal.name);
             continue;
@@ -434,7 +426,9 @@ export class JournalSync {
           if (!SyncRegistry.isDocSelected(matchingUser.id, 'journal', omnipresenceId)) continue;
 
           const { journalData, pins } = this.prepareImportData(compJournal);
-          journalData.ownership = { default: 0, [matchingUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER };
+          journalData.ownership = ownerName
+            ? { default: 0, [matchingUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER }
+            : { default: 0 };
 
           const created = await JournalEntry.create(journalData, { keepId: true, omnipresenceInternal: true });
           await SyncRegistry.enroll(created);

@@ -44,9 +44,25 @@ test.beforeAll(async () => {
   ownerContext = await browser.newContext();
   ownerPage = await ownerContext.newPage();
   await loginToFoundry(ownerPage, ownerName);
+
+  // The GM's picker lists only GM-owned (no ownerName) documents now, so the
+  // Manage-dialog tests below need at least one GM-owned enrolled actor.
+  await gmPage.evaluate(async () => {
+    const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+    if (game.actors.getName('Omni GM Picker Probe')) return;
+    const a = await Actor.create({ name: 'Omni GM Picker Probe', type: 'character' });
+    await SyncRegistry.enroll(a);
+  });
 });
 
 test.afterAll(async () => {
+  await gmPage?.evaluate(async () => {
+    const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+    const { SyncEngine } = await import('/modules/omnipresence/scripts/sync-engine.js');
+    for (const a of game.actors.filter(a => a.name === 'Omni GM Picker Probe')) { await SyncRegistry.unenroll(a); await a.delete(); }
+    const pack = game.packs.get(SyncEngine.PACK_ID);
+    for (const d of await pack.getDocuments()) if (d.name === 'Omni GM Picker Probe') await d.delete();
+  }).catch(() => {});
   await gmContext?.close();
   await ownerContext?.close();
   await browser?.close();
@@ -385,4 +401,45 @@ test('saving the manage dialog writes the allow-list and leaves the local docume
   expect(result.selectedAfter).toBe(false);
   expect(result.stillEnrolled).toBe(true);
   expect(result.stillPresent).toBe(true);
+});
+
+// op-oo2 / op-a5m: consent lives on the GATE user's list (ownerName rule). A
+// GM enrolling a player's actor writes the player's allow-list, not the GM's,
+// and the GM's own picker never lists that actor.
+test("GM enrolling a player's doc adds it to the OWNER's allow-list, not the GM's, and the GM picker omits it", async () => {
+  let omniId;
+  try {
+    const out = await gmPage.evaluate(async (name) => {
+      const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+      const { DocPicker } = await import('/modules/omnipresence/scripts/doc-picker.js');
+      const owner = game.users.find(u => u.name === name);
+      const actor = await Actor.create({
+        name: 'Omni GateUser Probe',
+        type: 'character',
+        ownership: { default: 0, [owner.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER }
+      });
+      const id = await SyncRegistry.enroll(actor);
+      const { actors } = await DocPicker._buildCandidates();
+      return {
+        id,
+        ownerName: actor.getFlag('omnipresence', 'ownerName'),
+        onOwnerList: SyncRegistry.isDocSelected(owner.id, 'actor', id),
+        onGmList: SyncRegistry.getSelection(game.user.id).actorIds.includes(id),
+        inGmPicker: actors.some(a => a.id === id)
+      };
+    }, ownerName);
+    omniId = out.id;
+    expect(out.ownerName).toBe(ownerName);
+    expect(out.onOwnerList).toBe(true);
+    expect(out.onGmList).toBe(false);
+    expect(out.inGmPicker).toBe(false);
+  } finally {
+    await gmPage.evaluate(async ({ omniId }) => {
+      const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+      const { SyncEngine } = await import('/modules/omnipresence/scripts/sync-engine.js');
+      for (const a of game.actors.filter(a => a.name === 'Omni GateUser Probe')) { await SyncRegistry.unenroll(a); await a.delete(); }
+      const pack = game.packs.get(SyncEngine.PACK_ID);
+      for (const d of await pack.getDocuments()) if (d.getFlag('omnipresence', 'id') === omniId) await d.delete();
+    }, { omniId }).catch(() => {});
+  }
 });
