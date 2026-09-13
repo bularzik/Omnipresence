@@ -1,6 +1,7 @@
 import { SyncEngine } from './sync-engine.js';
 import { JournalSync } from './journal-sync.js';
 import { SyncRegistry } from './sync-registry.js';
+import { FolderSync } from './folder-sync.js';
 import { filterCandidates } from './sync-logic.js';
 
 /**
@@ -13,9 +14,10 @@ export class DocPicker {
   /**
    * @param {object} opts
    * @param {'onboarding'|'manage'} opts.mode
-   * @param {{actorIds: string[], journalIds: string[]}|null} opts.preselected
-   *   null → check every box (first-run behavior).
-   * @returns {Promise<{actorIds: string[], journalIds: string[], macros: boolean}|null>}
+   * @param {{actorIds: string[], journalIds: string[], folderIds: string[]|null}|null} opts.preselected
+   *   null → check every box (first-run behavior). `preselected.folderIds` may
+   *   itself be null, meaning "all" (every folder checked).
+   * @returns {Promise<{actorIds: string[], journalIds: string[], folderIds: string[], macros: boolean}|null>}
    *   null when the user dismissed the dialog without confirming.
    */
   static async open({ mode = 'onboarding', preselected = null } = {}) {
@@ -25,22 +27,38 @@ export class DocPicker {
 
   static async _buildCandidates() {
     const actors = await this._candidatesFor(SyncEngine.PACK_ID, game.actors);
-    const journals = await this._candidatesFor(JournalSync.PACK_ID, game.journal);
-    return { actors, journals };
+    // Folder members are consented to through their folder, never one by one:
+    // drop local viaFolder journals and pack journals that sit in a pack folder.
+    const journalPack = game.packs.get(JournalSync.PACK_ID);
+    const packMemberIds = new Set(
+      journalPack
+        ? (await journalPack.getDocuments()).filter(d => d._source.folder).map(d => d.getFlag('omnipresence', 'id'))
+        : []
+    );
+    const journals = (await this._candidatesFor(
+      JournalSync.PACK_ID, game.journal, doc => !doc.getFlag('omnipresence', 'viaFolder')
+    )).filter(({ id }) => !packMemberIds.has(id));
+    const folders = await this._folderCandidates();
+    return { actors, journals, folders };
   }
 
   /**
-   * Named candidate docs for the picker: the user's enrolled docs already in
-   * this world plus their enrolled docs in the shared pack (matched by
-   * ownerName), deduped by omnipresence id, sorted by name.
+   * Named candidate docs for the picker: the user's OWN enrolled docs already
+   * in this world plus their own enrolled docs in the shared pack, deduped by
+   * omnipresence id, sorted by name. "Own" is the gate-user rule (ownerName
+   * flag; null means GM-owned) on both sides — never Foundry's isOwner, which
+   * a GM has on every document and which used to list every player's
+   * character under "your characters". `include` lets the journal section
+   * drop folder members.
    * @returns {Promise<Array<{id: string, name: string}>>}
    */
-  static async _candidatesFor(packId, worldCollection) {
+  static async _candidatesFor(packId, worldCollection, include = () => true) {
     const byId = new Map();
 
     for (const doc of worldCollection) {
-      if (!doc.isOwner) continue;
+      if (!doc.isOwner || !SyncRegistry.isGateUserFor(doc)) continue;
       if (!SyncRegistry.isEnrolled(doc)) continue;
+      if (!include(doc)) continue;
       const id = doc.getFlag('omnipresence', 'id');
       if (id) byId.set(id, doc.name);
     }
@@ -51,7 +69,7 @@ export class DocPicker {
       for (const doc of docs) {
         const id = doc.getFlag('omnipresence', 'id');
         if (!id) continue;
-        if (doc.getFlag('omnipresence', 'ownerName') !== game.user.name) continue;
+        if (!SyncRegistry.isGateUserFor(doc)) continue;
         if (!byId.has(id)) byId.set(id, doc.name);
       }
     }
@@ -61,12 +79,43 @@ export class DocPicker {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  static _renderContent({ actors, journals }, mode, preselected) {
+  /**
+   * Root folders for the picker: local roots the user is eligible for, plus
+   * pack roots whose ownerName matches (null matches a GM). Deduped by root id.
+   */
+  static async _folderCandidates() {
+    const byId = new Map();
+    for (const f of game.folders) {
+      if (f.type !== 'JournalEntry' || !FolderSync._isStampedRoot(f)) continue;
+      const owner = f.getFlag('omnipresence', 'ownerName') ?? null;
+      if (!(game.user.isGM ? owner === null : owner === game.user.name)) continue;
+      byId.set(f.getFlag('omnipresence', 'id'), f.name);
+    }
+    const pack = game.packs.get(JournalSync.PACK_ID);
+    if (pack) {
+      for (const f of pack.folders) {
+        if (f._source.folder) continue;
+        if (f.getFlag('omnipresence', 'deleted') === true) continue;
+        const owner = f.getFlag('omnipresence', 'ownerName') ?? null;
+        if (!(game.user.isGM ? owner === null : owner === game.user.name)) continue;
+        if (!byId.has(f.id)) byId.set(f.id, f._source.name);
+      }
+    }
+    return [...byId.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  static _renderContent({ actors, journals, folders }, mode, preselected) {
     const esc = foundry.utils.escapeHTML;
     const L = key => game.i18n.localize(`OMNIPRESENCE.onboarding.${key}`);
 
     const isChecked = (kind, id) => {
       if (!preselected) return true;
+      if (kind === 'folder') {
+        // Absent folder list means "all" (never saved), so everything is checked.
+        return preselected.folderIds == null || preselected.folderIds.includes(id);
+      }
       const list = kind === 'journal' ? preselected.journalIds : preselected.actorIds;
       return Array.isArray(list) && list.includes(id);
     };
@@ -117,6 +166,8 @@ export class DocPicker {
       <p>${mode === 'manage' ? L('manageIntro') : L('intro')}</p>
       ${section(actors, 'actor', 'noneActors', 'actorsHeading')}
       ${section(journals, 'journal', 'noneJournals', 'journalsHeading')}
+      ${section(folders, 'folder', 'noneFolders', 'foldersHeading')}
+      ${folders.length ? `<p class="notes">${L('folderHint')}</p>` : ''}
       ${macrosFieldset}
     `;
   }
@@ -128,7 +179,7 @@ export class DocPicker {
    * scoping is legible rather than surprising.
    */
   static _wireControls(form) {
-    for (const kind of ['actor', 'journal']) {
+    for (const kind of ['actor', 'journal', 'folder']) {
       const list = form.querySelector(`[data-list="${kind}"]`);
       if (!list) continue; // empty section renders no controls
 
@@ -204,6 +255,13 @@ export class DocPicker {
           label: game.i18n.localize(confirmKey),
           default: true,
           callback: (event, button) => this._collect(button.form, mode)
+        },
+        {
+          // Explicit discard: resolves null exactly like closing the window,
+          // so callers change nothing (op-tb6).
+          action: 'cancel',
+          label: game.i18n.localize('OMNIPRESENCE.onboarding.cancel'),
+          callback: () => null
         }
       ],
       rejectClose: false
@@ -216,6 +274,7 @@ export class DocPicker {
     return {
       actorIds: checked('input[data-kind="actor"]:checked'),
       journalIds: checked('input[data-kind="journal"]:checked'),
+      folderIds: checked('input[data-kind="folder"]:checked'),
       // Manage mode has no macro row; the User Config toggle owns that pref.
       macros: mode === 'onboarding'
         ? form.querySelector('input[name="omnipresence-macros"]').checked

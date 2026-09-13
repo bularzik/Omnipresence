@@ -1,6 +1,7 @@
 import { SyncRegistry } from './sync-registry.js';
 import { SyncEngine } from './sync-engine.js';
 import { JournalSync } from './journal-sync.js';
+import { FolderSync } from './folder-sync.js';
 
 /**
  * Resolve the actor document id from a context-menu target that may be a
@@ -20,6 +21,25 @@ function getDocumentId(li) {
   return null;
 }
 
+/**
+ * Build a directory context-menu entry that works on both Foundry v13 and v14.
+ *
+ * v14 renamed the entry fields (`name`→`label`, `condition`→`visible`,
+ * `callback`→`onClick`) and logs a deprecation for the old names (removed in
+ * v16). v13 only reads the old names and ignores the new ones, and v14 reads
+ * the new names first, so supplying both keeps one entry shape for both
+ * versions. The v14 click handler receives `(event, target)` where v13 passed
+ * `(target)`; both forward the target element to the same callback.
+ */
+export function menuEntry({ name, icon, condition, callback }) {
+  return {
+    name, label: name,
+    icon,
+    condition, visible: condition,
+    callback, onClick: (_event, target) => callback(target)
+  };
+}
+
 /** Sync is available only when a compendium pack exists for the active system. */
 function syncAvailable() {
   return !!game.packs.get(SyncEngine.PACK_ID);
@@ -27,7 +47,7 @@ function syncAvailable() {
 
 export function registerContextMenu(entryOptions) {
   entryOptions.push(
-    {
+    menuEntry({
       name: 'OMNIPRESENCE.contextMenu.add',
       icon: '<i class="fas fa-link"></i>',
       condition: (li) => {
@@ -48,8 +68,8 @@ export function registerContextMenu(entryOptions) {
           : 'OMNIPRESENCE.notifications.enrolledQueued';
         ui.notifications.info(game.i18n.format(key, { name: actor.name }));
       }
-    },
-    {
+    }),
+    menuEntry({
       name: 'OMNIPRESENCE.contextMenu.remove',
       icon: '<i class="fas fa-unlink"></i>',
       condition: (li) => {
@@ -66,7 +86,7 @@ export function registerContextMenu(entryOptions) {
         await SyncRegistry.unenroll(actor);
         ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.unenrolled', { name: actor.name }));
       }
-    }
+    })
   );
 }
 
@@ -77,7 +97,7 @@ function journalSyncAvailable() {
 
 export function registerJournalContextMenu(entryOptions) {
   entryOptions.push(
-    {
+    menuEntry({
       name: 'OMNIPRESENCE.contextMenu.addJournal',
       icon: '<i class="fas fa-link"></i>',
       condition: (li) => {
@@ -98,8 +118,8 @@ export function registerJournalContextMenu(entryOptions) {
           : 'OMNIPRESENCE.notifications.enrolledQueued';
         ui.notifications.info(game.i18n.format(key, { name: journal.name }));
       }
-    },
-    {
+    }),
+    menuEntry({
       name: 'OMNIPRESENCE.contextMenu.removeJournal',
       icon: '<i class="fas fa-unlink"></i>',
       condition: (li) => {
@@ -116,6 +136,57 @@ export function registerJournalContextMenu(entryOptions) {
         await SyncRegistry.unenroll(journal);
         ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.unenrolled', { name: journal.name }));
       }
-    }
+    })
+  );
+}
+
+/**
+ * Resolve the Folder document for a folder-header context target. v13's
+ * ContextMenu passes the `.folder-header` element; the enclosing
+ * `.directory-item` carries `data-folder-id` (see DocumentDirectory's own
+ * _getFolderContextOptions, which uses the same closest() walk).
+ */
+function getFolder(header) {
+  const el = header instanceof HTMLElement ? header : header?.[0];
+  const li = el?.closest?.('.directory-item');
+  const id = li?.dataset?.folderId;
+  return id ? game.folders.get(id) : null;
+}
+
+export function registerFolderContextMenu(entryOptions) {
+  entryOptions.push(
+    menuEntry({
+      name: 'OMNIPRESENCE.contextMenu.addFolder',
+      icon: '<i class="fas fa-link"></i>',
+      condition: (header) => {
+        if (!journalSyncAvailable()) return false;
+        if (!SyncRegistry.isJournalSyncEnabled(game.user.id)) return false;
+        const folder = getFolder(header);
+        if (!folder || folder.type !== 'JournalEntry') return false;
+        if (FolderSync.isRoot(folder)) return false;
+        // Shown even when nested inside/around another root — markFolder
+        // then explains why it refuses, which keeps the rule discoverable.
+        return FolderSync.canManage(folder);
+      },
+      callback: async (header) => {
+        const folder = getFolder(header);
+        if (folder) await FolderSync.markFolder(folder);
+      }
+    }),
+    menuEntry({
+      name: 'OMNIPRESENCE.contextMenu.removeFolder',
+      icon: '<i class="fas fa-unlink"></i>',
+      condition: (header) => {
+        if (!journalSyncAvailable()) return false;
+        if (!SyncRegistry.isJournalSyncEnabled(game.user.id)) return false;
+        const folder = getFolder(header);
+        if (!folder || folder.type !== 'JournalEntry') return false;
+        return FolderSync.isRoot(folder) && FolderSync.canUnmark(folder);
+      },
+      callback: async (header) => {
+        const folder = getFolder(header);
+        if (folder) await FolderSync.unmarkFolder(folder);
+      }
+    })
   );
 }

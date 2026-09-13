@@ -10,7 +10,7 @@ npm test                              # run all unit tests (Node's built-in runn
 node --test tests/sync-logic.test.js  # run a single test file
 ```
 
-88 tests. Only the **pure** layer (`scripts/sync-logic.js`) is unit-tested —
+103 tests. Only the **pure** layer (`scripts/sync-logic.js`) is unit-tested —
 everything that touches Foundry globals (`game`, `Hooks`, `ui`, `ApplicationV2`)
 is not unit-testable and is covered by the Playwright suite below instead,
 plus manual verification for the onboarding dialog, which has no automated
@@ -25,9 +25,32 @@ npm run test:e2e                                    # full Playwright suite
 npx playwright test tests/e2e/allow-list.spec.js    # one spec
 ```
 
-30 tests across 9 spec files (`allow-list`, `embedded-sync`, `journal-sync`,
-`link-rewriting`, `map-pins`, `pack-staleness`, `sync-followups`,
-`sync-followups-2`, `user-config`).
+44 tests across 14 spec files (`allow-list`, `delete-reimport`,
+`embedded-sync`, `folder-membership`, `folder-pending`, `folder-sync`,
+`journal-sync`, `link-rewriting`, `macro-dangling`, `map-pins`,
+`pack-staleness`, `sync-followups`, `sync-followups-2`, `user-config`).
+
+`FOUNDRY_URL` overrides the server URL the e2e suite targets (default
+`http://localhost:30000`) — useful when a v13 test world runs on a
+non-default port, e.g. `FOUNDRY_URL=http://localhost:30013 npm run test:e2e`.
+Check which port a server is actually listening on with
+`curl -s http://localhost:<port>/api/status`.
+
+The suite runs unchanged against **Foundry v13 and v14** (`loginToFoundry`
+handles both join forms). A v14 install lives at `/Users/danbularzik/FoundryVTT-14`
+with its own copy of World B (cloned from the v13 world and migrated on first
+launch) and its own module copy at
+`/Users/danbularzik/FoundryVTT-14/Data/Data/modules/omnipresence`; both servers
+were started by hand with `--world=world-b --port=…`, so check `/api/status`
+for which version answers on which port. Verify a change on both before
+calling it done.
+
+Assertions on pack state poll for the expected outcome (`waitForPackState`,
+`expect.poll`) rather than sleeping a fixed budget — pushes are debounced and a
+loaded server (v14 full runs) blew past 4s. When you add a spec, poll; and pass
+`waitForFunction` its timeout as the **third** argument (`fn, null, { timeout })`
+— in second position it becomes the predicate's `arg` and the 10s action
+timeout applies instead.
 
 The e2e suite drives a **live Foundry server** — there are no fixtures or
 mocks. Before every run:
@@ -57,10 +80,28 @@ The specs assume these documents exist in World B:
 |---|---|---|
 | Actor "Omnipresence Test Actor" | `xpxoPgW6ThcdsfRW` | 39 items, 0 effects |
 | Item on that actor (nested-effect host) | `bQvPrEX9Ey8oVCYw` | 0 effects |
-| Journal "Omnipresence Test Journal" | omnipresence id `J18k6yVYeThQSRup` | 2 pages |
+| Journal "Omnipresence Test Campaign Record" | omnipresence id `J18k6yVYeThQSRup` | 2 pages |
 
 `embedded-sync.spec.js` asserts those baselines in `afterAll`, so a run that
 corrupts the world fails loudly rather than passing green.
+
+The fixture journal's second page is a `campaign-record.npc` page in the v13
+world, so that install needs the `campaign-record` module enabled or Foundry
+marks the page invalid and both journal-page specs fail. The v14 clone carries
+a plain text page there instead.
+
+Never write `null` into a hotbar slot from a spec (delete the key with
+`'hotbar.-=N': null`). Foundry accepts the null on write and then fails to load
+that User at the next login, which drops the user from the join screen and
+takes every later spec down with it.
+
+`folder-pending.spec.js` logs in as `User 1` and closes/reopens the GM session
+mid-test to exercise the no-GM pending path; it needs both accounts and no
+other GM client connected.
+
+`folder-sync.spec.js` and `folder-membership.spec.js` need no fixtures: each
+test builds an `Omni Folder Probe` tree, marks it, and removes both the world
+documents and the pack folders/journals in `finally`.
 
 ### Run the suite twice
 

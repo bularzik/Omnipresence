@@ -166,8 +166,14 @@ export class SyncEngine {
       const omnipresenceId = actor.getFlag('omnipresence', 'id');
       const compActor = compActors.find(d => d.getFlag('omnipresence', 'id') === omnipresenceId);
 
-      // Allow-list gate: never sync a doc the user did not opt into for this world.
-      if (!SyncRegistry.isDocSelected(game.user.id, 'actor', omnipresenceId)) continue;
+      // Gate on the OWNER's preference and allow-list (the user named by
+      // ownerName, or this GM for a GM-owned actor) — never on the acting
+      // GM's list, which would let a GM's picker silently stop a player's
+      // actor from syncing.
+      const gateUser = SyncRegistry.gateUser(actor.getFlag('omnipresence', 'ownerName') ?? null);
+      if (!gateUser) continue;
+      if (!SyncRegistry.isActorSyncEnabled(gateUser.id)) continue;
+      if (!SyncRegistry.isDocSelected(gateUser.id, 'actor', omnipresenceId)) continue;
 
       if (!compActor) {
         // No compendium entry — push local copy as master (GM only; no-op for players).
@@ -211,13 +217,12 @@ export class SyncEngine {
       // One malformed pack copy must not abort the remaining imports — or,
       // via ready's serial awaits, macro/journal sync and login healing.
       try {
-        const ownerName = compActor.getFlag('omnipresence', 'ownerName');
-        if (!ownerName) {
-          console.warn('Omnipresence | compendium actor has no ownerName, skipping auto-import:', compActor.name);
-          continue;
-        }
-
-        const matchingUser = game.users.find(u => u.name === ownerName);
+        // The gate user: the named owner, or this GM for a GM-owned copy (no
+        // ownerName). GM-owned documents import GM-only and are opted into
+        // through the GM's own allow-list, which is also what makes the
+        // documented delete-then-re-import contract hold for them (op-74f).
+        const ownerName = compActor.getFlag('omnipresence', 'ownerName') ?? null;
+        const matchingUser = SyncRegistry.gateUser(ownerName);
         if (!matchingUser) {
           console.warn('Omnipresence | no user named', ownerName, '— skipping auto-import of', compActor.name);
           continue;
@@ -231,7 +236,9 @@ export class SyncEngine {
         actorData.flags ??= {};
         actorData.flags.omnipresence ??= {};
         actorData.flags.omnipresence.localModifiedAt = actorData.flags.omnipresence.syncedAt;
-        actorData.ownership = { default: 0, [matchingUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER };
+        actorData.ownership = ownerName
+          ? { default: 0, [matchingUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER }
+          : { default: 0 };
 
         const created = await Actor.create(actorData, { keepId: true });
         await SyncRegistry.enroll(created);

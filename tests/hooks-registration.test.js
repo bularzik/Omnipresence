@@ -59,3 +59,61 @@ test('registers journal sync hooks (v13 names) via omnipresence.js', async () =>
     assert.ok(names.includes(h), `expected hook '${h}', got: ${names.join(', ')}`);
   }
 });
+
+test('registers folder sync hooks (v13 names) via omnipresence.js', async () => {
+  const onCalls = [];
+  globalThis.Hooks = {
+    on: (name, fn) => onCalls.push({ name, fn }),
+    once: () => {}
+  };
+  globalThis.foundry = {
+    applications: {
+      api: { ApplicationV2: class {}, HandlebarsApplicationMixin: (Base) => Base }
+    }
+  };
+
+  await import('../omnipresence.js?folder-hooks');
+
+  const names = onCalls.map((c) => c.name);
+  for (const h of ['getFolderContextOptions', 'createFolder', 'updateFolder', 'preDeleteFolder', 'deleteFolder', 'createJournalEntry']) {
+    assert.ok(names.includes(h), `expected hook '${h}', got: ${names.join(', ')}`);
+  }
+});
+
+// v14 renamed ContextMenuEntry fields (name→label, condition→visible,
+// callback→onClick) and deprecates the old names (removed in v16); v13 reads
+// only the old names. Every entry the module pushes must carry both shapes so
+// one build renders warning-free on either version, and the v14 onClick
+// (event, target) must reach the same callback as the v13 callback(target).
+test('directory context-menu entries carry both v13 and v14 field names', async () => {
+  const { menuEntry, registerContextMenu, registerJournalContextMenu, registerFolderContextMenu } =
+    await import('../scripts/context-menu.js');
+
+  for (const [label, register] of [
+    ['actor', registerContextMenu],
+    ['journal', registerJournalContextMenu],
+    ['folder', registerFolderContextMenu]
+  ]) {
+    const entryOptions = [];
+    register(entryOptions);
+    assert.ok(entryOptions.length >= 2, `${label} menu should push add/remove entries`);
+    for (const entry of entryOptions) {
+      assert.equal(typeof entry.name, 'string', `${label}: v13 name`);
+      assert.equal(entry.label, entry.name, `${label}: v14 label mirrors name`);
+      assert.equal(typeof entry.condition, 'function', `${label}: v13 condition`);
+      assert.equal(entry.visible, entry.condition, `${label}: v14 visible mirrors condition`);
+      assert.equal(typeof entry.callback, 'function', `${label}: v13 callback`);
+      assert.equal(typeof entry.onClick, 'function', `${label}: v14 onClick`);
+    }
+  }
+
+  // v14 calls onClick(event, target); v13 calls callback(target). Same handler.
+  const seen = [];
+  const entry = menuEntry({
+    name: 'X', icon: '', condition: () => true, callback: (target) => seen.push(target)
+  });
+  const target = { id: 'li' };
+  entry.onClick({ type: 'click' }, target);
+  entry.callback(target);
+  assert.deepEqual(seen, [target, target]);
+});

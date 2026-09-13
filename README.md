@@ -106,6 +106,7 @@ Because only a GM can write to the shared compendium, players resolve conflicts 
   mirrored onto scenes with the **same name** in other worlds (created, moved,
   and deleted to match), applied at GM login. Rename a scene and its pins stop
   syncing for it — nothing is deleted, they simply stop matching.
+- Documents with no player owner (GM-owned NPCs, GM journals) sync for the GM: they cross into another world once the GM checks them in *Manage synced documents* there. Player-owned documents are gated by their owner's selection, never the GM's.
 - Macro sync is all-or-nothing per user — there is no per-macro opt-in. If you want a macro local-only, keep it off your hotbar.
 - Sync preferences are world-scoped. A preference set in World A does not carry to World B automatically, since user IDs differ between worlds.
 

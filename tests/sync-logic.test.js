@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates } from '../scripts/sync-logic.js';
+import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, isFolderSelected, isGateUser } from '../scripts/sync-logic.js';
 
 const T0 = '2026-06-14T10:00:00.000Z';
 const T1 = '2026-06-14T11:00:00.000Z';
@@ -732,4 +732,132 @@ test('filterCandidates: does not mutate or alias the input array', () => {
   const result = filterCandidates(items, '');
   result.push({ id: 'c', name: 'Ghost' });
   assert.equal(items.length, 1);
+});
+
+// --- Journal folder sync: tree helpers -------------------------------------
+
+test('findSyncedRootId: nearest root ancestor, self included', () => {
+  const folders = new Map([
+    ['r', { _id: 'r', folder: null, flags: { omnipresence: { id: 'ROOT', root: true } } }],
+    ['s', { _id: 's', folder: 'r', flags: { omnipresence: { id: 'SUB', rootId: 'ROOT' } } }],
+    ['x', { _id: 'x', folder: null, flags: {} }]
+  ]);
+  assert.equal(findSyncedRootId('s', folders), 'ROOT');
+  assert.equal(findSyncedRootId('r', folders), 'ROOT');
+  assert.equal(findSyncedRootId('x', folders), null);
+  assert.equal(findSyncedRootId(null, folders), null);
+  assert.equal(findSyncedRootId('missing', folders), null);
+});
+
+test('findSyncedRootId: tolerates a parent cycle', () => {
+  const folders = new Map([
+    ['a', { _id: 'a', folder: 'b', flags: {} }],
+    ['b', { _id: 'b', folder: 'a', flags: {} }]
+  ]);
+  assert.equal(findSyncedRootId('a', folders), null);
+});
+
+test('collectFolderTree: subtree in depth order plus member journal ids', () => {
+  const folders = [
+    { _id: 'b', folder: 'a', name: 'B' },
+    { _id: 'r', folder: null, name: 'Root' },
+    { _id: 'a', folder: 'r', name: 'A' },
+    { _id: 'other', folder: null, name: 'Other' }
+  ];
+  const journals = [
+    { _id: 'j1', folder: 'r' },
+    { _id: 'j2', folder: 'b' },
+    { _id: 'j3', folder: 'other' },
+    { _id: 'j4', folder: null }
+  ];
+  const { folders: tree, journalIds } = collectFolderTree('r', folders, journals);
+  assert.deepEqual(tree.map(f => f._id), ['r', 'a', 'b']);
+  assert.deepEqual(journalIds, ['j1', 'j2']);
+});
+
+test('collectFolderTree: unknown root → empty', () => {
+  assert.deepEqual(collectFolderTree('nope', [{ _id: 'r', folder: null }], []), { folders: [], journalIds: [] });
+});
+
+test('diffFolderTree: creates parents first, updates changed, deletes children first', () => {
+  const source = [
+    { id: 'B', parentId: 'A', name: 'b', color: null, sorting: 'a', sort: 0 },
+    { id: 'A', parentId: null, name: 'a', color: '#ff0000', sorting: 'a', sort: 0 },
+    { id: 'C', parentId: null, name: 'c-renamed', color: null, sorting: 'm', sort: 5 }
+  ];
+  const target = [
+    { id: 'C', parentId: null, name: 'c', color: null, sorting: 'm', sort: 5 },
+    { id: 'D', parentId: 'C', name: 'd', color: null, sorting: 'a', sort: 0 },
+    { id: 'E', parentId: 'D', name: 'e', color: null, sorting: 'a', sort: 0 }
+  ];
+  const { toCreate, toUpdate, toDelete } = diffFolderTree(source, target);
+  assert.deepEqual(toCreate.map(n => n.id), ['A', 'B']);
+  assert.deepEqual(toUpdate.map(n => n.id), ['C']);
+  assert.deepEqual(toDelete, ['E', 'D']);
+});
+
+test('diffFolderTree: identical trees produce no work; undefined and null color are equal', () => {
+  const a = [{ id: 'A', parentId: null, name: 'a', color: undefined, sorting: 'a', sort: 0 }];
+  const b = [{ id: 'A', parentId: null, name: 'a', color: null, sorting: 'a', sort: 0 }];
+  assert.deepEqual(diffFolderTree(a, b), { toCreate: [], toUpdate: [], toDelete: [] });
+});
+
+test('diffFolderTree: a reparented node is an update', () => {
+  const source = [
+    { id: 'A', parentId: null, name: 'a', color: null, sorting: 'a', sort: 0 },
+    { id: 'B', parentId: 'A', name: 'b', color: null, sorting: 'a', sort: 0 }
+  ];
+  const target = [
+    { id: 'A', parentId: null, name: 'a', color: null, sorting: 'a', sort: 0 },
+    { id: 'B', parentId: null, name: 'b', color: null, sorting: 'a', sort: 0 }
+  ];
+  assert.deepEqual(diffFolderTree(source, target).toUpdate.map(n => n.id), ['B']);
+});
+
+// --- Journal folder sync: membership / tombstones / gating -----------------
+
+test('classifyMembership: the five outcomes', () => {
+  assert.equal(classifyMembership({ viaFolder: null, rootId: null }), 'none');
+  assert.equal(classifyMembership({ viaFolder: null, rootId: 'R' }), 'enter');
+  assert.equal(classifyMembership({ viaFolder: 'R', rootId: null }), 'leave');
+  assert.equal(classifyMembership({ viaFolder: 'R', rootId: 'R' }), 'stay');
+  assert.equal(classifyMembership({ viaFolder: 'R', rootId: 'Q' }), 'switch');
+  assert.equal(classifyMembership({ viaFolder: undefined, rootId: undefined }), 'none');
+});
+
+test('resolveTombstoneAction: deleted → delete, removed → detach, absent → push', () => {
+  const tombstones = {
+    a: { reason: 'deleted', at: '2026-09-12T00:00:00.000Z' },
+    b: { reason: 'removed', at: '2026-09-12T00:00:00.000Z' },
+    c: { reason: 'bogus' }
+  };
+  assert.equal(resolveTombstoneAction(tombstones, 'a'), 'delete');
+  assert.equal(resolveTombstoneAction(tombstones, 'b'), 'detach');
+  assert.equal(resolveTombstoneAction(tombstones, 'c'), 'push');
+  assert.equal(resolveTombstoneAction(tombstones, 'zzz'), 'push');
+  assert.equal(resolveTombstoneAction(undefined, 'a'), 'push');
+});
+
+test('isFolderSelected: absent list admits everything, a list gates by membership', () => {
+  assert.equal(isFolderSelected('R', null), true);
+  assert.equal(isFolderSelected('R', undefined), true);
+  assert.equal(isFolderSelected('R', ['R']), true);
+  assert.equal(isFolderSelected('R', []), false);
+  assert.equal(isFolderSelected('R', ['Q']), false);
+  assert.equal(isFolderSelected('', null), false);
+});
+
+test('isGateUser: a named owner gates their own document', () => {
+  assert.equal(isGateUser({ ownerName: 'User 1', isGM: false, userName: 'User 1' }), true);
+  assert.equal(isGateUser({ ownerName: 'User 1', isGM: false, userName: 'User 2' }), false);
+});
+
+test('isGateUser: a GM does not gate a player-owned document', () => {
+  assert.equal(isGateUser({ ownerName: 'User 1', isGM: true, userName: 'Gamemaster' }), false);
+});
+
+test('isGateUser: a document with no ownerName is GM-owned', () => {
+  assert.equal(isGateUser({ ownerName: null, isGM: true, userName: 'Gamemaster' }), true);
+  assert.equal(isGateUser({ ownerName: undefined, isGM: true, userName: 'Gamemaster' }), true);
+  assert.equal(isGateUser({ ownerName: null, isGM: false, userName: 'User 1' }), false);
 });

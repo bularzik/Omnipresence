@@ -89,7 +89,8 @@ export function registerUserConfigInjection() {
 
         await SyncRegistry.setSelection(game.user.id, {
           actorIds: result.actorIds,
-          journalIds: result.journalIds
+          journalIds: result.journalIds,
+          folderIds: result.folderIds
         });
 
         // A newly added document only auto-imports via the GM-gated section
@@ -98,9 +99,21 @@ export function registerUserConfigInjection() {
         // a player's newly added document waits for the next GM login.
         // Removals need no action (the doc simply stops syncing and its
         // local copy is left untouched).
+        // When before.folderIds was null everything was already admitted, so a
+        // newly checked folder is not an addition.
+        const beforeFolders = before.folderIds ?? [];
         const added =
           result.actorIds.some(id => !before.actorIds.includes(id)) ||
-          result.journalIds.some(id => !before.journalIds.includes(id));
+          result.journalIds.some(id => !before.journalIds.includes(id)) ||
+          (before.folderIds !== null && result.folderIds.some(id => !beforeFolders.includes(id)));
+
+        // Removals-only saves used to give no feedback at all (op-tb6). The
+        // write is wholesale: the list is re-based to the rendered rows, so an
+        // id whose document is neither local nor in the pack is dropped —
+        // intended, such a doc cannot auto-import anyway.
+        if (!added) {
+          ui.notifications.info(game.i18n.localize('OMNIPRESENCE.notifications.manageSavedRemovedOnly'));
+        }
 
         if (added) {
           // The selection write above already succeeded; a failure here means

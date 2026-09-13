@@ -2,7 +2,8 @@ import { SyncRegistry } from './scripts/sync-registry.js';
 import { SyncEngine } from './scripts/sync-engine.js';
 import { MacroSync } from './scripts/macro-sync.js';
 import { JournalSync } from './scripts/journal-sync.js';
-import { registerContextMenu, registerJournalContextMenu } from './scripts/context-menu.js';
+import { registerContextMenu, registerJournalContextMenu, registerFolderContextMenu } from './scripts/context-menu.js';
+import { FolderSync } from './scripts/folder-sync.js';
 import { OmnipresenceDashboard } from './scripts/gm-dashboard.js';
 import { registerUserConfigInjection } from './scripts/user-config.js';
 import { LinkRewriter } from './scripts/link-rewriter.js';
@@ -61,6 +62,7 @@ Hooks.once('ready', async () => {
     SyncEngine.cancelPending();
     JournalSync.cancelPending();
     MacroSync.cancelPending();
+    FolderSync.cancelPending();
   });
 });
 
@@ -78,12 +80,14 @@ Hooks.on('updateActor', (actor, changes, options, userId) => {
   if (game.user.isGM) SyncEngine.debouncedPush(actor);
 });
 
-Hooks.on('deleteActor', (actor, options, userId) => {
-  if (userId !== game.user.id) return;
-  if (actor.pack) return; // deleting a pack copy must not unenroll the world doc
-  if (!SyncRegistry.isEnrolled(actor)) return;
-  SyncRegistry.unenroll(actor);
-});
+// Deleting an enrolled actor is deliberately NOT an unenroll (README, Notes):
+// the pack copy stays and the actor is re-imported at the next login, so an
+// accidental delete recovers. Unenrolling here would also strip the owner's
+// allow-list entry and block that re-import for good. (An earlier version
+// called unenroll from this hook; it silently rejected because the document
+// was already gone, which is the only reason the contract held — op-74f.)
+// Folder members are the exception and are handled in deleteJournalEntry.
+Hooks.on('deleteActor', (_actor, _options, _userId) => {});
 
 // v13 renamed directory context-menu hooks to get{DocumentName}ContextOptions;
 // the v12 name (getActorDirectoryEntryContext) no longer fires. The callback
@@ -123,20 +127,43 @@ Hooks.on('updateUser', (user, changes, options, _userId) => {
   MacroSync.handleHotbarChange(user);
 });
 
-Hooks.on('updateJournalEntry', (journal, _changes, options, userId) => {
+// A player queued a folder mark/unmark or a member delete while this GM is
+// connected: honour it now instead of at the next login. Pending writes are
+// deliberately NOT omnipresenceInternal so this fires; the GM's own clears
+// use `-=` keys (null values) and an empty array, which do not match here.
+Hooks.on('updateUser', (_user, changes, _options, _userId) => {
+  if (!game.user.isGM) return;
+  const omni = changes.flags?.omnipresence;
+  if (!omni) return;
+  const hasPendingRoot = Object.values(omni.pendingRoots ?? {}).some(v => v && typeof v === 'object');
+  const hasPendingDelete = Array.isArray(omni.pendingDeletes) && omni.pendingDeletes.length > 0;
+  if (hasPendingRoot || hasPendingDelete) FolderSync.materializePending().catch(err => console.error('Omnipresence | pending folder materialize failed', err));
+});
+
+Hooks.on('updateJournalEntry', (journal, changes, options, userId) => {
   if (options?.omnipresenceInternal) return;
   if (journal.pack) return;
+  // Folder membership first: a move into/out of a synced folder enrolls or
+  // unenrolls, and the ordinary dirty-mark/push below must see that state.
+  if ('folder' in changes) {
+    FolderSync.handleMemberMove(journal, changes, options, userId)
+      .catch(err => console.error('Omnipresence | updateJournalEntry (folder) handling failed', err));
+  }
   if (!SyncRegistry.isEnrolled(journal)) return;
   if (!SyncRegistry.isJournalSyncEnabled(userId)) return;
   if (userId === game.user.id) JournalSync.trackLocalModification(journal);
   if (game.user.isGM) JournalSync.debouncedPush(journal);
 });
 
-Hooks.on('deleteJournalEntry', (journal, _options, userId) => {
-  if (userId !== game.user.id) return;
+Hooks.on('deleteJournalEntry', (journal, options, userId) => {
   if (journal.pack) return; // deleting a pack copy must not unenroll the world doc
-  if (!SyncRegistry.isEnrolled(journal)) return;
-  SyncRegistry.unenroll(journal);
+  // Folder members: tombstone + pack delete (or a pending record for a GM).
+  if (journal.getFlag('omnipresence', 'viaFolder')) {
+    FolderSync.handleMemberDelete(journal, options, userId)
+      .catch(err => console.error('Omnipresence | deleteJournalEntry handling failed', err));
+    return;
+  }
+  // Individually enrolled journals keep the re-import contract (see deleteActor).
 });
 
 // Page changes don't fire updateJournalEntry — route them to the owning journal.
@@ -166,3 +193,27 @@ Hooks.on('updateNote', onNoteUpdate);
 Hooks.on('getJournalEntryContextOptions', (_directory, entryOptions) => {
   registerJournalContextMenu(entryOptions);
 });
+
+// --- Journal folder sync -----------------------------------------------------
+// Folder hooks: create/delete fire (doc, options, userId); update fires
+// (doc, changes, options, userId). preDeleteFolder captures the subtree before
+// Foundry removes or moves it, because deleteFolder fires too late to see it.
+Hooks.on('getFolderContextOptions', (_directory, entryOptions) => {
+  registerFolderContextMenu(entryOptions);
+});
+Hooks.on('createFolder', (folder, options, userId) =>
+  FolderSync.handleFolderCreate(folder, options, userId)
+    .catch(err => console.error('Omnipresence | createFolder handling failed', err)));
+Hooks.on('updateFolder', (folder, changes, options, userId) =>
+  FolderSync.handleFolderUpdate(folder, changes, options, userId)
+    .catch(err => console.error('Omnipresence | updateFolder handling failed', err)));
+Hooks.on('preDeleteFolder', (folder, options, userId) =>
+  FolderSync.capturePreDelete(folder, options, userId));
+Hooks.on('deleteFolder', (folder, options, userId) =>
+  FolderSync.handleFolderDelete(folder, options, userId)
+    .catch(err => console.error('Omnipresence | deleteFolder handling failed', err)));
+// A journal created inside a synced folder joins the sync (the single-journal
+// path never enrolled on create; this fires only for folder members).
+Hooks.on('createJournalEntry', (journal, options, userId) =>
+  FolderSync.handleMemberCreate(journal, options, userId)
+    .catch(err => console.error('Omnipresence | createJournalEntry handling failed', err)));
