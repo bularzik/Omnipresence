@@ -1,11 +1,16 @@
 import { SyncRegistry } from './sync-registry.js';
 import { JournalSync } from './journal-sync.js';
+import { LinkRewriter } from './link-rewriter.js';
 import {
   collectFolderTree,
   diffFolderTree,
   findSyncedRootId,
   classifyMembership,
-  resolveTombstoneAction
+  resolveTombstoneAction,
+  portableFolderFlags,
+  mergeFolderFlags,
+  canonicalizeLinks,
+  localizeLinks
 } from './sync-logic.js';
 
 const DEBOUNCE_MS = 2000;
@@ -506,7 +511,10 @@ export class FolderSync {
 
         // 2. / 3. Import the tree, or make the local tree match the pack.
         if (!root) root = await this._importTree(packRoot, rootId, ownerName);
-        else await this._applyTree(root, rootId);
+        else {
+          await this._applyTree(root, rootId);
+          await this._pushFlagsToUnmarkedPack(root, rootId);
+        }
 
         // 6. Members.
         await this._reconcileMembers(root, rootId, packRoot, compDocs);
@@ -540,12 +548,16 @@ export class FolderSync {
   /** Create the root at the top level plus its subfolders, stamped, and register it. */
   static async _importTree(packRoot, rootId, ownerName) {
     const nodes = this._packTreeNodes(rootId); // parents first
+    const omniToLocal = LinkRewriter.buildOmniToLocal();
     const localByOmni = new Map();
     for (const node of nodes) {
       const isRoot = node.id === rootId;
-      const flags = isRoot
-        ? { omnipresence: { id: rootId, enrolled: true, root: true, ownerName, syncedAt: new Date().toISOString() } }
-        : { omnipresence: { id: node.id, rootId } };
+      const flags = {
+        ...this._localizeFolderFlags(node.flags, omniToLocal),
+        omnipresence: isRoot
+          ? { id: rootId, enrolled: true, root: true, ownerName, syncedAt: new Date().toISOString() }
+          : { id: node.id, rootId }
+      };
       const created = await this._FolderClass.create({
         name: node.name,
         type: FOLDER_TYPE,
@@ -583,6 +595,7 @@ export class FolderSync {
       diffFolderTree(this._packTreeNodes(rootId), this._localTreeNodes(root));
     // One map, kept current as folders are created (parents come first).
     const local = this._localFoldersByOmni();
+    const omniToLocal = LinkRewriter.buildOmniToLocal();
     for (const node of toCreate) {
       if (node.id === rootId) continue;
       const created = await this._FolderClass.create({
@@ -592,7 +605,7 @@ export class FolderSync {
         sorting: node.sorting,
         sort: node.sort,
         folder: (local.get(node.parentId) ?? root).id,
-        flags: { omnipresence: { id: node.id, rootId } }
+        flags: { ...this._localizeFolderFlags(node.flags, omniToLocal), omnipresence: { id: node.id, rootId } }
       }, { omnipresenceInternal: true });
       if (created) local.set(node.id, created);
     }
@@ -601,7 +614,10 @@ export class FolderSync {
       if (!target) continue;
       const data = { name: node.name, color: node.color, sorting: node.sorting, sort: node.sort };
       if (node.id !== rootId) data.folder = (local.get(node.parentId) ?? root).id;
-      await target.update(data, { omnipresenceInternal: true });
+      // node.flags is the resolved result (diffFolderTree): complete, so the
+      // update is non-recursive and a scope removed at the source goes here too.
+      data.flags = mergeFolderFlags(this._localizeFolderFlags(node.flags, omniToLocal), target._source.flags);
+      await target.update(data, { omnipresenceInternal: true, recursive: false });
     }
     for (const id of toDelete) {
       const target = local.get(id);
@@ -857,6 +873,12 @@ export class FolderSync {
 
   // --- pack tree ------------------------------------------------------------
 
+  /**
+   * A pack folder's `flags` node field is its portable module flags (canonical
+   * ids). `flagsPartial` marks a folder written before module flags synced (no
+   * `moduleFlags` marker): its flags are a merged, incomplete view - see
+   * resolveFolderFlags.
+   */
   static _nodeFromPackFolder(f) {
     const src = f._source;
     return {
@@ -865,8 +887,15 @@ export class FolderSync {
       name: src.name,
       color: src.color ?? null,
       sorting: src.sorting,
-      sort: src.sort ?? 0
+      sort: src.sort ?? 0,
+      flags: portableFolderFlags(src.flags),
+      flagsPartial: src.flags?.omnipresence?.moduleFlags !== true
     };
+  }
+
+  /** Portable folder flags in this world's ids. Links to docs not yet imported stay canonical until LinkRewriter.localizeAll. */
+  static _localizeFolderFlags(flags, omniToLocal) {
+    return localizeLinks({ flags: flags ?? {} }, omniToLocal).flags;
   }
 
   /** Pack folders under (and including) a pack root as TreeNodes, parents first. */
@@ -902,6 +931,7 @@ export class FolderSync {
       const omni = r.flags?.omnipresence?.id;
       if (omni) omniByLocal.set(r._id, omni);
     }
+    const localToOmni = LinkRewriter.buildLocalToOmni();
     return folders
       .filter(r => omniByLocal.has(r._id))
       .map(r => ({
@@ -910,11 +940,21 @@ export class FolderSync {
         name: r.name,
         color: r.color ?? null,
         sorting: r.sorting,
-        sort: r.sort ?? 0
+        sort: r.sort ?? 0,
+        flags: canonicalizeLinks({ flags: portableFolderFlags(r.flags) }, localToOmni).flags
       }));
   }
 
-  static _packDataFromNode(node) {
+  /**
+   * Pack folder data for a local node. `flags` is complete - the node's module
+   * flags plus the pack folder's own omnipresence scope - so it is written with
+   * a non-recursive update. New pack folders get the `moduleFlags` marker; an
+   * existing one keeps whatever it had (a pre-marker folder stays partial).
+   */
+  static _packDataFromNode(node, packFlags) {
+    const flags = mergeFolderFlags(node.flags ?? {}, packFlags ?? {});
+    const marked = packFlags === undefined || packFlags.omnipresence?.moduleFlags === true;
+    if (marked) flags.omnipresence = { ...flags.omnipresence, moduleFlags: true };
     return {
       _id: node.id,
       name: node.name,
@@ -922,7 +962,8 @@ export class FolderSync {
       folder: node.parentId,
       color: node.color,
       sorting: node.sorting,
-      sort: node.sort
+      sort: node.sort,
+      flags
     };
   }
 
@@ -946,23 +987,35 @@ export class FolderSync {
     const packOpts = { pack: this.PACK_ID, omnipresenceInternal: true };
     if (toCreate.length) {
       const datas = toCreate.map(node => {
-        const data = { ...this._packDataFromNode(node), _id: node.id };
-        if (node.id === rootId) data.flags = { omnipresence: { id: rootId, ownerName, tombstones: {} } };
+        const data = this._packDataFromNode(node);
+        if (node.id === rootId) data.flags.omnipresence = { ...data.flags.omnipresence, id: rootId, ownerName, tombstones: {} };
         return data;
       });
       await this._FolderClass.createDocuments(datas, { ...packOpts, keepId: true });
     }
-    const updates = toUpdate.map(node => ({ ...this._packDataFromNode(node), _id: node.id }));
+    // Every update carries complete flags (see _packDataFromNode), so the
+    // batch is non-recursive: a module scope removed locally is removed here.
+    const updates = toUpdate.map(node => this._packDataFromNode(node, pack.folders.get(node.id)?._source.flags ?? {}));
     // ownerName is pushed whenever it differs from the pack root, not only
     // when another root field changed (op-4r8).
     const packRoot = pack.folders.get(rootId);
     if (packRoot && (packRoot.getFlag('omnipresence', 'ownerName') ?? null) !== ownerName) {
       let rootUpdate = updates.find(u => u._id === rootId);
-      if (!rootUpdate) updates.push(rootUpdate = { _id: rootId });
-      rootUpdate['flags.omnipresence.ownerName'] = ownerName;
+      if (!rootUpdate) updates.push(rootUpdate = { _id: rootId, flags: structuredClone(packRoot._source.flags ?? {}) });
+      rootUpdate.flags.omnipresence = { ...rootUpdate.flags.omnipresence, ownerName };
     }
-    if (updates.length) await this._FolderClass.updateDocuments(updates, packOpts);
+    if (updates.length) await this._FolderClass.updateDocuments(updates, { ...packOpts, recursive: false });
     if (toDelete.length) await this._FolderClass.deleteDocuments(toDelete, packOpts);
+  }
+
+  /**
+   * GM only. Pack folders written before module-flag sync (partial) only gain
+   * this world's flags when it pushes, and a pre-upgrade root may never be
+   * edited again - so offer them at reconcile. A no-op once the union holds.
+   */
+  static async _pushFlagsToUnmarkedPack(root, rootId) {
+    if (!this._packTreeNodes(rootId).some(n => n.flagsPartial)) return;
+    await this._syncPackTree(root, rootId);
   }
 
   /** GM only: delete a root's pack folders and every pack journal inside them. */

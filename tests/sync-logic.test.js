@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, isFolderSelected, isGateUser } from '../scripts/sync-logic.js';
+import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, isFolderSelected, isGateUser, portableFolderFlags, mergeFolderFlags, resolveFolderFlags } from '../scripts/sync-logic.js';
 
 const T0 = '2026-06-14T10:00:00.000Z';
 const T1 = '2026-06-14T11:00:00.000Z';
@@ -860,4 +860,99 @@ test('isGateUser: a document with no ownerName is GM-owned', () => {
   assert.equal(isGateUser({ ownerName: null, isGM: true, userName: 'Gamemaster' }), true);
   assert.equal(isGateUser({ ownerName: undefined, isGM: true, userName: 'Gamemaster' }), true);
   assert.equal(isGateUser({ ownerName: null, isGM: false, userName: 'User 1' }), false);
+});
+
+// --- folder module flags (other modules' folder flags cross worlds) --------
+
+const CC = 'mej-campaign-companion';
+
+test('portableFolderFlags: drops the omnipresence scope, keeps other modules', () => {
+  const flags = { omnipresence: { id: 'r', root: true }, core: { x: 1 }, [CC]: { campaign: { ownershipDefault: 2 } } };
+  assert.deepEqual(portableFolderFlags(flags), { core: { x: 1 }, [CC]: { campaign: { ownershipDefault: 2 } } });
+  assert.deepEqual(flags.omnipresence, { id: 'r', root: true }, 'input not mutated');
+});
+
+test('portableFolderFlags: campaign contributors are world-local and never leave the world', () => {
+  const flags = { [CC]: { campaign: { ownershipDefault: 2, contributors: { userIds: ['u1'], groupIds: [] } } } };
+  assert.deepEqual(portableFolderFlags(flags), { [CC]: { campaign: { ownershipDefault: 2 } } });
+  assert.deepEqual(flags[CC].campaign.contributors, { userIds: ['u1'], groupIds: [] }, 'input not mutated');
+});
+
+test('portableFolderFlags: missing or empty flags → {}', () => {
+  assert.deepEqual(portableFolderFlags(undefined), {});
+  assert.deepEqual(portableFolderFlags({ omnipresence: { id: 'r' } }), {});
+});
+
+test('mergeFolderFlags: source module flags replace local ones; local omnipresence and world-local keys survive', () => {
+  const local = {
+    omnipresence: { id: 'r', root: true },
+    'stale-module': { a: 1 },
+    [CC]: { campaign: { ownershipDefault: 0, contributors: { userIds: ['b1'], groupIds: ['g'] } } }
+  };
+  const source = { [CC]: { campaign: { ownershipDefault: 2, defaultTimelineId: 'tttttttttttttttt' } } };
+  assert.deepEqual(mergeFolderFlags(source, local), {
+    omnipresence: { id: 'r', root: true },
+    [CC]: { campaign: { ownershipDefault: 2, defaultTimelineId: 'tttttttttttttttt', contributors: { userIds: ['b1'], groupIds: ['g'] } } }
+  });
+});
+
+test('mergeFolderFlags: a folder that is no longer a campaign loses its local contributors too', () => {
+  const local = { omnipresence: { id: 'r' }, [CC]: { campaign: { contributors: { userIds: ['b1'] } } } };
+  assert.deepEqual(mergeFolderFlags({}, local), { omnipresence: { id: 'r' } });
+});
+
+test('diffFolderTree: a module-flag change alone is an update; key order does not matter', () => {
+  const base = { id: 'R', parentId: null, name: 'Camp', color: null, sorting: 'a', sort: 0 };
+  const flagged = { ...base, flags: { [CC]: { campaign: { ownershipDefault: 2 } } } };
+  assert.deepEqual(diffFolderTree([flagged], [{ ...base, flags: {} }]).toUpdate.map(n => n.id), ['R']);
+  assert.deepEqual(diffFolderTree([{ ...base, flags: {} }], [flagged]).toUpdate.map(n => n.id), ['R']);
+  const a = { ...base, flags: { x: { p: 1, q: 2 } } };
+  const b = { ...base, flags: { x: { q: 2, p: 1 } } };
+  assert.deepEqual(diffFolderTree([a], [b]).toUpdate, []);
+});
+
+test('canonicalize/localize: campaign defaultTimelineId (a bare journal id) is translated', () => {
+  const L2O = new Map([['llllllllllllllll', 'oooooooooooooooo']]);
+  const O2L = new Map([['oooooooooooooooo', 'LLLLLLLLLLLLLLLL']]);
+  const data = { flags: { [CC]: { campaign: { ownershipDefault: 2, defaultTimelineId: 'llllllllllllllll' } } } };
+  const canon = canonicalizeLinks(data, L2O);
+  assert.equal(canon.flags[CC].campaign.defaultTimelineId, 'oooooooooooooooo');
+  assert.equal(localizeLinks(canon, O2L).flags[CC].campaign.defaultTimelineId, 'LLLLLLLLLLLLLLLL');
+  assert.equal(data.flags[CC].campaign.defaultTimelineId, 'llllllllllllllll', 'input not mutated');
+});
+
+test('canonicalize: a campaign flag without a default timeline passes through', () => {
+  const data = { flags: { [CC]: { campaign: { ownershipDefault: 2 } } } };
+  assert.deepEqual(canonicalizeLinks(data, new Map()), data);
+});
+
+test('resolveFolderFlags: a marked pack folder is authoritative - source replaces target', () => {
+  const camp = { [CC]: { campaign: { ownershipDefault: 2 } } };
+  assert.deepEqual(resolveFolderFlags({}, camp, false), {}, 'a removed scope is removed');
+  assert.deepEqual(resolveFolderFlags(camp, { other: { a: 1 } }, false), camp);
+});
+
+test('resolveFolderFlags: a pre-marker (partial) pack folder merges per scope and never removes', () => {
+  const camp = { [CC]: { campaign: { ownershipDefault: 2 } } };
+  // World B (only a scene-packer stamp) pushes first after the upgrade:
+  // the pack gains B's stamp, loses nothing.
+  const pack = resolveFolderFlags({ 'scene-packer': { hash: 'B' } }, {}, true);
+  assert.deepEqual(pack, { 'scene-packer': { hash: 'B' } });
+  // World A pulls that: keeps its campaign, takes the pack's stamp.
+  const a = resolveFolderFlags(pack, { 'scene-packer': { hash: 'A' }, ...camp }, true);
+  assert.deepEqual(a, { 'scene-packer': { hash: 'B' }, ...camp });
+  // World A pushes: the pack now carries the campaign; B pulls it.
+  const pack2 = resolveFolderFlags(a, pack, true);
+  assert.deepEqual(pack2, a);
+  assert.deepEqual(resolveFolderFlags(pack2, { 'scene-packer': { hash: 'B' } }, true), a);
+});
+
+test('diffFolderTree: partial pack flags never strip local scopes on pull, and fill the pack on push', () => {
+  const base = { id: 'R', parentId: null, name: 'Camp', color: null, sorting: 'a', sort: 0 };
+  const local = { ...base, flags: { [CC]: { campaign: { ownershipDefault: 2 } } } };
+  const pack = { ...base, flags: {}, flagsPartial: true };
+  assert.deepEqual(diffFolderTree([pack], [local]).toUpdate, [], 'pull leaves local alone');
+  const push = diffFolderTree([local], [pack]).toUpdate;
+  assert.deepEqual(push.map(n => n.flags), [local.flags]);
+  assert.deepEqual(diffFolderTree([{ ...base, flags: {} }], [pack]).toUpdate, [], 'a world with nothing to add writes nothing');
 });

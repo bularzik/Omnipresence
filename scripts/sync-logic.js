@@ -324,11 +324,20 @@ function mejAdapter(scope, translateId) {
   return out;
 }
 
+// MEJ Campaign Companion marks a campaign with a Folder flag whose
+// `defaultTimelineId` is the BARE local id of a timeline journal inside it.
+function campaignCompanionAdapter(scope, translateId) {
+  const campaign = scope.campaign;
+  if (!campaign || typeof campaign !== 'object' || typeof campaign.defaultTimelineId !== 'string') return scope;
+  return { ...scope, campaign: { ...campaign, defaultTimelineId: translateId(campaign.defaultTimelineId) } };
+}
+
 // Per-module adapters for link storage the generic walk cannot see (bare local
 // ids without a Type. prefix). Each adapter receives the (already deep-walked)
 // flag-scope object and the bare-id translator, and returns a new scope object.
 const MODULE_ADAPTERS = {
-  'monks-enhanced-journal': mejAdapter
+  'monks-enhanced-journal': mejAdapter,
+  'mej-campaign-companion': campaignCompanionAdapter
 };
 
 /**
@@ -516,6 +525,56 @@ export function collectFolderTree(rootLocalId, folderRecords, journalRecords) {
 
 const FOLDER_SYNCED_FIELDS = ['parentId', 'name', 'color', 'sorting', 'sort'];
 
+// Folder flag paths ([scope, ...keys]) that stay in their own world even
+// though the rest of the scope syncs: they name world-local users/groups.
+const FOLDER_LOCAL_FLAG_PATHS = [
+  ['mej-campaign-companion', 'campaign', 'contributors']
+];
+
+function getPath(obj, path) {
+  let node = obj;
+  for (const k of path) {
+    if (!node || typeof node !== 'object' || !(k in node)) return undefined;
+    node = node[k];
+  }
+  return node;
+}
+
+/**
+ * The part of a folder's flags that crosses worlds: every module scope except
+ * omnipresence's own bookkeeping, minus FOLDER_LOCAL_FLAG_PATHS. Other modules
+ * key their folder-level identity off these flags (a campaign folder is only
+ * a campaign because of one), so dropping them loses that identity in every
+ * other world. Deep clone; input not mutated.
+ */
+export function portableFolderFlags(flags) {
+  const out = structuredClone(flags ?? {});
+  delete out.omnipresence;
+  for (const path of FOLDER_LOCAL_FLAG_PATHS) {
+    const parent = getPath(out, path.slice(0, -1));
+    if (parent && typeof parent === 'object') delete parent[path.at(-1)];
+  }
+  return out;
+}
+
+/**
+ * A folder's full flags after applying another world's portable flags:
+ * `source` wins for every module scope (a scope gone from source is gone
+ * here), while this folder's own omnipresence scope and world-local paths are
+ * kept - the latter only while their parent object still exists in source.
+ * Meant for a non-recursive update that replaces `flags` wholesale.
+ */
+export function mergeFolderFlags(source, localFlags) {
+  const out = structuredClone(source ?? {});
+  if (localFlags?.omnipresence !== undefined) out.omnipresence = structuredClone(localFlags.omnipresence);
+  for (const path of FOLDER_LOCAL_FLAG_PATHS) {
+    const value = getPath(localFlags, path);
+    const parent = getPath(out, path.slice(0, -1));
+    if (value !== undefined && parent && typeof parent === 'object') parent[path.at(-1)] = structuredClone(value);
+  }
+  return out;
+}
+
 // Depth of a node within its own list (unknown/cyclic parents stop the count).
 function treeDepth(node, byId) {
   let depth = 0;
@@ -530,11 +589,27 @@ function treeDepth(node, byId) {
 }
 
 /**
+ * The portable flags a folder should end up with after `source` is applied
+ * to `target`. Normally source replaces target outright. `partial` means the
+ * pack side predates module-flag sync (no `moduleFlags` marker): its flags
+ * are an incomplete, merged view, so the result is a scope-level union with
+ * source winning per scope and nothing removed - otherwise whichever world
+ * synced first after the upgrade would erase every other world's flags.
+ * Input not mutated.
+ */
+export function resolveFolderFlags(source, target, partial) {
+  if (!partial) return structuredClone(source ?? {});
+  return structuredClone({ ...(target ?? {}), ...(source ?? {}) });
+}
+
+/**
  * Diff two folder trees keyed by omnipresence id. `toCreate` and `toUpdate`
  * are source nodes (parents before children); `toDelete` is target ids
  * (children before parents), so callers can apply the result in order.
  * A node is an update when any of parentId/name/color/sorting/sort differ
- * (undefined and null compare equal).
+ * (undefined and null compare equal) or its portable `flags` would change.
+ * A toUpdate node's `flags` is the resolved result to write (see
+ * resolveFolderFlags; a node's `flagsPartial` marks a pre-marker pack folder).
  */
 export function diffFolderTree(sourceNodes, targetNodes) {
   const sourceById = new Map(sourceNodes.map(n => [n.id, n]));
@@ -548,8 +623,10 @@ export function diffFolderTree(sourceNodes, targetNodes) {
   for (const node of bySourceDepth) {
     const existing = targetById.get(node.id);
     if (!existing) { toCreate.push(node); continue; }
-    const changed = FOLDER_SYNCED_FIELDS.some(k => (existing[k] ?? null) !== (node[k] ?? null));
-    if (changed) toUpdate.push(node);
+    const flags = resolveFolderFlags(node.flags, existing.flags, !!(node.flagsPartial || existing.flagsPartial));
+    const changed = FOLDER_SYNCED_FIELDS.some(k => (existing[k] ?? null) !== (node[k] ?? null)) ||
+      !deepEqual(flags, existing.flags ?? {});
+    if (changed) toUpdate.push({ ...node, flags });
   }
 
   const toDelete = [...targetNodes]

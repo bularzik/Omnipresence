@@ -65,6 +65,18 @@ export class LinkRewriter {
         console.error('Omnipresence | localize failed for actor', actor.name, err);
       }
     }
+    // Synced journal folders carry module flags that can link to a member
+    // journal (a campaign's default timeline) imported after the folder.
+    // Only a GM can write folders; one GM is enough.
+    if (game.user.isGM && game.users.activeGM?.id === game.user.id) {
+      for (const folder of game.folders.filter(f => f.type === 'JournalEntry' && f.getFlag('omnipresence', 'id'))) {
+        try {
+          await this._localizeFolder(folder, map, canonicalIds);
+        } catch (err) {
+          console.error('Omnipresence | localize failed for folder', folder.name, err);
+        }
+      }
+    }
   }
 
   // JSON.stringify equality is valid here because rewriteDeep and the MEJ
@@ -96,6 +108,19 @@ export class LinkRewriter {
     if (pages.length) {
       await journal.updateEmbeddedDocuments(
         'JournalEntryPage', pages, { omnipresenceInternal: true, recursive: false }
+      );
+    }
+  }
+
+  static async _localizeFolder(folder, map, canonicalIds) {
+    const original = folder.toObject();
+    const raw = JSON.stringify(original.flags ?? {});
+    if (!canonicalIds.some(id => raw.includes(id))) return; // cheap screen
+    const localized = localizeLinks({ flags: original.flags }, map);
+    if (this._changed(original.flags, localized.flags)) {
+      await folder.update(
+        { flags: localized.flags },
+        { omnipresenceInternal: true, diff: false, recursive: false }
       );
     }
   }

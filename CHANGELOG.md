@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-26
+
+### Fixed
+- **Synced folders keep other modules' folder flags across worlds.** Folder
+  sync carried only a folder's name, colour and sort order, so anything a
+  module stored on the folder itself was lost in every other world — a
+  MEJ Campaign Companion campaign arrived as a plain folder (its pages came
+  across, but it was no longer a campaign). Folder flags from every module now
+  sync with the folder, including flag-only edits. A campaign's default
+  timeline is translated to the other world's copy; its contributor list names
+  world-local users, so it stays in its own world.
+- Folders synced before this release are upgraded without losing anything:
+  until the first sync writes them fresh, flags from each world are merged
+  (never removed), so whichever world syncs first cannot erase another's. On
+  such a folder, removing a module's flags does not propagate to other worlds.
+
 ## [0.7.0] - 2026-09-13
 
 ### Added
@@ -313,7 +329,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/publish` slash command and a GitHub Actions release workflow (manifest,
   download, and url fields for Foundry installation).
 
-[Unreleased]: https://github.com/bularzik/Omnipresence/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/bularzik/Omnipresence/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/bularzik/Omnipresence/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/bularzik/Omnipresence/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/bularzik/Omnipresence/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/bularzik/Omnipresence/compare/v0.5.1...v0.5.2

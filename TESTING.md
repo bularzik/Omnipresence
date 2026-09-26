@@ -10,7 +10,7 @@ npm test                              # run all unit tests (Node's built-in runn
 node --test tests/sync-logic.test.js  # run a single test file
 ```
 
-103 tests. Only the **pure** layer (`scripts/sync-logic.js`) is unit-tested —
+114 tests. Only the **pure** layer (`scripts/sync-logic.js`) is unit-tested —
 everything that touches Foundry globals (`game`, `Hooks`, `ui`, `ApplicationV2`)
 is not unit-testable and is covered by the Playwright suite below instead,
 plus manual verification for the onboarding dialog, which has no automated
@@ -25,8 +25,8 @@ npm run test:e2e                                    # full Playwright suite
 npx playwright test tests/e2e/allow-list.spec.js    # one spec
 ```
 
-44 tests across 14 spec files (`allow-list`, `delete-reimport`,
-`embedded-sync`, `folder-membership`, `folder-pending`, `folder-sync`,
+48 tests across 15 spec files (`allow-list`, `delete-reimport`,
+`embedded-sync`, `folder-membership`, `folder-module-flags`, `folder-pending`, `folder-sync`,
 `journal-sync`, `link-rewriting`, `macro-dangling`, `map-pins`,
 `pack-staleness`, `sync-followups`, `sync-followups-2`, `user-config`).
 
