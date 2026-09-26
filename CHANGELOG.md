@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-26
+
 ### Fixed
 - **Synced folders keep other modules' folder flags across worlds.** Folder
   sync carried only a folder's name, colour and sort order, so anything a
@@ -327,7 +329,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/publish` slash command and a GitHub Actions release workflow (manifest,
   download, and url fields for Foundry installation).
 
-[Unreleased]: https://github.com/bularzik/Omnipresence/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/bularzik/Omnipresence/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/bularzik/Omnipresence/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/bularzik/Omnipresence/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/bularzik/Omnipresence/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/bularzik/Omnipresence/compare/v0.5.1...v0.5.2
