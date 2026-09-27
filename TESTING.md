@@ -10,7 +10,7 @@ npm test                              # run all unit tests (Node's built-in runn
 node --test tests/sync-logic.test.js  # run a single test file
 ```
 
-114 tests. Only the **pure** layer (`scripts/sync-logic.js`) is unit-tested —
+119 tests. Only the **pure** layer (`scripts/sync-logic.js`) is unit-tested —
 everything that touches Foundry globals (`game`, `Hooks`, `ui`, `ApplicationV2`)
 is not unit-testable and is covered by the Playwright suite below instead,
 plus manual verification for the onboarding dialog, which has no automated
@@ -25,8 +25,9 @@ npm run test:e2e                                    # full Playwright suite
 npx playwright test tests/e2e/allow-list.spec.js    # one spec
 ```
 
-48 tests across 15 spec files (`allow-list`, `delete-reimport`,
-`embedded-sync`, `folder-membership`, `folder-module-flags`, `folder-pending`, `folder-sync`,
+54 tests across 16 spec files (`allow-list`, `delete-reimport`,
+`embedded-sync`, `folder-membership`, `folder-module-flags`, `folder-pending`,
+`folder-selection`, `folder-sync`,
 `journal-sync`, `link-rewriting`, `macro-dangling`, `map-pins`,
 `pack-staleness`, `sync-followups`, `sync-followups-2`, `user-config`).
 
@@ -98,6 +99,14 @@ takes every later spec down with it.
 `folder-pending.spec.js` logs in as `User 1` and closes/reopens the GM session
 mid-test to exercise the no-GM pending path; it needs both accounts and no
 other GM client connected.
+
+Every test user needs a folder mode (`flags.omnipresence.prefs.folders`), or
+each login stops at the "Synced Folders" dialog and that session's login sync
+waits on it. World B's users are set to keep their old behaviour: a user with
+a saved folder list is `chosen` (Gamemaster, User 1), a user without one is
+`all` (User 2). `folder-selection.spec.js` clears the Gamemaster's mode on
+purpose to test that dialog, and restores both `prefs` and `selection` in
+`afterAll`.
 
 `folder-sync.spec.js` and `folder-membership.spec.js` need no fixtures: each
 test builds an `Omni Folder Probe` tree, marks it, and removes both the world

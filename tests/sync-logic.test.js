@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, isFolderSelected, isGateUser, portableFolderFlags, mergeFolderFlags, resolveFolderFlags } from '../scripts/sync-logic.js';
+import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, isFolderSelected, forgetFolderSelection, isFolderAdmitted, isGateUser, portableFolderFlags, mergeFolderFlags, resolveFolderFlags } from '../scripts/sync-logic.js';
 
 const T0 = '2026-06-14T10:00:00.000Z';
 const T1 = '2026-06-14T11:00:00.000Z';
@@ -845,6 +845,37 @@ test('isFolderSelected: absent list admits everything, a list gates by membershi
   assert.equal(isFolderSelected('R', []), false);
   assert.equal(isFolderSelected('R', ['Q']), false);
   assert.equal(isFolderSelected('', null), false);
+});
+
+test('forgetFolderSelection: "all" stays "all" so later roots still sync', () => {
+  assert.equal(forgetFolderSelection(null, 'R'), null);
+  assert.equal(forgetFolderSelection(undefined, 'R'), null);
+});
+
+test('forgetFolderSelection: a saved list just loses the root', () => {
+  assert.deepEqual(forgetFolderSelection(['R', 'Q'], 'R'), ['Q']);
+  assert.deepEqual(forgetFolderSelection(['Q'], 'R'), ['Q']);
+  assert.deepEqual(forgetFolderSelection(['R'], 'R'), []);
+});
+
+test('isFolderAdmitted: "all" admits every root, whatever list is saved', () => {
+  assert.equal(isFolderAdmitted('R', 'all', null), true);
+  assert.equal(isFolderAdmitted('R', 'all', []), true);
+  assert.equal(isFolderAdmitted('R', 'all', ['Q']), true);
+  assert.equal(isFolderAdmitted('', 'all', null), false);
+});
+
+test('isFolderAdmitted: "chosen" admits only listed roots; no list admits none', () => {
+  assert.equal(isFolderAdmitted('R', 'chosen', ['R']), true);
+  assert.equal(isFolderAdmitted('R', 'chosen', ['Q']), false);
+  assert.equal(isFolderAdmitted('R', 'chosen', []), false);
+  assert.equal(isFolderAdmitted('R', 'chosen', null), false);
+});
+
+test('isFolderAdmitted: undecided keeps the old rule (absent list = all)', () => {
+  assert.equal(isFolderAdmitted('R', null, null), true);
+  assert.equal(isFolderAdmitted('R', undefined, ['R']), true);
+  assert.equal(isFolderAdmitted('R', null, ['Q']), false);
 });
 
 test('isGateUser: a named owner gates their own document', () => {

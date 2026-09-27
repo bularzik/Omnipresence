@@ -23,6 +23,7 @@ test('marking a folder mirrors its tree and members into the pack', async () => 
     await buildTree(gmPage);
     const result = await gmPage.evaluate(async ({ PACK, ROOT_NAME, SUB_NAME }) => {
       const { FolderSync } = await import('/modules/omnipresence/scripts/folder-sync.js');
+      const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
       const root = game.folders.getName(ROOT_NAME);
       const rootId = await FolderSync.markFolder(root);
       const sub = game.folders.getName(SUB_NAME);
@@ -43,7 +44,7 @@ test('marking a folder mirrors its tree and members into the pack', async () => 
         j1PackFolder: byName(`${ROOT_NAME} J1`)?._source.folder,
         j2PackFolder: byName(`${ROOT_NAME} J2`)?._source.folder,
         registry: game.settings.get('omnipresence', 'syncRegistry')[rootId] === true,
-        selected: game.user.getFlag('omnipresence', 'selection')?.folderIds?.includes(rootId)
+        selected: SyncRegistry.isDocSelected(game.user.id, 'folder', rootId)
       };
     }, { PACK, ROOT_NAME, SUB_NAME });
 

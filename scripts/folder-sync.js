@@ -10,7 +10,8 @@ import {
   portableFolderFlags,
   mergeFolderFlags,
   canonicalizeLinks,
-  localizeLinks
+  localizeLinks,
+  forgetFolderSelection
 } from './sync-logic.js';
 
 const DEBOUNCE_MS = 2000;
@@ -156,13 +157,31 @@ export class FolderSync {
   }
 
   /**
-   * An absent folderIds list means "all". Before the first explicit add or
-   * remove, seed it with every root the user is already eligible for, so the
-   * switch from "all" to "listed" never silently drops a syncing root.
+   * An absent folderIds list means "all" and must stay absent: writing out
+   * today's roots would silently exclude every root shared later. So a new
+   * root is only added to a saved list, and a dead root only removed from one.
    */
-  static async _ensureFolderSelection(userId) {
-    if (SyncRegistry.getSelection(userId).folderIds !== null) return;
-    await SyncRegistry.setSelection(userId, { folderIds: this._eligibleLocalRootIds(userId) });
+  /**
+   * Set a user's folder mode. Switching to "chosen" with no saved list
+   * starts the list from the roots already here, so nothing that syncs now
+   * silently stops.
+   */
+  static async setFolderMode(userId, mode) {
+    if (mode === 'chosen' && SyncRegistry.getSelection(userId).folderIds === null) {
+      await SyncRegistry.setSelection(userId, { folderIds: this._eligibleLocalRootIds(userId) });
+    }
+    await SyncRegistry.setPrefs(userId, { folders: mode });
+  }
+
+  static async _admitRoot(userId, rootId) {
+    if (SyncRegistry.getSelection(userId).folderIds === null) return;
+    await SyncRegistry.addToSelection(userId, 'folder', rootId);
+  }
+
+  static async _dropRoot(userId, rootId) {
+    const { folderIds } = SyncRegistry.getSelection(userId);
+    if (folderIds === null || !folderIds.includes(rootId)) return;
+    await SyncRegistry.setSelection(userId, { folderIds: forgetFolderSelection(folderIds, rootId) });
   }
 
   static async _setRegistry(rootId, on) {
@@ -182,13 +201,9 @@ export class FolderSync {
 
   /** Forget rootId from the acting user's and (if different) the owning user's folder allow-lists. */
   static async _forgetRootSelection(rootId, ownerName) {
-    await this._ensureFolderSelection(game.user.id);
-    await SyncRegistry.removeFromSelection(game.user.id, 'folder', rootId);
+    await this._dropRoot(game.user.id, rootId);
     const owner = ownerName ? game.users.find(u => u.name === ownerName) : this._pendingOwnerFor(rootId);
-    if (owner && owner.id !== game.user.id) {
-      await this._ensureFolderSelection(owner.id);
-      await SyncRegistry.removeFromSelection(owner.id, 'folder', rootId);
-    }
+    if (owner && owner.id !== game.user.id) await this._dropRoot(owner.id, rootId);
   }
 
   // --- mark / unmark --------------------------------------------------------
@@ -210,18 +225,17 @@ export class FolderSync {
 
     const rootId = foundry.utils.randomID(16);
     const ownerName = game.user.isGM ? null : game.user.name;
-    await this._ensureFolderSelection(game.user.id);
 
     if (game.user.isGM) {
       await this._stamp(folder, rootId, ownerName);
-      await SyncRegistry.addToSelection(game.user.id, 'folder', rootId);
+      await this._admitRoot(game.user.id, rootId);
       await this.pushFolder(folder);
       ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.enrolled', { name: folder.name }));
     } else {
       for (const journal of this.members(folder)) {
         await SyncRegistry.enroll(journal, { viaFolder: rootId });
       }
-      await SyncRegistry.addToSelection(game.user.id, 'folder', rootId);
+      await this._admitRoot(game.user.id, rootId);
       await SyncRegistry.setPendingRoot(game.user.id, rootId, { folderId: folder.id, ownerName, action: 'mark' });
       ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.enrolledQueued', { name: folder.name }));
     }
@@ -277,8 +291,7 @@ export class FolderSync {
       for (const journal of this.members(folder)) {
         if (journal.isOwner) await SyncRegistry.unenrollMember(journal);
       }
-      await this._ensureFolderSelection(game.user.id);
-      await SyncRegistry.removeFromSelection(game.user.id, 'folder', rootId);
+      await this._dropRoot(game.user.id, rootId);
       if (pending?.action === 'mark') {
         await SyncRegistry.clearPendingRoot(game.user.id, rootId);
       } else {
@@ -1027,8 +1040,30 @@ export class FolderSync {
     const ids = new Set(nodes.map(n => n.id));
     const packOpts = { pack: this.PACK_ID, omnipresenceInternal: true };
     const docIds = (await pack.getDocuments()).filter(d => ids.has(d._source.folder)).map(d => d.id);
-    if (docIds.length) await JournalEntry.deleteDocuments(docIds, packOpts);
-    await this._FolderClass.deleteDocuments([...nodes].reverse().map(n => n.id), packOpts);
+    await this._deleteFromPack(JournalEntry, docIds, pack.index, packOpts);
+    await this._deleteFromPack(this._FolderClass, [...nodes].reverse().map(n => n.id), pack.folders, packOpts);
+  }
+
+  /**
+   * Delete pack documents that may already be going: on "Remove Folder" each
+   * member's leave hook drops its own pack copy while this runs, and one
+   * vanished id fails the whole batch. Fall back to one at a time, skipping
+   * whatever is already gone.
+   */
+  static async _deleteFromPack(cls, ids, present, packOpts) {
+    if (!ids.length) return;
+    try {
+      await cls.deleteDocuments(ids, packOpts);
+    } catch {
+      for (const id of ids) {
+        if (!present.has(id)) continue;
+        try {
+          await cls.deleteDocuments([id], packOpts);
+        } catch (e) {
+          if (present.has(id)) throw e;
+        }
+      }
+    }
   }
 
   /**

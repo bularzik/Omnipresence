@@ -680,6 +680,29 @@ export function isFolderSelected(id, allowList) {
 }
 
 /**
+ * A root is going away (deleted or unsynced): drop it from a saved folder
+ * list. An absent list ("all") stays absent — writing out the roots known
+ * right now would silently exclude every root shared later.
+ */
+export function forgetFolderSelection(allowList, rootId) {
+  if (allowList == null) return null;
+  return allowList.filter(id => id !== rootId);
+}
+
+/**
+ * Folder gate with the user's folder mode (prefs.folders). `all`: every root
+ * the user gates syncs, the saved list is ignored. `chosen`: only listed
+ * roots. Not chosen yet (null/undefined): the pre-mode rule, where an absent
+ * list means every root.
+ */
+export function isFolderAdmitted(id, mode, allowList) {
+  if (!id) return false;
+  if (mode === 'all') return true;
+  if (mode === 'chosen') return isSelected(id, allowList);
+  return isFolderSelected(id, allowList);
+}
+
+/**
  * Whether the current user is the one whose preferences and allow-list gate a
  * document. Ownership for sync is decided by the `ownerName` flag, not by
  * Foundry's `isOwner`: a GM has isOwner on every document, so isOwner alone

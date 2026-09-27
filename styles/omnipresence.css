@@ -51,6 +51,13 @@
 /* Document picker (first-sync consent and Manage Synced Documents). The list
    is capped and scrolls so a user with hundreds of enrolled documents still
    gets a usable dialog. */
+.omnipresence-picker .dialog-content {
+  /* The sections stack; without a cap the folder list and the buttons can
+     sit below the bottom of the screen. The buttons stay outside the scroll. */
+  max-height: calc(100vh - 12rem);
+  overflow-y: auto;
+}
+
 .omnipresence-picker-controls {
   display: flex;
   gap: 4px;
