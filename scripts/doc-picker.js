@@ -17,12 +17,16 @@ export class DocPicker {
    * @param {{actorIds: string[], journalIds: string[], folderIds: string[]|null}|null} opts.preselected
    *   null → check every box (first-run behavior). `preselected.folderIds` may
    *   itself be null, meaning "all" (every folder checked).
-   * @returns {Promise<{actorIds: string[], journalIds: string[], folderIds: string[], macros: boolean}|null>}
+   * @param {'all'|'chosen'|null} [opts.folderMode] manage mode: the user's
+   *   folder mode. `all` shows every folder checked and locked. Onboarding
+   *   asks for the mode instead (default `all`).
+   * @returns {Promise<{actorIds: string[], journalIds: string[], folderIds: string[]|null, folderMode: 'all'|'chosen'|null, macros: boolean}|null>}
+   *   folderIds null in `all` mode: the saved list is left as it is.
    *   null when the user dismissed the dialog without confirming.
    */
-  static async open({ mode = 'onboarding', preselected = null } = {}) {
+  static async open({ mode = 'onboarding', preselected = null, folderMode = null } = {}) {
     const candidates = await this._buildCandidates();
-    return this._prompt(candidates, mode, preselected);
+    return this._prompt(candidates, mode, preselected, folderMode);
   }
 
   static async _buildCandidates() {
@@ -106,13 +110,14 @@ export class DocPicker {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  static _renderContent({ actors, journals, folders }, mode, preselected) {
+  static _renderContent({ actors, journals, folders }, mode, preselected, folderMode = null) {
     const esc = foundry.utils.escapeHTML;
     const L = key => game.i18n.localize(`OMNIPRESENCE.onboarding.${key}`);
 
     const isChecked = (kind, id) => {
       if (!preselected) return true;
       if (kind === 'folder') {
+        if (folderMode === 'all') return true;
         // Absent folder list means "all" (never saved), so everything is checked.
         return preselected.folderIds == null || preselected.folderIds.includes(id);
       }
@@ -130,17 +135,19 @@ export class DocPicker {
 
     // Controls are rendered only when there is something to filter; the
     // bulk buttons must be type="button" or clicking one submits the dialog.
-    const section = (items, kind, noneKey, headingKey) => {
+    const section = (items, kind, noneKey, headingKey, lead = '') => {
       if (!items.length) {
         return `
       <fieldset>
         <legend>${L(headingKey)}</legend>
+        ${lead}
         <p class="notes">${L(noneKey)}</p>
       </fieldset>`;
       }
       return `
       <fieldset>
         <legend>${L(headingKey)}</legend>
+        ${lead}
         <div class="omnipresence-picker-controls">
           <input type="search" data-filter="${kind}" placeholder="${L('filterPlaceholder')}">
           <button type="button" data-bulk="all" data-kind="${kind}">${L('selectAll')}</button>
@@ -162,11 +169,26 @@ export class DocPicker {
         </div>
       </fieldset>` : '';
 
+    // Folder mode: asked at onboarding; in manage mode "all" locks the list
+    // (the mode itself is changed in User Config).
+    const folderLead = mode === 'onboarding' ? `
+        <div class="form-group omnipresence-folder-mode">
+          <label class="checkbox">
+            <input type="radio" name="omnipresence-folder-mode" value="all" checked>
+            ${L('folderModeAll')}
+          </label>
+          <label class="checkbox">
+            <input type="radio" name="omnipresence-folder-mode" value="chosen">
+            ${L('folderModeChosen')}
+          </label>
+        </div>`
+      : folderMode === 'all' ? `<p class="notes" data-folder-mode="all">${L('folderModeLocked')}</p>` : '';
+
     return `
       <p>${mode === 'manage' ? L('manageIntro') : L('intro')}</p>
       ${section(actors, 'actor', 'noneActors', 'actorsHeading')}
       ${section(journals, 'journal', 'noneJournals', 'journalsHeading')}
-      ${section(folders, 'folder', 'noneFolders', 'foldersHeading')}
+      ${section(folders, 'folder', 'noneFolders', 'foldersHeading', folderLead)}
       ${folders.length ? `<p class="notes">${L('folderHint')}</p>` : ''}
       ${macrosFieldset}
     `;
@@ -218,9 +240,30 @@ export class DocPicker {
 
       update();
     }
+    this._wireFolderLock(form);
   }
 
-  static async _prompt(candidates, mode, preselected) {
+  /** The folder mode's "all" locks every folder row checked. */
+  static _folderMode(form) {
+    return form.querySelector('input[name="omnipresence-folder-mode"]:checked')?.value
+      ?? form.querySelector('[data-folder-mode]')?.dataset.folderMode
+      ?? null;
+  }
+
+  static _wireFolderLock(form) {
+    const apply = () => {
+      const locked = this._folderMode(form) === 'all';
+      for (const el of form.querySelectorAll('input[data-kind="folder"], [data-kind="folder"][data-bulk], [data-filter="folder"]')) {
+        el.disabled = locked;
+        if (locked && el.type === 'checkbox') el.checked = true;
+      }
+      form.querySelector('[data-list="folder"]')?.dispatchEvent(new Event('change'));
+    };
+    for (const radio of form.querySelectorAll('input[name="omnipresence-folder-mode"]')) radio.addEventListener('change', apply);
+    apply();
+  }
+
+  static async _prompt(candidates, mode, preselected, folderMode) {
     const { DialogV2 } = foundry.applications.api;
     const titleKey = mode === 'manage'
       ? 'OMNIPRESENCE.onboarding.manageTitle'
@@ -231,7 +274,8 @@ export class DocPicker {
 
     const result = await DialogV2.wait({
       window: { title: game.i18n.localize(titleKey) },
-      content: this._renderContent(candidates, mode, preselected),
+      classes: ['omnipresence-picker'],
+      content: this._renderContent(candidates, mode, preselected, folderMode),
       // DialogV2.wait's `render` callback fires as `render(event, dialog)` —
       // the second argument is the DialogV2 ApplicationV2 instance itself,
       // not an HTMLElement or jQuery object (confirmed against v13's
@@ -271,10 +315,13 @@ export class DocPicker {
 
   static _collect(form, mode) {
     const checked = sel => [...form.querySelectorAll(sel)].map(i => i.value);
+    const folderMode = this._folderMode(form);
     return {
       actorIds: checked('input[data-kind="actor"]:checked'),
       journalIds: checked('input[data-kind="journal"]:checked'),
-      folderIds: checked('input[data-kind="folder"]:checked'),
+      // "all" ignores the list, so leave the saved one for a later switch back.
+      folderIds: folderMode === 'all' ? null : checked('input[data-kind="folder"]:checked'),
+      folderMode,
       // Manage mode has no macro row; the User Config toggle owns that pref.
       macros: mode === 'onboarding'
         ? form.querySelector('input[name="omnipresence-macros"]').checked

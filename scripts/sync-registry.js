@@ -1,4 +1,4 @@
-import { isEnrolledFrom, isSelected, isFolderSelected, isGateUser } from './sync-logic.js';
+import { isEnrolledFrom, isSelected, isFolderAdmitted, isGateUser } from './sync-logic.js';
 
 export class SyncRegistry {
   static SETTING = 'syncRegistry';
@@ -154,12 +154,14 @@ export class SyncRegistry {
   // - the GM can read any user's flags since User documents sync to all clients.
   static getPrefs(userId) {
     const user = game.users?.get(userId);
-    if (!user) return { actors: true, macros: true, journals: true };
+    if (!user) return { actors: true, macros: true, journals: true, folders: null };
     const stored = user.getFlag('omnipresence', 'prefs') ?? {};
     return {
       actors: stored.actors !== false,
       macros: stored.macros !== false,
-      journals: stored.journals !== false
+      journals: stored.journals !== false,
+      // Folder mode: 'all' | 'chosen', or null until the user has chosen.
+      folders: stored.folders === 'all' || stored.folders === 'chosen' ? stored.folders : null
     };
   }
 
@@ -210,7 +212,7 @@ export class SyncRegistry {
 
   static isDocSelected(userId, kind, id) {
     const sel = this.getSelection(userId);
-    if (kind === 'folder') return isFolderSelected(id, sel.folderIds);
+    if (kind === 'folder') return isFolderAdmitted(id, this.getPrefs(userId).folders, sel.folderIds);
     return isSelected(id, sel[this._selectionKey(kind)]);
   }
 

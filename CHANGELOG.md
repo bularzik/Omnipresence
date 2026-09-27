@@ -11,6 +11,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Folders from other worlds is now a choice each user makes.** "Every
+  folder" brings in every journal folder you share from another world,
+  including ones shared later; "Only folders I choose" syncs just the folders
+  you tick under Manage synced documents. New users choose in the first-sync
+  dialog. Users set up before this release are asked once at their next
+  login (closing the dialog asks again next time, and nothing changes until
+  they answer). The choice can be changed any time under "Folders from other
+  worlds" in User Configuration; switching to "Every folder" syncs the newly
+  admitted folders straight away. In "Every folder" mode, Manage synced
+  documents shows the folders checked and locked.
+
+### Fixed
+- **A folder shared again after a delete syncs again.** Marking, unsyncing or
+  deleting a synced folder (and first-sync setup) quietly replaced "every
+  folder" with a fixed list of that world's folders at the time, so folders
+  shared later — including a folder shared again after a delete, which gets a
+  new id — were never imported. A world in that state is fixed by choosing
+  "Every folder" at the login prompt.
+- **"Remove Folder" on a synced folder clears it from the pack.** The member
+  journals dropped their own pack copies while the folder's pack tree was
+  being deleted, which failed the whole delete and left the folder behind in
+  the pack for other worlds.
+- **The document picker fits the screen.** Its sections stacked with no
+  overall height limit, so on a world with many documents the folder list and
+  the Save button could sit below the bottom of the window. The dialog body
+  now scrolls.
+
 ## [0.7.1] - 2026-09-26
 
 ### Fixed

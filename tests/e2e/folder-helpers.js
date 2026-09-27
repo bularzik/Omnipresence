@@ -43,7 +43,9 @@ export async function cleanup(page) {
       if (FolderSync.isRoot(f)) await FolderSync.unmarkFolder(f);
     }
     for (const j of game.journal.filter(j => j.name.startsWith(ROOT_NAME))) await j.delete({ omnipresenceInternal: true });
-    const subs = game.folders.filter(f => f.name.startsWith(ROOT_NAME) && f.folder);
+    // Any depth: "Remove Folder" on a root moves its subfolders to the top level.
+    const subs = game.folders.filter(f => f.name.startsWith(ROOT_NAME) && f.name !== ROOT_NAME)
+      .sort((a, b) => b.depth - a.depth);
     for (const f of subs) await f.delete({ omnipresenceInternal: true });
     for (const f of game.folders.filter(f => f.name === ROOT_NAME)) await f.delete({ omnipresenceInternal: true });
     const pack = game.packs.get(PACK);
