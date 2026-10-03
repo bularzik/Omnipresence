@@ -669,17 +669,6 @@ export function resolveTombstoneAction(tombstones, omniId) {
 }
 
 /**
- * Folder allow-list gate. Unlike actors/journals, an ABSENT folder list
- * (null/undefined — the user has never saved one) admits every root the
- * user is eligible for; a present list gates by membership.
- */
-export function isFolderSelected(id, allowList) {
-  if (!id) return false;
-  if (allowList == null) return true;
-  return isSelected(id, allowList);
-}
-
-/**
  * A root is going away (deleted or unsynced): drop it from a saved folder
  * list. An absent list ("all") stays absent — writing out the roots known
  * right now would silently exclude every root shared later.
@@ -690,16 +679,32 @@ export function forgetFolderSelection(allowList, rootId) {
 }
 
 /**
- * Folder gate with the user's folder mode (prefs.folders). `all`: every root
- * the user gates syncs, the saved list is ignored. `chosen`: only listed
- * roots. Not chosen yet (null/undefined): the pre-mode rule, where an absent
- * list means every root.
+ * One-time upgrade to explicit folder opt-in. Before 0.9.0 an absent list
+ * (and 0.8.0's "every folder" mode) admitted every shared root; now only
+ * listed roots sync. Fold in the roots already in this world so nothing that
+ * syncs today stops. Returns the new list, or null when nothing needs doing.
  */
-export function isFolderAdmitted(id, mode, allowList) {
-  if (!id) return false;
-  if (mode === 'all') return true;
-  if (mode === 'chosen') return isSelected(id, allowList);
-  return isFolderSelected(id, allowList);
+export function upgradeFolderSelection(allowList, legacyMode, localRootIds) {
+  if (Array.isArray(allowList) && !legacyMode) return null;
+  return [...new Set([...(allowList ?? []), ...localRootIds])];
+}
+
+/**
+ * Rows for the Journal sidebar's "Shared from other worlds" list: pack roots
+ * this user gates (GM: no ownerName; player: their name), not deleted and not
+ * in this world yet. `waiting`: a player already chose it and the import
+ * waits for a GM (a GM imports on click, so a GM row never waits).
+ * @param {Array<{id: string, name: string, ownerName: string|null, deleted: boolean}>} packRoots
+ * @returns {Array<{id: string, name: string, waiting: boolean}>}
+ */
+export function sharedFolderRows(packRoots, { isGM, userName }, allowList, localRootIds) {
+  const local = new Set(localRootIds);
+  const chosen = new Set(allowList ?? []);
+  return packRoots
+    .filter(r => !r.deleted && !local.has(r.id))
+    .filter(r => (isGM ? r.ownerName === null : r.ownerName === userName))
+    .map(r => ({ id: r.id, name: r.name, waiting: !isGM && chosen.has(r.id) }))
+    .sort((x, y) => x.name.localeCompare(y.name));
 }
 
 /**

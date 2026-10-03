@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, isFolderSelected, forgetFolderSelection, isFolderAdmitted, isGateUser, portableFolderFlags, mergeFolderFlags, resolveFolderFlags } from '../scripts/sync-logic.js';
+import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, forgetFolderSelection, upgradeFolderSelection, sharedFolderRows, isGateUser, portableFolderFlags, mergeFolderFlags, resolveFolderFlags } from '../scripts/sync-logic.js';
 
 const T0 = '2026-06-14T10:00:00.000Z';
 const T1 = '2026-06-14T11:00:00.000Z';
@@ -838,15 +838,6 @@ test('resolveTombstoneAction: deleted → delete, removed → detach, absent →
   assert.equal(resolveTombstoneAction(undefined, 'a'), 'push');
 });
 
-test('isFolderSelected: absent list admits everything, a list gates by membership', () => {
-  assert.equal(isFolderSelected('R', null), true);
-  assert.equal(isFolderSelected('R', undefined), true);
-  assert.equal(isFolderSelected('R', ['R']), true);
-  assert.equal(isFolderSelected('R', []), false);
-  assert.equal(isFolderSelected('R', ['Q']), false);
-  assert.equal(isFolderSelected('', null), false);
-});
-
 test('forgetFolderSelection: "all" stays "all" so later roots still sync', () => {
   assert.equal(forgetFolderSelection(null, 'R'), null);
   assert.equal(forgetFolderSelection(undefined, 'R'), null);
@@ -858,24 +849,51 @@ test('forgetFolderSelection: a saved list just loses the root', () => {
   assert.deepEqual(forgetFolderSelection(['R'], 'R'), []);
 });
 
-test('isFolderAdmitted: "all" admits every root, whatever list is saved', () => {
-  assert.equal(isFolderAdmitted('R', 'all', null), true);
-  assert.equal(isFolderAdmitted('R', 'all', []), true);
-  assert.equal(isFolderAdmitted('R', 'all', ['Q']), true);
-  assert.equal(isFolderAdmitted('', 'all', null), false);
+test('upgradeFolderSelection: no saved list starts one from the folders already here', () => {
+  assert.deepEqual(upgradeFolderSelection(null, null, ['A', 'B']), ['A', 'B']);
+  assert.deepEqual(upgradeFolderSelection(undefined, null, []), []);
 });
 
-test('isFolderAdmitted: "chosen" admits only listed roots; no list admits none', () => {
-  assert.equal(isFolderAdmitted('R', 'chosen', ['R']), true);
-  assert.equal(isFolderAdmitted('R', 'chosen', ['Q']), false);
-  assert.equal(isFolderAdmitted('R', 'chosen', []), false);
-  assert.equal(isFolderAdmitted('R', 'chosen', null), false);
+test('upgradeFolderSelection: a 0.8.0 folder mode folds the folders already here into the list', () => {
+  assert.deepEqual(upgradeFolderSelection(['A'], 'all', ['A', 'B']), ['A', 'B']);
+  assert.deepEqual(upgradeFolderSelection(['A'], 'chosen', ['B']), ['A', 'B']);
 });
 
-test('isFolderAdmitted: undecided keeps the old rule (absent list = all)', () => {
-  assert.equal(isFolderAdmitted('R', null, null), true);
-  assert.equal(isFolderAdmitted('R', undefined, ['R']), true);
-  assert.equal(isFolderAdmitted('R', null, ['Q']), false);
+test('upgradeFolderSelection: a saved list with no mode needs nothing', () => {
+  assert.equal(upgradeFolderSelection(['A'], null, ['A', 'B']), null);
+  assert.equal(upgradeFolderSelection([], undefined, ['B']), null);
+});
+
+const packRoots = [
+  { id: 'G1', name: 'Zeta', ownerName: null, deleted: false },
+  { id: 'G2', name: 'Alpha', ownerName: null, deleted: false },
+  { id: 'GD', name: 'Gone', ownerName: null, deleted: true },
+  { id: 'P1', name: 'Mine', ownerName: 'User 1', deleted: false },
+  { id: 'P2', name: 'Theirs', ownerName: 'User 2', deleted: false }
+];
+
+test('sharedFolderRows: a GM sees GM-shared folders not here and not deleted, sorted', () => {
+  const rows = sharedFolderRows(packRoots, { isGM: true, userName: 'Gamemaster' }, [], []);
+  assert.deepEqual(rows, [
+    { id: 'G2', name: 'Alpha', waiting: false },
+    { id: 'G1', name: 'Zeta', waiting: false }
+  ]);
+});
+
+test('sharedFolderRows: folders already in this world are not offered', () => {
+  const rows = sharedFolderRows(packRoots, { isGM: true, userName: 'Gamemaster' }, ['G1'], ['G1', 'G2']);
+  assert.deepEqual(rows, []);
+});
+
+test('sharedFolderRows: a player sees only their own; a chosen one not here yet is waiting', () => {
+  const player = { isGM: false, userName: 'User 1' };
+  assert.deepEqual(sharedFolderRows(packRoots, player, null, []), [{ id: 'P1', name: 'Mine', waiting: false }]);
+  assert.deepEqual(sharedFolderRows(packRoots, player, ['P1'], []), [{ id: 'P1', name: 'Mine', waiting: true }]);
+});
+
+test('sharedFolderRows: a GM is never shown as waiting (the GM imports on click)', () => {
+  const rows = sharedFolderRows(packRoots, { isGM: true, userName: 'Gamemaster' }, ['G1'], []);
+  assert.deepEqual(rows.map(r => r.waiting), [false, false]);
 });
 
 test('isGateUser: a named owner gates their own document', () => {

@@ -1,14 +1,13 @@
 import { SyncRegistry } from './sync-registry.js';
 import { DocPicker } from './doc-picker.js';
 import { runLoginReconcile } from './reconcile.js';
-import { FolderSync } from './folder-sync.js';
 
 /**
  * After a save that admits new documents: a GM imports them now, a player's
  * wait for the next GM login (the import sections are GM-gated). A failure
  * here means "saved but not yet synced", so it gets its own message.
  */
-async function syncNewlyAdmitted() {
+export async function syncNewlyAdmitted() {
   try {
     await runLoginReconcile();
     ui.notifications.info(game.i18n.localize(
@@ -51,17 +50,6 @@ export function registerUserConfigInjection() {
           <input type="checkbox" id="omnipresence-journals" name="omnipresence-journals">
         </div>
         <p class="hint">${game.i18n.localize('OMNIPRESENCE.userConfig.journalSyncHint')}</p>
-      </div>
-      <div class="form-group">
-        <label for="omnipresence-folder-mode">${game.i18n.localize('OMNIPRESENCE.userConfig.folderMode')}</label>
-        <div class="form-fields">
-          <select id="omnipresence-folder-mode" name="omnipresence-folder-mode">
-            ${userPrefs.folders === null ? `<option value="" selected>${game.i18n.localize('OMNIPRESENCE.userConfig.folderModeUnset')}</option>` : ''}
-            <option value="all"${userPrefs.folders === 'all' ? ' selected' : ''}>${game.i18n.localize('OMNIPRESENCE.userConfig.folderModeAll')}</option>
-            <option value="chosen"${userPrefs.folders === 'chosen' ? ' selected' : ''}>${game.i18n.localize('OMNIPRESENCE.userConfig.folderModeChosen')}</option>
-          </select>
-        </div>
-        <p class="hint">${game.i18n.localize('OMNIPRESENCE.userConfig.folderModeHint')}</p>
       </div>
       <div class="form-group">
         <label>${game.i18n.localize('OMNIPRESENCE.userConfig.manageDocs')}</label>
@@ -111,38 +99,17 @@ export function registerUserConfigInjection() {
       SyncRegistry.setPrefs(game.user.id, { journals: e.target.checked });
     });
 
-    const folderModeSelect = fieldset.querySelector('[name="omnipresence-folder-mode"]');
-    folderModeSelect.addEventListener('change', async (e) => {
-      const mode = e.target.value;
-      if (mode !== 'all' && mode !== 'chosen') return;
-      try {
-        // Only "all" can admit folders that were not syncing.
-        const admits = mode === 'all' && SyncRegistry.getPrefs(game.user.id).folders !== 'all';
-        await FolderSync.setFolderMode(game.user.id, mode);
-        if (admits) await syncNewlyAdmitted();
-      } catch (err) {
-        console.error('Omnipresence | folder mode change failed', err);
-        ui.notifications.warn(game.i18n.localize('OMNIPRESENCE.notifications.manageFailed'));
-      }
-    });
-
     const manageButton = fieldset.querySelector('#omnipresence-manage-docs');
     manageButton.addEventListener('click', async () => {
       try {
         const before = SyncRegistry.getSelection(game.user.id);
-        const folderMode = SyncRegistry.getPrefs(game.user.id).folders;
-        const result = await DocPicker.open({ mode: 'manage', preselected: before, folderMode });
+        const result = await DocPicker.open({ mode: 'manage', preselected: before });
         if (!result) return; // dismissed — change nothing
-
-        // Checked before the write: which folders the gate admitted until now.
-        // In "all" mode the picker returns no folder list and the saved one stays.
-        const folderAdded = (result.folderIds ?? [])
-          .some(id => !SyncRegistry.isDocSelected(game.user.id, 'folder', id));
 
         await SyncRegistry.setSelection(game.user.id, {
           actorIds: result.actorIds,
           journalIds: result.journalIds,
-          ...(result.folderIds === null ? {} : { folderIds: result.folderIds })
+          folderIds: result.folderIds
         });
 
         // A newly added document only auto-imports via the GM-gated section
@@ -154,7 +121,7 @@ export function registerUserConfigInjection() {
         const added =
           result.actorIds.some(id => !before.actorIds.includes(id)) ||
           result.journalIds.some(id => !before.journalIds.includes(id)) ||
-          folderAdded;
+          result.folderIds.some(id => !(before.folderIds ?? []).includes(id));
 
         // Removals-only saves used to give no feedback at all (op-tb6). The
         // write is wholesale: the list is re-based to the rendered rows, so an

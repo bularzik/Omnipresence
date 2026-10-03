@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Every shared folder is now opted into each world explicitly.** A journal
+  folder you share syncs into another world only once you choose it there.
+  0.8.0's "Every folder" / "Only folders I choose" setting and its login
+  prompt are gone.
+- Folders already synced into a world keep syncing: the first login after
+  upgrading adds them to each user's list (the GM does this for every user).
+- The first-sync dialog no longer ticks any folder.
+
+### Added
+- **"Shared from other worlds" in the Journal sidebar.** When a folder you
+  shared elsewhere isn't in this world yet, it is listed at the top of the
+  Journal sidebar with a **Sync here** button. For a GM it imports straight
+  away; a player's choice shows "Waiting for a GM" until the next GM login.
+  The list appears only while there is something to sync. Folders can also
+  still be ticked under Manage synced documents.
+
 ## [0.8.0] - 2026-09-27
 
 ### Added
