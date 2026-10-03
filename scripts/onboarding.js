@@ -21,12 +21,6 @@ export class Onboarding {
 
       if (decision === 'skip') {
         await this._backfill(userId);
-        try {
-          await this._askFolderMode(userId);
-        } catch (err) {
-          // The folder question never holds up sync: undecided keeps the old rule.
-          console.error('Omnipresence | folder mode prompt failed', err);
-        }
         return true;
       }
 
@@ -74,12 +68,8 @@ export class Onboarding {
       .map(j => j.getFlag('omnipresence', 'id'))
       .filter(Boolean);
 
-    // An absent folder list ("all") stays absent: seeding it with today's
-    // roots would exclude every root shared later.
     const existing = SyncRegistry.getSelection(userId);
-    const folderIds = existing.folderIds === null
-      ? null
-      : [...new Set([...existing.folderIds, ...FolderSync._eligibleLocalRootIds(userId)])];
+    const folderIds = [...new Set([...(existing.folderIds ?? []), ...FolderSync._eligibleLocalRootIds(userId)])];
     await SyncRegistry.setSelection(userId, {
       actorIds: [...new Set([...existing.actorIds, ...actorIds])],
       journalIds: [...new Set([...existing.journalIds, ...journalIds])],
@@ -94,30 +84,9 @@ export class Onboarding {
    * at their default (true) so a doc the user enrolls later still syncs. Only
    * macros (all-or-nothing, no list) is written to prefs here.
    */
-  static async _applyResult(userId, { actorIds, journalIds, folderIds, folderMode, macros }) {
-    await SyncRegistry.setSelection(userId, folderIds === null ? { actorIds, journalIds } : { actorIds, journalIds, folderIds });
+  static async _applyResult(userId, { actorIds, journalIds, folderIds, macros }) {
+    await SyncRegistry.setSelection(userId, { actorIds, journalIds, folderIds });
     await SyncRegistry.setPrefs(userId, { macros });
-    await FolderSync.setFolderMode(userId, folderMode ?? 'all');
     await SyncRegistry.setOnboarded(userId);
-  }
-
-  /**
-   * Users onboarded before folder modes existed choose once. Dismissing
-   * changes nothing and asks again next login; sync runs either way.
-   */
-  static async _askFolderMode(userId) {
-    if (SyncRegistry.getPrefs(userId).folders !== null) return;
-    const L = key => game.i18n.localize(`OMNIPRESENCE.folderMode.${key}`);
-    const choice = await foundry.applications.api.DialogV2.wait({
-      window: { title: L('title') },
-      classes: ['omnipresence-folder-mode-prompt'],
-      content: `<p>${L('intro')}</p>`,
-      buttons: [
-        { action: 'all', label: L('all'), default: true, callback: () => 'all' },
-        { action: 'chosen', label: L('chosen'), callback: () => 'chosen' }
-      ],
-      rejectClose: false
-    });
-    if (choice === 'all' || choice === 'chosen') await FolderSync.setFolderMode(userId, choice);
   }
 }

@@ -9,6 +9,7 @@ import { registerUserConfigInjection } from './scripts/user-config.js';
 import { LinkRewriter } from './scripts/link-rewriter.js';
 import { Onboarding } from './scripts/onboarding.js';
 import { runLoginReconcile } from './scripts/reconcile.js';
+import { FolderDirectory } from './scripts/folder-directory.js';
 
 Hooks.once('init', () => {
   SyncRegistry.register();
@@ -23,6 +24,7 @@ Hooks.once('init', () => {
   });
 
   registerUserConfigInjection();
+  FolderDirectory.register();
 });
 
 Hooks.once('ready', async () => {
@@ -34,6 +36,14 @@ Hooks.once('ready', async () => {
     const journalPack = game.packs.get(JournalSync.PACK_ID);
     if (journalPack && journalPack.locked) await journalPack.configure({ locked: false });
   }
+  // Folder sync is explicit per world since 0.9.0: users whose folders were
+  // admitted by the old "every folder" rule keep the ones already here.
+  try {
+    await FolderSync.upgradeFolderSelections();
+  } catch (err) {
+    console.error('Omnipresence | folder selection upgrade failed', err);
+  }
+
   // First-sync consent gate: on a user's first contact with this world, hold
   // all sync/import until they choose what to sync (opt-in). Existing worlds
   // are detected and back-filled silently, returning true. A dismissed prompt
@@ -52,6 +62,9 @@ Hooks.once('ready', async () => {
   // Phase 2b: mirror map pins once every journal/scene that will exist this
   // session does — heals pins whose targets arrived after the journal's pull.
   await JournalSync.applyAllPins();
+
+  // "Shared from other worlds" reflects this login's imports.
+  FolderDirectory.refresh();
 
   // Cancel (never flush) pending debounced pushes when the page goes away —
   // a timer firing into the world-teardown window produces partial pack

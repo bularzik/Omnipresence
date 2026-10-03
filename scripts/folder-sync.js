@@ -11,7 +11,9 @@ import {
   mergeFolderFlags,
   canonicalizeLinks,
   localizeLinks,
-  forgetFolderSelection
+  forgetFolderSelection,
+  upgradeFolderSelection,
+  sharedFolderRows
 } from './sync-logic.js';
 
 const DEBOUNCE_MS = 2000;
@@ -157,25 +159,53 @@ export class FolderSync {
   }
 
   /**
-   * An absent folderIds list means "all" and must stay absent: writing out
-   * today's roots would silently exclude every root shared later. So a new
-   * root is only added to a saved list, and a dead root only removed from one.
+   * The folder allow-list is the only folder gate: a shared folder syncs into
+   * a world only once it is listed there (marked here, "Sync here" in the
+   * Journal sidebar, or ticked in Manage). No list means no folders.
    */
-  /**
-   * Set a user's folder mode. Switching to "chosen" with no saved list
-   * starts the list from the roots already here, so nothing that syncs now
-   * silently stops.
-   */
-  static async setFolderMode(userId, mode) {
-    if (mode === 'chosen' && SyncRegistry.getSelection(userId).folderIds === null) {
-      await SyncRegistry.setSelection(userId, { folderIds: this._eligibleLocalRootIds(userId) });
-    }
-    await SyncRegistry.setPrefs(userId, { folders: mode });
+  static async _admitRoot(userId, rootId) {
+    await SyncRegistry.addToSelection(userId, 'folder', rootId);
   }
 
-  static async _admitRoot(userId, rootId) {
-    if (SyncRegistry.getSelection(userId).folderIds === null) return;
-    await SyncRegistry.addToSelection(userId, 'folder', rootId);
+  /**
+   * One-time upgrade to explicit opt-in (0.9.0): a user with no saved list, or
+   * with 0.8.0's folder mode, gets a list of the roots already in this world,
+   * so nothing that syncs today stops. The GM upgrades every user (it can
+   * write any User; players' roots are gated by their own lists), a player
+   * only themselves.
+   */
+  static async upgradeFolderSelections() {
+    const users = game.user.isGM ? game.users.contents : [game.user];
+    for (const user of users) {
+      const legacyMode = user.getFlag('omnipresence', 'prefs')?.folders ?? null;
+      const next = upgradeFolderSelection(
+        SyncRegistry.getSelection(user.id).folderIds, legacyMode, this._eligibleLocalRootIds(user.id)
+      );
+      if (!next) continue;
+      await SyncRegistry.setSelection(user.id, { folderIds: next });
+      if (legacyMode) await user.update({ 'flags.omnipresence.prefs.-=folders': null });
+    }
+  }
+
+  /** "Shared from other worlds" rows for the current user (see sharedFolderRows). */
+  static sharedRows() {
+    const pack = this._getPack();
+    if (!pack) return [];
+    const packRoots = pack.folders.filter(f => !f._source.folder).map(f => ({
+      id: f.id,
+      name: f._source.name,
+      ownerName: f.getFlag('omnipresence', 'ownerName') ?? null,
+      deleted: f.getFlag('omnipresence', 'deleted') === true
+    }));
+    const localRootIds = game.folders
+      .filter(f => f.type === FOLDER_TYPE && this._isStampedRoot(f))
+      .map(f => f.getFlag('omnipresence', 'id'));
+    return sharedFolderRows(
+      packRoots,
+      { isGM: game.user.isGM, userName: game.user.name },
+      SyncRegistry.getSelection(game.user.id).folderIds,
+      localRootIds
+    );
   }
 
   static async _dropRoot(userId, rootId) {
