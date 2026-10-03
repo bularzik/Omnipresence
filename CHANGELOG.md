@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-02
+
 ### Changed
 - **Every shared folder is now opted into each world explicitly.** A journal
   folder you share syncs into another world only once you choose it there.
@@ -376,7 +378,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/publish` slash command and a GitHub Actions release workflow (manifest,
   download, and url fields for Foundry installation).
 
-[Unreleased]: https://github.com/bularzik/Omnipresence/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/bularzik/Omnipresence/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/bularzik/Omnipresence/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/bularzik/Omnipresence/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/bularzik/Omnipresence/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/bularzik/Omnipresence/compare/v0.6.0...v0.7.0
