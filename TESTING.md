@@ -25,9 +25,9 @@ npm run test:e2e                                    # full Playwright suite
 npx playwright test tests/e2e/allow-list.spec.js    # one spec
 ```
 
-60 tests across 18 spec files (`allow-list`, `bindings`, `delete-reimport`,
+63 tests across 19 spec files (`allow-list`, `bindings`, `delete-reimport`,
 `embedded-sync`, `folder-membership`, `folder-module-flags`, `folder-pending`,
-`folder-selection`, `folder-sync`,
+`folder-selection`, `folder-sync`, `hidden-packs`,
 `journal-sync`, `link-rewriting`, `macro-dangling`, `map-pins`,
 `pack-staleness`, `security`, `sync-followups`, `sync-followups-2`, `user-config`).
 
@@ -114,6 +114,13 @@ and restart the server. Its first test reopens the GM session. Each negative
 assertion first waits until the GM client has observed the attack, then one
 8 s push window; the macro test also checks that an owned macro does publish.
 Shared scaffolding (`newGmSession`, `sweepProbes`) is in `helpers.js`.
+
+`hidden-packs.spec.js` closes and reopens the GM session (like
+`folder-pending`) and runs its first test with no GM connected at all; it
+needs `Gamemaster` and `User 1` and no other GM client. Its first test creates
+a pack folder so the player-side folder check is not vacuous. Its duplicate-id
+test resets `omnipresence.bindingsBuilt` and replays `Bindings.init()`, which
+sets it back.
 
 Folders sync into a world only once listed in the gating user's folder
 allow-list (`flags.omnipresence.selection.folderIds`); a spec that simulates
