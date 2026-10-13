@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  decidePushBinding, buildBindings, resolveDuplicateBindings, boundOmniToLocal, validateFolderRemoval
+  decidePushBinding, buildBindings, resolveDuplicateBindings, boundOmniToLocal, validateFolderRemoval,
+  judgePendingRemoveClaim
 } from '../scripts/security-logic.js';
 
 // --- Shared-copy bindings ---------------------------------------------------
@@ -31,6 +32,15 @@ test('decidePushBinding: unbound, no copy, but another local carrier → refuse 
 
 test('decidePushBinding: a binding wins over otherCarrier', () => {
   assert.equal(decidePushBinding({ binding: { type: 'Actor', id: 'a1' }, docType: 'Actor', docId: 'a1', copyExists: true, otherCarrier: true }), 'proceed');
+});
+
+test('judgePendingRemoveClaim: a flag claiming a GM, an unknown user, a non-owner or a legacy string is refused', () => {
+  const flag = { rootId: 'r', userId: 'u' };
+  assert.equal(judgePendingRemoveClaim({ flag, user: { isGM: true }, isOwner: true }), 'refuse');
+  assert.equal(judgePendingRemoveClaim({ flag, user: null, isOwner: true }), 'refuse');
+  assert.equal(judgePendingRemoveClaim({ flag, user: { isGM: false }, isOwner: false }), 'refuse');
+  assert.equal(judgePendingRemoveClaim({ flag: 'r', user: { isGM: false }, isOwner: true }), 'refuse');
+  assert.equal(judgePendingRemoveClaim({ flag, user: { isGM: false }, isOwner: true }), 'accept');
 });
 
 test('buildBindings: unique ids bound, duplicates left unbound and reported', () => {

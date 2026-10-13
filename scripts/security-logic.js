@@ -202,6 +202,25 @@ export function sha256Hex(text) {
 }
 
 // ---------------------------------------------------------------------------
+// Player-written pendingRemove flags.
+
+/**
+ * Whether a `pendingRemove` flag on a journal may be acted on. The flag is
+ * writable by the journal's owners, so its claimed `userId` proves nothing:
+ * a claimed GM is refused (a GM's own retry lives in a GM-only setting), and
+ * a claimed non-GM must actually own the journal. Legacy bare-string flags
+ * have no author and are refused.
+ * @param {{flag: *, user: ({isGM: boolean}|null|undefined), isOwner: boolean}} p
+ *   `user` is the resolved claimed user; `isOwner` whether that user owns the journal.
+ * @returns {'accept'|'refuse'}
+ */
+export function judgePendingRemoveClaim({ flag, user, isOwner }) {
+  if (!flag || typeof flag !== 'object' || typeof flag.rootId !== 'string') return 'refuse';
+  if (!user || user.isGM) return 'refuse';
+  return isOwner ? 'accept' : 'refuse';
+}
+
+// ---------------------------------------------------------------------------
 // Hidden packs (#3).
 
 /** Ownership every Omnipresence pack must have: hidden from players and trusted players in the UI. */

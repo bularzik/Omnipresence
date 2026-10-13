@@ -11,6 +11,7 @@ export class Bindings {
   static SETTING = 'bindings';
   static BUILT = 'bindingsBuilt';
   static DUPLICATES = 'bindingDuplicates';
+  static PACK_REMOVALS = 'pendingPackRemovals';
 
   // Pending writes, visible to get() before the setting round-trips, and the
   // queue that serializes read-modify-write so parallel pushes (Force Sync
@@ -27,6 +28,11 @@ export class Bindings {
     });
     game.settings.register('omnipresence', this.DUPLICATES, {
       name: 'Duplicate sync ids', scope: 'world', config: false, type: Object, default: {}
+    });
+    // GM-only retry queue for folder-member pack removals that failed: a world
+    // setting players cannot write, unlike a flag on a journal they own.
+    game.settings.register('omnipresence', this.PACK_REMOVALS, {
+      name: 'Pending pack removals', scope: 'world', config: false, type: Array, default: []
     });
   }
 

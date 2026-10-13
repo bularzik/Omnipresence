@@ -2,7 +2,7 @@ import { SyncRegistry } from './sync-registry.js';
 import { JournalSync } from './journal-sync.js';
 import { LinkRewriter } from './link-rewriter.js';
 import { Bindings } from './bindings.js';
-import { validateFolderRemoval } from './security-logic.js';
+import { validateFolderRemoval, judgePendingRemoveClaim } from './security-logic.js';
 import {
   collectFolderTree,
   diffFolderTree,
@@ -470,6 +470,7 @@ export class FolderSync {
         await this._materializeDeletes(user);
       }
       await this._materializeRemoves();
+      await this._drainPackRemovals();
     })();
     try {
       await this._materializing;
@@ -526,8 +527,12 @@ export class FolderSync {
         const flag = journal.getFlag('omnipresence', 'pendingRemove');
         const rootId = typeof flag === 'string' ? flag : flag.rootId;
         const omniId = journal.getFlag('omnipresence', 'id');
-        const actingUser = typeof flag === 'string' ? null : game.users.get(flag.userId) ?? null;
-        if (actingUser && this._mayRemove({ rootId, omniId, docs, journal, actingUser })) {
+        // The flag is player-writable, so its claimed user is checked, never trusted.
+        const claimed = typeof flag === 'string' ? null : game.users.get(flag.userId) ?? null;
+        const accepted = judgePendingRemoveClaim({
+          flag, user: claimed, isOwner: !!claimed && journal.testUserPermission(claimed, 'OWNER')
+        }) === 'accept';
+        if (accepted && this._mayRemove({ rootId, omniId, docs, journal, actingUser: claimed })) {
           await this._removeFromPack(rootId, omniId, 'removed', docs);
         } else {
           console.warn('Omnipresence | refusing pending folder remove for', journal.name, '— invalid for', omniId);
@@ -537,6 +542,33 @@ export class FolderSync {
         console.error('Omnipresence | pending folder remove failed for', journal.name, err);
       }
     }
+  }
+
+  /**
+   * GM retries of pack removals that failed in _leave. The queue is a GM-only
+   * world setting, so (unlike a journal flag) it cannot be forged; entries are
+   * still validated with the GM as the acting user, and kept on failure.
+   */
+  static async _drainPackRemovals() {
+    const queue = game.settings.get('omnipresence', Bindings.PACK_REMOVALS) ?? [];
+    if (!queue.length) return;
+    const docs = await this._getPack().getDocuments();
+    const kept = [];
+    for (const entry of queue) {
+      const { omniId, rootId } = entry ?? {};
+      if (!omniId || !rootId) continue;
+      try {
+        if (this._mayRemove({ rootId, omniId, docs, actingUser: game.user })) {
+          await this._removeFromPack(rootId, omniId, 'removed', docs);
+        } else {
+          console.warn('Omnipresence | dropping invalid queued pack removal for', omniId);
+        }
+      } catch (err) {
+        console.error('Omnipresence | queued pack removal failed for', omniId, err);
+        kept.push(entry);
+      }
+    }
+    await game.settings.set('omnipresence', Bindings.PACK_REMOVALS, kept);
   }
 
   // --- login reconcile (target-world side) ----------------------------------
@@ -940,9 +972,10 @@ export class FolderSync {
       } catch (err) {
         // A pack failure must never leave a member unenrolled locally with a live
         // pack copy and no tombstone — other worlds would push it back. Record
-        // pendingRemove so _materializeRemoves retries at the next GM login.
+        // a GM-only queued removal so _drainPackRemovals retries at the next GM login.
         console.error('Omnipresence | folder member leave failed for', journal.name, err);
-        await journal.update({ 'flags.omnipresence.pendingRemove': { rootId, userId } }, { omnipresenceInternal: true });
+        const queue = game.settings.get('omnipresence', Bindings.PACK_REMOVALS) ?? [];
+        await game.settings.set('omnipresence', Bindings.PACK_REMOVALS, [...queue, { omniId, rootId }]);
       }
     } else {
       await journal.update({ 'flags.omnipresence.pendingRemove': { rootId, userId: game.user.id } }, { omnipresenceInternal: true });
