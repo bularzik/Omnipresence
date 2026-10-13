@@ -1,10 +1,11 @@
 // tests/e2e/upgrade-duplicates.spec.js — documents that share a sync id, as
 // an upgraded world and Foundry's Duplicate produce them:
-//   (a) an honest duplicate (a copy of an enrolled, pushed actor) present at
-//       the one-time bindings build keeps syncing: the original is bound,
-//       the copy loses the id, nothing is listed;
+//   (a) an honest duplicate (a sidebar-style Duplicate, which records
+//       _stats.duplicateSource) present at the one-time bindings build keeps
+//       syncing: the original is bound, the copy loses the id, nothing listed;
 //   (b) a pre-upgrade forgery (a player's actor stamped with a GM actor's
-//       id) is detached at the build and the GM's shared copy is untouched;
+//       id, no Duplicate record) is listed with nothing detached and the
+//       shared copy untouched; "Keep this one" then settles it;
 //   (c) a Duplicate made after the upgrade never inherits a bound id;
 //   (d) the dashboard's "Keep this one" settles a listed row;
 //   (e) a copy made with no GM connected is cleared at the next GM login.
@@ -102,7 +103,11 @@ test('(a) an honest duplicate present at the upgrade: the original stays bound a
   test.setTimeout(90_000);
   const orig = await enrolledPushedActor(`${PREFIX} Honest`);
   omniIds.add(orig.omniId);
-  const cloneId = await preUpgradeCopy(orig.id, `${PREFIX} Honest Copy`);
+  // What the sidebar Duplicate does (addSource records _stats.duplicateSource),
+  // made internal so no create hook clears it: the world before the upgrade.
+  const cloneId = await gmPage.evaluate(async ({ id, name }) =>
+    (await game.actors.get(id).clone({ name }, { save: true, addSource: true, omnipresenceInternal: true })).id,
+  { id: orig.id, name: `${PREFIX} Honest Copy` });
   expect(await replayUpgrade(orig.omniId)).toBe(true);
   await gmPage.evaluate(async () => {
     const { SyncEngine } = await import('/modules/omnipresence/scripts/sync-engine.js');
@@ -124,13 +129,13 @@ test('(a) an honest duplicate present at the upgrade: the original stays bound a
   expect((await actorState(orig.omniId, [])).copy.name).toBe(`${PREFIX} Honest Edited`);
 });
 
-test('(b) a pre-upgrade forgery: the GM actor is bound, the player actor loses the id, the shared copy is unchanged', async () => {
+test('(b) a pre-upgrade forgery is listed, nothing is detached, and Keep settles it', async () => {
   test.setTimeout(90_000);
   const victim = await enrolledPushedActor(`${PREFIX} Victim`);
   omniIds.add(victim.omniId);
-  // The forgery carries every flag, the copy's syncedAt (the "last pusher"
-  // signal) included, and its pre-upgrade push re-stamped the copy's
-  // ownerName with the forger's name: only real ownership tells them apart.
+  // The forgery carries every flag, the copy's syncedAt included, and its
+  // pre-upgrade push re-stamped the copy's ownerName with the forger's name.
+  // It has no Duplicate record, so the upgrade cannot tell which is the original.
   const forgerId = await preUpgradeCopy(victim.id, `${PREFIX} Forger`, { default: 0, [PLAYER]: 3 });
   await gmPage.evaluate(async ({ omniId, PLAYER }) => {
     const pack = game.packs.get(`omnipresence.omnipresence-${game.system.id}`);
@@ -141,10 +146,37 @@ test('(b) a pre-upgrade forgery: the GM actor is bound, the player actor loses t
   expect(await replayUpgrade(victim.omniId)).toBe(true);
 
   const state = await actorState(victim.omniId, [victim.id, forgerId]);
-  expect(state.binding).toEqual({ type: 'Actor', id: victim.id });
-  expect(state.ids).toEqual({ [victim.id]: victim.omniId, [forgerId]: null });
-  expect(state.listed).toBe(false);
+  expect(state.binding).toBeNull();
+  expect(state.ids).toEqual({ [victim.id]: victim.omniId, [forgerId]: victim.omniId });
+  expect(state.listed).toBe(true);
   expect(state.copy).toEqual(before);
+
+  // The GM keeps the victim. Its ownership changed since enroll (the
+  // ownerName flag still says GM-owned): Keep re-stamps the flag from real
+  // ownership, so the allow-list it lands on is the one login reconcile reads.
+  const OTHER = 'User 2';
+  await gmPage.evaluate(async ({ id, OTHER }) => {
+    const u = game.users.getName(OTHER);
+    await game.actors.get(id).update({ ownership: { default: 0, [u.id]: 3 } }, { omnipresenceInternal: true });
+  }, { id: victim.id, OTHER });
+  await gmPage.evaluate(async () => {
+    const { OmnipresenceDashboard } = await import('/modules/omnipresence/scripts/gm-dashboard.js');
+    new OmnipresenceDashboard().render(true);
+  });
+  const row = gmPage.locator(`.omnipresence-duplicates li[data-omni-id="${victim.omniId}"]`);
+  await row.locator(`a[data-action="keepDuplicate"][data-doc-id="${victim.id}"]`).click();
+  await expect(row).toHaveCount(0, { timeout: 10_000 });
+  const after = await actorState(victim.omniId, [victim.id, forgerId]);
+  expect(after.binding).toEqual({ type: 'Actor', id: victim.id });
+  expect(after.ids).toEqual({ [victim.id]: victim.omniId, [forgerId]: null });
+  expect(await gmPage.evaluate(async ({ id, omniId }) => {
+    const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+    const a = game.actors.get(id);
+    // The same gate user SyncEngine.onLogin resolves from the flag.
+    const gate = SyncRegistry.gateUser(a.getFlag('omnipresence', 'ownerName') ?? null);
+    return { ownerName: a.getFlag('omnipresence', 'ownerName') ?? null, gate: gate?.name ?? null, selected: !!gate && SyncRegistry.isDocSelected(gate.id, 'actor', omniId) };
+  }, { id: victim.id, omniId: victim.omniId })).toEqual({ ownerName: OTHER, gate: OTHER, selected: true });
+  await gmPage.evaluate(() => foundry.applications.instances.get('omnipresence-dashboard')?.close());
 });
 
 test('(c) a Duplicate made after the upgrade never inherits the bound id', async () => {

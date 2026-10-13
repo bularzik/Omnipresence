@@ -72,9 +72,10 @@ export async function newGmSession(browser) {
 
 /**
  * Sync ids carried by two or more world documents (Actor, JournalEntry,
- * journal Folder), other than `ownIds`, with the carriers' names. A spec that
- * replays the one-time bindings build must skip when this is non-empty: the
- * build would settle those sets and detach real documents.
+ * journal Folder), or recorded under "Duplicate sync ids", other than
+ * `ownIds`, with the carriers' names. A spec that replays the one-time
+ * bindings build must skip when this is non-empty: the build would settle
+ * those sets (detaching real documents) and rewrite the recorded rows.
  */
 export async function foreignDuplicateSets(page, ownIds = []) {
   return page.evaluate((ownIds) => {
@@ -86,7 +87,11 @@ export async function foreignDuplicateSets(page, ownIds = []) {
     for (const a of game.actors) add(a, 'Actor');
     for (const j of game.journal) add(j, 'JournalEntry');
     for (const f of game.folders) if (f.type === 'JournalEntry') add(f, 'Folder');
-    return Object.entries(by).filter(([, docs]) => docs.length > 1).map(([id, docs]) => `${id}: ${docs.join(', ')}`);
+    const sets = Object.entries(by).filter(([, docs]) => docs.length > 1).map(([id, docs]) => `${id}: ${docs.join(', ')}`);
+    const recorded = Object.keys(game.settings.get('omnipresence', 'bindingDuplicates') ?? {})
+      .filter(id => !ownIds.includes(id) && !((by[id]?.length ?? 0) > 1))
+      .map(id => `${id}: recorded duplicate`);
+    return [...sets, ...recorded];
   }, ownIds);
 }
 

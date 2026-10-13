@@ -52,14 +52,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Upgrading keeps existing syncs working when Actors or Journals already
-  share a sync id (for example a synced character duplicated earlier). The
-  choice uses the documents' real ownership in this world, never the owner
-  recorded on the shared copy: when they all have the same ownership, one is
-  kept (enrolled first, then the last to push, then the oldest); otherwise,
-  when exactly one is GM-only, that one is kept. The others lose the sync id
-  and leave sync, and the GM is told once which documents those were. Other
-  sets, and synced folders, are listed in the dashboard under "Duplicate sync
-  ids" and do not sync.
+  share a sync id because one was made with Foundry's Duplicate. Foundry's
+  own record of where each copy came from settles the set: when exactly one
+  document is not a copy, every copy traces back to it, and it is the oldest,
+  it keeps the id and its copies lose the id and leave sync. The GM is told
+  once which documents those were. Ownership is never used to decide, since
+  players can set it on their own documents. Every other set (including
+  duplicates made before Foundry recorded their source, and synced folders)
+  is listed in the dashboard under "Duplicate sync ids" for "Keep this one".
 - "Duplicate sync ids" rows have a GM-only **Keep this one** action per
   document: it binds that document and takes the others carrying the id out
   of sync. A row with the existing shared copy asks for confirmation first,

@@ -57,78 +57,55 @@ export function buildBindings(carriers) {
   return { bindings, duplicates };
 }
 
-const OWNER_LEVEL = 3;
-
-/**
- * The part of an ownership map that grants a non-GM user anything: `default`
- * plus explicit entries of existing non-GM users, as a comparable string.
- * GM entries never matter (a GM owns everything) — Foundry adds the
- * duplicating GM as an explicit owner, which must not make an honest
- * Duplicate look different — and entries of users that no longer exist
- * grant nobody anything.
- */
-function playerOwnership(ownership, users) {
-  const players = new Set((users ?? []).filter(u => !u.isGM).map(u => u.id));
-  const out = { default: Number(ownership?.default ?? 0) };
-  for (const [k, v] of Object.entries(ownership ?? {})) {
-    if (k !== 'default' && players.has(k)) out[k] = Number(v);
-  }
-  return JSON.stringify(Object.keys(out).sort().map(k => [k, out[k]]));
-}
-
-/**
- * Whether no non-GM user holds OWNER on a document, explicitly or through
- * `default` (only a GM can then write it, or its flags).
- * @param {Object<string, number>} ownership
- * @param {Array<{id: string, isGM: boolean}>} users
- */
-export function isGmOnly(ownership, users) {
-  const players = (users ?? []).filter(u => !u.isGM);
-  if (players.length && Number(ownership?.default ?? 0) >= OWNER_LEVEL) return false;
-  return !players.some(u => Number(ownership?.[u.id] ?? 0) >= OWNER_LEVEL);
-}
-
 /**
  * One-time upgrade only (before `bindingsBuilt`): settle an omni id carried
  * by several Actor/JournalEntry documents, so honest duplicates (a Foundry
- * Duplicate of an enrolled document copies its flags) keep syncing. Decided
- * by the carriers' REAL ownership, never by the shared copy's ownerName: a
- * forger's pre-upgrade push re-stamped that name.
- * - Rule A: every carrier has identical (player-relevant) ownership — an
- *   honest Duplicate copies it — so binding any of them gives nobody new
- *   access: prefer enrolled, then the last pusher (its syncedAt equals the
- *   copy's), then the oldest by createdTime, then the id.
- * - Rule B: otherwise, exactly one GM-only carrier → bind it (no player could
- *   have stamped the id on it).
- * - Anything else, any Folder carrier, or fewer than two carriers → keep null
- *   (the set stays listed for the GM).
- * @param {{carriers: Array<{type: string, id: string, enrolled: boolean, ownership: Object<string, number>, lastSyncedAt: string|null, createdTime: number|null}>,
- *   copy: {type?: string, syncedAt: string|null}|null, users: Array<{id: string, isGM: boolean}>}} input
+ * Duplicate of an enrolled document copies its flags) keep syncing.
+ *
+ * Ownership cannot tell the original from a forgery (a forger's push
+ * re-stamped the copy's ownerName, and a player may set `default` and their
+ * own entry at create), so the only signal is Foundry's
+ * `_stats.duplicateSource`: the sidebar Duplicate sets it to the source's
+ * uuid. A carrier is a KNOWN COPY when its duplicateSource names another
+ * carrier of the same id. Bind X only when:
+ * - X is the one carrier that is not a known copy;
+ * - every known copy's duplicateSource chain reaches X through carriers (no
+ *   cycle);
+ * - X has the strictly oldest `_stats.createdTime` (server-set).
+ * The known copies are then detached. Anything else — duplicates from before
+ * Foundry recorded duplicateSource included — stays listed for the GM's
+ * "Keep this one". A player can set duplicateSource only on their own
+ * documents, which can only make their own document lose. Folder carriers
+ * are never resolved.
+ * @param {{carriers: Array<{type: string, id: string, uuid: string, duplicateSource: string|null, createdTime: number|null}>}} input
  * @returns {{keep: {type: string, id: string}|null, detach: Array<{type: string, id: string}>}}
  */
-export function resolveUpgradeDuplicate({ carriers, copy, users }) {
+export function resolveUpgradeDuplicate({ carriers }) {
   const none = { keep: null, detach: [] };
   const list = carriers ?? [];
   if (list.length < 2) return none;
   if (list.some(c => c.type !== 'Actor' && c.type !== 'JournalEntry')) return none;
-  let winner = null;
-  const shapes = new Set(list.map(c => playerOwnership(c.ownership, users)));
-  if (shapes.size === 1) {
-    const pushed = c => (copy?.syncedAt && (!copy.type || c.type === copy.type) && c.lastSyncedAt === copy.syncedAt ? 0 : 1);
-    const created = c => (Number.isFinite(c.createdTime) ? c.createdTime : Infinity);
-    winner = [...list].sort((a, b) =>
-      (a.enrolled ? 0 : 1) - (b.enrolled ? 0 : 1) ||
-      pushed(a) - pushed(b) ||
-      created(a) - created(b) ||
-      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
-  } else {
-    const gmOnly = list.filter(c => isGmOnly(c.ownership, users));
-    if (gmOnly.length === 1) winner = gmOnly[0];
+  const byUuid = new Map(list.map(c => [c.uuid, c]));
+  const sourceOf = c => (c.duplicateSource && c.duplicateSource !== c.uuid ? byUuid.get(c.duplicateSource) ?? null : null);
+  const nonCopies = list.filter(c => !sourceOf(c));
+  if (nonCopies.length !== 1) return none;
+  const [root] = nonCopies;
+  for (const c of list) {
+    if (c === root) continue;
+    const seen = new Set([c]);
+    let at = sourceOf(c);
+    while (at && at !== root && !seen.has(at)) {
+      seen.add(at);
+      at = sourceOf(at);
+    }
+    if (at !== root) return none;
   }
-  if (!winner) return none;
+  const created = c => (Number.isFinite(c.createdTime) ? c.createdTime : null);
+  if (created(root) === null) return none;
+  if (!list.every(c => c === root || (created(c) !== null && created(c) > created(root)))) return none;
   return {
-    keep: { type: winner.type, id: winner.id },
-    detach: list.filter(c => c !== winner).map(({ type, id }) => ({ type, id }))
+    keep: { type: root.type, id: root.id },
+    detach: list.filter(c => c !== root).map(({ type, id }) => ({ type, id }))
   };
 }
 
