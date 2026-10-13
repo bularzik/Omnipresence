@@ -27,12 +27,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   another world before they install.
 - Same-named users in two worlds no longer delete each other's shared macros:
   a world only removes macro copies it pushed itself.
-- **Login sync pulls only into the bound document.** Once a world has recorded
-  its bindings, a document that is not bound to its sync id never pulls from (or
-  pushes over) an existing shared copy, even if no other document here is bound
-  to that id. This closes a cross-world race where a copy created by a forged
-  id overwrote the real owner's document at its next login. Refused documents
-  are logged and, on a GM client, listed under "Duplicate sync ids".
+- **Sync pulls only into the bound document.** Once a world has recorded its
+  bindings, a document that is not bound to its sync id never pulls from (or,
+  at login, pushes over) an existing shared copy, even if no other document
+  here is bound to that id. This applies to every pull: login sync, the
+  dashboard's Force Pull for actors, journals and folders, and the login
+  map-pin refresh. It closes a cross-world race where a copy created by a
+  forged id overwrote the real owner's document. Refused documents are logged
+  and, by the active GM, listed under "Duplicate sync ids" with the shared
+  copy. Such a row is never bound automatically (a GM re-bind action is
+  planned); removing its document from sync clears it.
+- A later refusal of the same sync id no longer drops the "shared copy" mark
+  from its "Duplicate sync ids" row, which could have let the row's document
+  be bound automatically.
 - Legacy bare-string `pendingRemove` flags on journals are dropped: they carry
   no author, so they cannot be told from a forgery.
 - Release note: GM-only macro copies that leaked into the shared macros pack
@@ -43,7 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Documents that already shared a sync id in a world are listed in the
-  dashboard under "Duplicate sync ids" and do not sync until the GM keeps one.
+  dashboard under "Duplicate sync ids" and do not sync until the GM keeps one:
+  Remove from Sync takes a document off the list, and the one document left
+  in sync is bound and syncs again.
 - Only the active GM pushes edits automatically when several GMs are
   connected; Force Push and enrolling still work for any GM.
 - A macro the GM shares with everyone, without giving a player ownership, no
