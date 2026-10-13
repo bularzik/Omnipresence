@@ -44,7 +44,7 @@ The macros on your hotbar that you own — both Chat and Script types — are ke
 
 Each user's macros are stored independently, so two players can have completely different hotbars without interfering with each other.
 
-**GMs approve script macros.** When a GM logs in and one of their script macros is new to this world, or its code was changed in another world, Omnipresence does not install it silently. A dialog lists each one — name, owner, the world it came from, and its code — with **Install** and **Skip**. Install remembers that exact code in this browser, so it is not asked about again; Skip leaves the macro out until your next login. Chat macros, and macros pulled by players (which run with the player's own permissions), install as before.
+**GMs approve script macros.** When a GM logs in and one of their script macros is new to this world, or its code was changed in another world, Omnipresence does not install it silently. A dialog lists each one — name, owner, the world it came from, and its code — with **Install** and **Skip**. The choice is all-or-nothing: Install installs every listed macro and remembers that exact code in this browser, so it is not asked about again; Skip skips them all and you are asked again at your next login. Chat macros, and macros pulled by players (which run with the player's own permissions), install as before.
 
 ### Journal sync
 
@@ -74,7 +74,7 @@ Open **Configure Settings → Module Settings → Manage Sync** to view and mana
 
 **Players** see only their own documents, with controls to force pull (overwrite the local copy with the shared version) or remove from sync. Players cannot force push — only a GM can write to the shared compendium. When several GMs are connected, only the active GM (Foundry's designated GM) pushes edits automatically; any GM can still Force Push or enroll.
 
-If two or more documents in the world carry the same sync id (for example a character duplicated after it was enrolled), the dashboard lists them under **Duplicate sync ids**. None of them syncs until you remove the extra copies with **Remove from Sync**; the one left syncs again straight away.
+If two or more documents in the world carry the same sync id (for example a character duplicated after it was enrolled), the dashboard lists them under **Duplicate sync ids**. The document the world has bound to that id (the original, once the world has recorded its bindings) keeps syncing; a second document carrying the same id is refused and listed for the GM. The same happens to a document whose id is unbound but whose shared copy already exists (listed with the shared copy). If the world upgraded while two documents already carried one id, neither is bound and neither syncs until you remove the extra copies with **Remove from Sync**; the one left syncs again straight away.
 
 ## Per-User Sync Preferences
 
@@ -107,7 +107,7 @@ Because only a GM can write to the shared compendium, players resolve conflicts 
 
 **Players sync their own content because of that same behaviour.** A player's client reads its own characters, journals and macros from the hidden packs at login, with no GM online. If a future Foundry version starts enforcing pack permissions on reads, players would stop receiving updates until a GM logs in. The fallback design for that case is to split each pack into a GM-only pack and a player pack.
 
-**No player can change or delete someone else's synced document.** Each world records which of its documents each shared copy belongs to. Only that document can update or delete the copy, and links resolve only to it. A sync id copied onto another document — by hand, by a macro, or by duplicating an enrolled document — is ignored, with a warning in the console. When upgrading, the first GM login records this from the world's documents. If two documents already carried the same id, neither syncs until the GM keeps one (see [Settings Dashboard](#settings-dashboard)).
+**No player can change or delete someone else's synced document.** Each world records which of its documents each shared copy belongs to. Only that document can update or delete the copy, and links resolve only to it. A sync id copied onto another document — by hand, by a macro, or by duplicating an enrolled document — is ignored, with a warning in the console. When upgrading, the active GM's first login records this from the world's documents. If two documents already carried the same id, neither syncs until the GM keeps one (see [Settings Dashboard](#settings-dashboard)).
 
 **Macros:** only macros you own sync from your hotbar, a world only removes the shared macro copies it pushed itself, and a GM approves any script macro that is new to a world or was changed elsewhere (see [Hotbar macro sync](#hotbar-macro-sync)).
 

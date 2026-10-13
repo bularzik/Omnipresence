@@ -27,6 +27,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   another world before they install.
 - Same-named users in two worlds no longer delete each other's shared macros:
   a world only removes macro copies it pushed itself.
+- **Login sync pulls only into the bound document.** Once a world has recorded
+  its bindings, a document that is not bound to its sync id never pulls from (or
+  pushes over) an existing shared copy, even if no other document here is bound
+  to that id. This closes a cross-world race where a copy created by a forged
+  id overwrote the real owner's document at its next login. Refused documents
+  are logged and, on a GM client, listed under "Duplicate sync ids".
+- Legacy bare-string `pendingRemove` flags on journals are dropped: they carry
+  no author, so they cannot be told from a forgery.
+- Release note: GM-only macro copies that leaked into the shared macros pack
+  before this upgrade stay there until a GM removes them (the pack is hidden
+  from players; the fix prevents new leaks only).
+- A script macro approved by a GM is now approved by the command that was
+  shown in the dialog, not whatever the shared copy holds when Install is clicked.
 
 ### Changed
 - Documents that already shared a sync id in a world are listed in the
