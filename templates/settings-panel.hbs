@@ -1,5 +1,14 @@
 <div id="omnipresence-dashboard">
   {{#if isGM}}
+  {{#if duplicates.length}}
+  <h3 class="omnipresence-section">{{localize "OMNIPRESENCE.dashboard.duplicatesHeading"}}</h3>
+  <p class="notes">{{localize "OMNIPRESENCE.dashboard.duplicatesHint"}}</p>
+  <ul class="omnipresence-duplicates">
+    {{#each duplicates}}
+    <li><code>{{this.omniId}}</code>: {{#each this.docs}}{{this.name}} ({{this.type}}){{#unless @last}}, {{/unless}}{{/each}}</li>
+    {{/each}}
+  </ul>
+  {{/if}}
   <h3 class="omnipresence-section">{{localize "OMNIPRESENCE.dashboard.actorsHeading"}}</h3>
   <table class="omnipresence-table">
     <thead>

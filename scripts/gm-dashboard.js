@@ -2,6 +2,7 @@ import { SyncRegistry } from './sync-registry.js';
 import { SyncEngine } from './sync-engine.js';
 import { JournalSync } from './journal-sync.js';
 import { FolderSync } from './folder-sync.js';
+import { Bindings } from './bindings.js';
 import { deriveConflictState } from './sync-logic.js';
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
@@ -142,7 +143,11 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
       };
     });
 
-    return { isGM, actors, journals, folders, conflictsOnly };
+    // Upgraded worlds: sync ids carried by more than one document (their
+    // pushes are refused until the GM keeps one; see Bindings.build).
+    const duplicates = isGM && !conflictsOnly ? Bindings.duplicateRows() : [];
+
+    return { isGM, actors, journals, folders, conflictsOnly, duplicates };
   }
 
   /**
@@ -188,6 +193,8 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     if (!actor) return;
     if (!game.user.isGM && !actor.isOwner) return;
     await SyncRegistry.unenroll(actor);
+    // Removing the extra copies is how a GM resolves a duplicate sync id.
+    if (game.user.isGM) await Bindings.resolveDuplicates();
     ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.unenrolled', { name: actor.name }));
     this.render();
   }
@@ -235,6 +242,8 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     if (!journal) return;
     if (!game.user.isGM && !journal.isOwner) return;
     await SyncRegistry.unenroll(journal);
+    // Removing the extra copies is how a GM resolves a duplicate sync id.
+    if (game.user.isGM) await Bindings.resolveDuplicates();
     ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.unenrolled', { name: journal.name }));
     this.render();
   }

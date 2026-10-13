@@ -68,7 +68,7 @@ export class LinkRewriter {
     // Synced journal folders carry module flags that can link to a member
     // journal (a campaign's default timeline) imported after the folder.
     // Only a GM can write folders; one GM is enough.
-    if (game.user.isGM && game.users.activeGM?.id === game.user.id) {
+    if (SyncRegistry.isPusher()) {
       for (const folder of game.folders.filter(f => f.type === 'JournalEntry' && f.getFlag('omnipresence', 'id'))) {
         try {
           await this._localizeFolder(folder, map, canonicalIds);

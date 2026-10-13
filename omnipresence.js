@@ -11,9 +11,11 @@ import { Onboarding } from './scripts/onboarding.js';
 import { runLoginReconcile } from './scripts/reconcile.js';
 import { FolderDirectory } from './scripts/folder-directory.js';
 import { unlockPacks, hidePacksFromPlayers } from './scripts/pack-ownership.js';
+import { Bindings } from './scripts/bindings.js';
 
 Hooks.once('init', () => {
   SyncRegistry.register();
+  Bindings.register();
 
   game.settings.registerMenu('omnipresence', 'dashboard', {
     name: 'OMNIPRESENCE.settings.dashboard.name',
@@ -41,6 +43,14 @@ Hooks.once('ready', async () => {
       await hidePacksFromPlayers();
     } catch (err) {
       console.error('Omnipresence | pack ownership check failed', err);
+    }
+    try {
+      // Active GM: bind each shared copy to its local document (built from
+      // this world's documents on the first login after the upgrade) before
+      // anything below pushes.
+      await Bindings.init();
+    } catch (err) {
+      console.error('Omnipresence | binding setup failed', err);
     }
   }
   // Folder sync is explicit per world since 0.9.0: users whose folders were

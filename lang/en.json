@@ -77,5 +77,7 @@
   "OMNIPRESENCE.sharedFolders.heading": "Shared from other worlds",
   "OMNIPRESENCE.sharedFolders.syncHere": "Sync here",
   "OMNIPRESENCE.sharedFolders.waiting": "Waiting for a GM",
-  "OMNIPRESENCE.notifications.packsRehidden": "Omnipresence: {packs} had been opened to players in this world's Compendium settings. They hold synced content from every world on this server, so they were hidden from players again."
+  "OMNIPRESENCE.notifications.packsRehidden": "Omnipresence: {packs} had been opened to players in this world's Compendium settings. They hold synced content from every world on this server, so they were hidden from players again.",
+  "OMNIPRESENCE.dashboard.duplicatesHeading": "Duplicate sync ids — resolve by unenrolling one copy",
+  "OMNIPRESENCE.dashboard.duplicatesHint": "Each id below is carried by more than one document, so none of them syncs. Remove the extra copies from sync (Remove from Sync in the tables below); the one left syncs again."
 }

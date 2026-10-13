@@ -370,7 +370,7 @@ export class FolderSync {
 
   /** The one GM client that drains pending records and imports pack roots (op-nbs). */
   static _isResponsibleGM() {
-    return game.user.isGM && game.users.activeGM?.id === game.user.id;
+    return SyncRegistry.isPusher();
   }
 
   // --- pending records (player marks/unmarks; GM drains them) -------------
