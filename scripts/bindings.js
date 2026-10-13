@@ -1,5 +1,15 @@
 import { SyncRegistry } from './sync-registry.js';
-import { decidePushBinding, buildBindings, resolveDuplicateBindings, pullAllowed, mergeDuplicateRecord, pushRefusalRecord } from './security-logic.js';
+import { SyncEngine } from './sync-engine.js';
+import { JournalSync } from './journal-sync.js';
+import {
+  decidePushBinding, buildBindings, resolveDuplicateBindings, pullAllowed, mergeDuplicateRecord, pushRefusalRecord,
+  resolveUpgradeDuplicate
+} from './security-logic.js';
+
+// The sync flags a detached document loses: without its omni id it is an
+// ordinary local document again, and enrolling it later stamps a fresh id
+// (SyncRegistry.enroll only creates one when the flag is missing).
+const DETACH_FLAGS = ['id', 'enrolled', 'viaFolder', 'wasIndividual', 'pendingEnter', 'pendingRemove'];
 
 /**
  * Shared-copy bindings (#1, #2, #6): which local document in THIS world may
@@ -172,25 +182,167 @@ export class Bindings {
   /**
    * Bind every omni id carried by exactly one document. Ids carried by two
    * or more stay unbound (their pushes are refused) and are listed in the
-   * dashboard, because a pre-upgrade forgery looks exactly like this.
+   * dashboard, because a pre-upgrade forgery looks exactly like this —
+   * except a set the shared copy's owner settles (_resolveUpgradeDuplicates).
+   * Runs once per world: never after `bindingsBuilt`.
    */
   static async build() {
+    if (game.settings.get('omnipresence', this.BUILT)) return;
     const { bindings, duplicates } = buildBindings(this._carriers());
     const existing = game.settings.get('omnipresence', this.SETTING) ?? {};
     const fresh = Object.fromEntries(Object.entries(bindings).filter(([k]) => !(k in existing)));
     await this._write(fresh);
     await game.settings.set('omnipresence', this.DUPLICATES, duplicates);
+    const detached = await this._resolveUpgradeDuplicates(Object.keys(duplicates));
     await game.settings.set('omnipresence', this.BUILT, true);
-    const n = Object.keys(duplicates).length;
+    if (detached.length) {
+      ui.notifications.warn(
+        game.i18n.format('OMNIPRESENCE.notifications.upgradeDetached', { names: detached.map(d => d.name).join(', ') }),
+        { permanent: true }
+      );
+    }
+    const n = Object.keys(game.settings.get('omnipresence', this.DUPLICATES) ?? {}).length;
     if (n) console.warn(`Omnipresence | ${n} sync id(s) are carried by more than one document; see the Omnipresence dashboard.`);
   }
 
   /**
+   * One-time upgrade only (called from build): an honest world can already
+   * hold several documents with one omni id — a Foundry Duplicate of an
+   * enrolled document copies its flags. Left listed, the login pull marks
+   * them SharedCopy and they never sync again. When the id has a shared
+   * copy, keep the carrier owned like the copy (the copy's ownerName was
+   * stamped by a GM push from real ownership, which a player cannot forge)
+   * and detach the rest. After the build, new duplicates go through the
+   * create hook (clearInheritedId) and the dashboard's Keep action instead.
+   * @param {string[]} omniIds the ids build() found duplicated
+   * @returns {Promise<Array>} the detached documents
+   */
+  static async _resolveUpgradeDuplicates(omniIds) {
+    if (!omniIds.length) return [];
+    const carriers = this._carriers();
+    const copies = {};
+    const copyFor = async (type, omniId) => {
+      const pack = game.packs.get(type === 'Actor' ? SyncEngine.PACK_ID : JournalSync.PACK_ID);
+      copies[type] ??= pack ? await pack.getDocuments() : [];
+      return copies[type].find(d => d.getFlag('omnipresence', 'id') === omniId) ?? null;
+    };
+    const detached = [];
+    for (const omniId of omniIds) {
+      try {
+        const docs = carriers.filter(c => c.omniId === omniId);
+        if (docs.some(c => c.type !== 'Actor' && c.type !== 'JournalEntry')) continue;
+        let copy = null;
+        for (const type of ['Actor', 'JournalEntry']) {
+          if (copy || !docs.some(c => c.type === type)) continue;
+          const found = await copyFor(type, omniId);
+          if (found) copy = { type, ownerName: found.getFlag('omnipresence', 'ownerName') ?? null, syncedAt: found.getFlag('omnipresence', 'syncedAt') ?? null };
+        }
+        const { keep } = resolveUpgradeDuplicate({
+          copy,
+          carriers: docs.map(c => {
+            const doc = this._lookup(c.type, c.id);
+            return {
+              type: c.type, id: c.id, enrolled: c.enrolled,
+              // Resolved on this GM client the way push stamps the copy, so a
+              // GM-owned document compares as null.
+              owner: SyncRegistry.resolveOwnerName(doc),
+              lastSyncedAt: doc.getFlag('omnipresence', 'syncedAt') ?? null,
+              createdTime: doc._stats?.createdTime ?? null
+            };
+          })
+        });
+        if (keep) detached.push(...await this.keep(omniId, keep));
+      } catch (err) {
+        console.error('Omnipresence | upgrade duplicate resolve failed for', omniId, err);
+      }
+    }
+    return detached;
+  }
+
+  /** The local Actor, JournalEntry or Folder a carrier/binding names, or null. */
+  static _lookup(type, id) {
+    if (type === 'Actor') return game.actors.get(id) ?? null;
+    if (type === 'JournalEntry') return game.journal.get(id) ?? null;
+    if (type === 'Folder') return game.folders.get(id) ?? null;
+    return null;
+  }
+
+  /** Take `doc` out of sync for good: drop its omni id and enrollment flags. */
+  static _detach(doc) {
+    const update = Object.fromEntries(DETACH_FLAGS.map(k => [`flags.omnipresence.-=${k}`, null]));
+    return doc.update(update, { omnipresenceInternal: true });
+  }
+
+  /**
+   * GM: make `target` ({type, id}) the document bound to `omniId`, take
+   * every other local Actor/JournalEntry carrier of the id out of sync, drop
+   * the id's duplicates record and put the kept document back on its gate
+   * user's allow-list. The dashboard's "Keep this one" and the one-time
+   * upgrade both settle a duplicate through here.
+   * @returns {Promise<Array>} the detached documents
+   */
+  static async keep(omniId, target) {
+    if (!game.user.isGM) return [];
+    const doc = this._lookup(target.type, target.id);
+    if (!doc || doc.getFlag('omnipresence', 'id') !== omniId) return [];
+    const others = this._carriers().filter(c =>
+      c.omniId === omniId && (c.type === 'Actor' || c.type === 'JournalEntry') &&
+      !(c.type === target.type && c.id === target.id));
+    const detached = [];
+    for (const c of others) {
+      const other = this._lookup(c.type, c.id);
+      if (!other) continue;
+      await this._detach(other);
+      detached.push(other);
+    }
+    await this._write({ [omniId]: { type: target.type, id: target.id } });
+    const recorded = { ...(game.settings.get('omnipresence', this.DUPLICATES) ?? {}) };
+    if (omniId in recorded) {
+      delete recorded[omniId];
+      await game.settings.set('omnipresence', this.DUPLICATES, recorded);
+    }
+    await this._readmit(omniId, target);
+    return detached;
+  }
+
+  /**
+   * Put a newly bound document back on its gate user's allow-list.
+   * Unenrolling (or detaching) the other carriers removed the shared omni id
+   * from that list (unenroll is keyed by omni id) — without this its pushes
+   * work but login reconcile would skip it.
+   */
+  static async _readmit(omniId, { type, id }) {
+    const doc = type === 'Actor' || type === 'JournalEntry' ? this._lookup(type, id) : null;
+    // Folders and folder members are gated by their root's folderIds entry, not one by one.
+    if (!doc || doc.getFlag('omnipresence', 'viaFolder')) return;
+    const gate = SyncRegistry.gateUser(doc.getFlag('omnipresence', 'ownerName') ?? null);
+    if (gate) await SyncRegistry.addToSelection(gate.id, type === 'Actor' ? 'actor' : 'journal', omniId);
+  }
+
+  /**
+   * Active GM, createActor/createJournalEntry: a new document must never
+   * inherit an omni id bound to another document that still exists here —
+   * Foundry's Duplicate copies every flag, and so does a hand import. Clear
+   * the id and enrollment flags so the copy is an ordinary document (enroll
+   * it to share it as its own). Internal creates (GM imports, which bind
+   * the new document) pass `omnipresenceInternal` and are left alone.
+   */
+  static async clearInheritedId(doc, options) {
+    if (options?.omnipresenceInternal || doc.pack) return;
+    if (!SyncRegistry.isPusher()) return;
+    if (!game.settings.get('omnipresence', this.BUILT)) return;
+    const omniId = doc.getFlag('omnipresence', 'id');
+    if (!omniId) return;
+    const bound = this.get(omniId);
+    if (!bound || (bound.type === doc.documentName && bound.id === doc.id)) return;
+    if (!this._lookup(bound.type, bound.id)) return;
+    await this._detach(doc);
+    console.info(`Omnipresence | cleared the sync id inherited by new ${doc.documentName} "${doc.name}" (${doc.id}): ${omniId} belongs to another document.`);
+  }
+
+  /**
    * GM: bind a duplicate once exactly one enrolled carrier is left; drop ones
-   * with none. Unenrolling the other carriers removed the shared omni id from
-   * the gate user's allow-list (unenroll is keyed by omni id), so put the
-   * survivor back on it — otherwise its pushes work but login reconcile
-   * would skip it.
+   * with none, and put the survivor back on its gate user's allow-list.
    */
   static async resolveDuplicates() {
     if (!game.user.isGM) return;
@@ -199,28 +351,26 @@ export class Bindings {
     const { bind, remaining } = resolveDuplicateBindings(recorded, this._carriers());
     await this._write(bind);
     await game.settings.set('omnipresence', this.DUPLICATES, remaining);
-    for (const [omniId, { type, id }] of Object.entries(bind)) {
-      const doc = type === 'Actor' ? game.actors.get(id) : type === 'JournalEntry' ? game.journal.get(id) : null;
-      // Folders and folder members are gated by their root's folderIds entry, not one by one.
-      if (!doc || doc.getFlag('omnipresence', 'viaFolder')) continue;
-      const gate = SyncRegistry.gateUser(doc.getFlag('omnipresence', 'ownerName') ?? null);
-      if (gate) await SyncRegistry.addToSelection(gate.id, type === 'Actor' ? 'actor' : 'journal', omniId);
-    }
+    for (const [omniId, target] of Object.entries(bind)) await this._readmit(omniId, target);
   }
 
-  /** Dashboard rows for the recorded duplicates, with document names. */
+  /**
+   * Dashboard rows for the recorded duplicates, with document names. Each
+   * local Actor/JournalEntry that still carries the id can be kept.
+   */
   static duplicateRows() {
     const recorded = game.settings.get('omnipresence', this.DUPLICATES) ?? {};
-    const lookup = {
-      Actor: id => game.actors.get(id),
-      JournalEntry: id => game.journal.get(id),
-      Folder: id => game.folders.get(id)
-    };
     return Object.entries(recorded).map(([omniId, docs]) => ({
       omniId,
-      docs: docs.map(({ type, id }) => type === 'SharedCopy'
-        ? { type: game.i18n.localize('OMNIPRESENCE.dashboard.sharedCopy'), name: game.i18n.localize('OMNIPRESENCE.dashboard.sharedCopyName') }
-        : { type, name: lookup[type]?.(id)?.name ?? id })
+      sharedCopy: docs.some(d => d.type === 'SharedCopy'),
+      docs: docs.map(({ type, id }) => {
+        if (type === 'SharedCopy') {
+          return { type: game.i18n.localize('OMNIPRESENCE.dashboard.sharedCopy'), name: game.i18n.localize('OMNIPRESENCE.dashboard.sharedCopyName') };
+        }
+        const doc = this._lookup(type, id);
+        const keepable = (type === 'Actor' || type === 'JournalEntry') && doc?.getFlag('omnipresence', 'id') === omniId;
+        return { type, id, omniId, name: doc?.name ?? id, keepable };
+      })
     }));
   }
 }

@@ -272,7 +272,8 @@ export class SyncEngine {
           ? { default: 0, [matchingUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER }
           : { default: 0 };
 
-        const created = await Actor.create(actorData, { keepId: true });
+        // Internal: the createActor hook must not clear the id this import sets.
+        const created = await Actor.create(actorData, { keepId: true, omnipresenceInternal: true });
         await SyncRegistry.enroll(created);
         // A GM import comes from the pack: this local actor now owns the copy here.
         await Bindings.bind(created);

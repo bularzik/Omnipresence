@@ -32,7 +32,8 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
       removeSyncJournal: this._onRemoveSyncJournal,
       forcePushFolder: this._onForcePushFolder,
       forcePullFolder: this._onForcePullFolder,
-      removeSyncFolder: this._onRemoveSyncFolder
+      removeSyncFolder: this._onRemoveSyncFolder,
+      keepDuplicate: this._onKeepDuplicate
     }
   };
 
@@ -267,6 +268,30 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     const folder = game.folders.get(target.closest('[data-folder-id]').dataset.folderId);
     if (!folder) return;
     await FolderSync.pullFolder(folder);
+    this.render();
+  }
+
+  /**
+   * GM: settle a Duplicate sync ids row by keeping one of its documents
+   * (Bindings.keep binds it and takes the others out of sync). A row listed
+   * with the existing shared copy is confirmed first: that copy may have been
+   * written by another world, and it is pulled into the kept document at
+   * the next sync.
+   */
+  static async _onKeepDuplicate(event, target) {
+    if (!game.user.isGM) return;
+    const { omniId, docType, docId } = target.closest('[data-doc-id]').dataset;
+    const record = game.settings.get('omnipresence', Bindings.DUPLICATES)?.[omniId] ?? [];
+    if (record.some(d => d.type === 'SharedCopy')) {
+      const name = Bindings._lookup(docType, docId)?.name ?? docId;
+      const ok = await foundry.applications.api.DialogV2.confirm({
+        window: { title: game.i18n.localize('OMNIPRESENCE.dashboard.keepConfirmTitle') },
+        content: `<p>${game.i18n.format('OMNIPRESENCE.dashboard.keepConfirmContent', { name: foundry.utils.escapeHTML(name) })}</p>`,
+        classes: ['omnipresence-keep-confirm']
+      });
+      if (!ok) return;
+    }
+    await Bindings.keep(omniId, { type: docType, id: docId });
     this.render();
   }
 

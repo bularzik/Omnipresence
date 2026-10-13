@@ -121,6 +121,13 @@ Hooks.on('updateActor', (actor, changes, options, userId) => {
 // Folder members are the exception and are handled in deleteJournalEntry.
 Hooks.on('deleteActor', (_actor, _options, _userId) => {});
 
+// Foundry's Duplicate (and a hand import) copies every flag, so the new actor
+// would carry a sync id bound to the original: the active GM clears it.
+Hooks.on('createActor', (actor, options, _userId) => {
+  Bindings.clearInheritedId(actor, options)
+    .catch(err => console.error('Omnipresence | createActor handling failed', err));
+});
+
 // v13 renamed directory context-menu hooks to get{DocumentName}ContextOptions;
 // the v12 name (getActorDirectoryEntryContext) no longer fires. The callback
 // receives (application, entryOptions) — the entry element passed to each
@@ -245,7 +252,10 @@ Hooks.on('deleteFolder', (folder, options, userId) =>
   FolderSync.handleFolderDelete(folder, options, userId)
     .catch(err => console.error('Omnipresence | deleteFolder handling failed', err)));
 // A journal created inside a synced folder joins the sync (the single-journal
-// path never enrolled on create; this fires only for folder members).
+// path never enrolled on create; this fires only for folder members). First,
+// a Duplicate's inherited sync id is cleared (see createActor), so a copy made
+// inside a synced folder enrolls under a fresh id instead of the original's.
 Hooks.on('createJournalEntry', (journal, options, userId) =>
-  FolderSync.handleMemberCreate(journal, options, userId)
+  Bindings.clearInheritedId(journal, options)
+    .then(() => FolderSync.handleMemberCreate(journal, options, userId))
     .catch(err => console.error('Omnipresence | createJournalEntry handling failed', err)));

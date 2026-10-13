@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   decidePushBinding, buildBindings, resolveDuplicateBindings, boundOmniToLocal, validateFolderRemoval,
-  judgePendingRemoveClaim, pullAllowed, mergeDuplicateRecord, pushRefusalRecord
+  judgePendingRemoveClaim, pullAllowed, mergeDuplicateRecord, pushRefusalRecord, resolveUpgradeDuplicate
 } from '../scripts/security-logic.js';
 
 // --- Login pull rule (cross-world first-push race) --------------------------
@@ -143,6 +143,100 @@ test('buildBindings: unique ids bound, duplicates left unbound and reported', ()
   ]);
   assert.deepEqual(bindings, { U: { type: 'Actor', id: 'a1' }, F: { type: 'Folder', id: 'f1' } });
   assert.deepEqual(duplicates, { D: [{ type: 'JournalEntry', id: 'j1' }, { type: 'Actor', id: 'a2' }] });
+});
+
+// --- One-time upgrade: owner-match auto-resolve -----------------------------
+
+const T1 = '2026-01-01T00:00:00.000Z';
+const T2 = '2026-02-01T00:00:00.000Z';
+const actorCarrier = (id, extra = {}) => ({
+  type: 'Actor', id, enrolled: true, owner: null, lastSyncedAt: T1, createdTime: 100, ...extra
+});
+
+test('resolveUpgradeDuplicate: GM-owned copy, two GM carriers → keep the last pusher', () => {
+  const out = resolveUpgradeDuplicate({
+    carriers: [
+      actorCarrier('older', { lastSyncedAt: T1, createdTime: 100 }),
+      actorCarrier('pusher', { lastSyncedAt: T2, createdTime: 200 })
+    ],
+    copy: { ownerName: null, syncedAt: T2 }
+  });
+  assert.deepEqual(out, { keep: { type: 'Actor', id: 'pusher' }, detach: [{ type: 'Actor', id: 'older' }] });
+});
+
+test('resolveUpgradeDuplicate: no timestamp match → keep the oldest (tie broken by id)', () => {
+  const out = resolveUpgradeDuplicate({
+    carriers: [
+      actorCarrier('b', { createdTime: 300 }),
+      actorCarrier('z', { createdTime: 100 }),
+      actorCarrier('a', { createdTime: 100 })
+    ],
+    copy: { ownerName: null, syncedAt: T2 }
+  });
+  assert.deepEqual(out.keep, { type: 'Actor', id: 'a' });
+  assert.deepEqual(out.detach, [{ type: 'Actor', id: 'b' }, { type: 'Actor', id: 'z' }]);
+});
+
+test('resolveUpgradeDuplicate: several carriers match the timestamp (a Duplicate copies flags) → the oldest of them', () => {
+  const out = resolveUpgradeDuplicate({
+    carriers: [
+      actorCarrier('clone', { lastSyncedAt: T2, createdTime: 500 }),
+      actorCarrier('original', { lastSyncedAt: T2, createdTime: 100 }),
+      actorCarrier('stale', { lastSyncedAt: T1, createdTime: 50 })
+    ],
+    copy: { ownerName: null, syncedAt: T2 }
+  });
+  assert.deepEqual(out.keep, { type: 'Actor', id: 'original' });
+  assert.deepEqual(out.detach, [{ type: 'Actor', id: 'clone' }, { type: 'Actor', id: 'stale' }]);
+});
+
+test('resolveUpgradeDuplicate: player forger + GM original, GM-owned copy → keep the GM original, detach the forger', () => {
+  const out = resolveUpgradeDuplicate({
+    carriers: [
+      actorCarrier('forger', { owner: 'User 1', lastSyncedAt: T2, createdTime: 1 }),
+      actorCarrier('original', { owner: null, lastSyncedAt: T1, createdTime: 900, enrolled: false })
+    ],
+    copy: { ownerName: null, syncedAt: T2 }
+  });
+  assert.deepEqual(out, { keep: { type: 'Actor', id: 'original' }, detach: [{ type: 'Actor', id: 'forger' }] });
+});
+
+test('resolveUpgradeDuplicate: no carrier owned like the copy → keep null, nothing detached', () => {
+  const out = resolveUpgradeDuplicate({
+    carriers: [actorCarrier('a', { owner: 'User 1' }), actorCarrier('b', { owner: 'User 2' })],
+    copy: { ownerName: null, syncedAt: T1 }
+  });
+  assert.deepEqual(out, { keep: null, detach: [] });
+});
+
+test('resolveUpgradeDuplicate: a Folder carrier → not resolved', () => {
+  const out = resolveUpgradeDuplicate({
+    carriers: [
+      { type: 'Folder', id: 'f1', enrolled: true, owner: null, lastSyncedAt: T1, createdTime: 1 },
+      { type: 'JournalEntry', id: 'j1', enrolled: true, owner: null, lastSyncedAt: T1, createdTime: 2 }
+    ],
+    copy: { ownerName: null, syncedAt: T1 }
+  });
+  assert.deepEqual(out, { keep: null, detach: [] });
+});
+
+test('resolveUpgradeDuplicate: no shared copy → keep null', () => {
+  const out = resolveUpgradeDuplicate({
+    carriers: [actorCarrier('a'), actorCarrier('b')],
+    copy: null
+  });
+  assert.deepEqual(out, { keep: null, detach: [] });
+});
+
+test('resolveUpgradeDuplicate: only carriers of the copy\'s document type are candidates', () => {
+  const out = resolveUpgradeDuplicate({
+    carriers: [
+      { type: 'JournalEntry', id: 'j1', enrolled: true, owner: null, lastSyncedAt: T2, createdTime: 1 },
+      actorCarrier('a1', { lastSyncedAt: T2, createdTime: 5 })
+    ],
+    copy: { type: 'Actor', ownerName: null, syncedAt: T2 }
+  });
+  assert.deepEqual(out, { keep: { type: 'Actor', id: 'a1' }, detach: [{ type: 'JournalEntry', id: 'j1' }] });
 });
 
 test('resolveDuplicateBindings: one enrolled carrier left → bound; none left → dropped; several → kept', () => {

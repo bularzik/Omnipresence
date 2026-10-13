@@ -5,7 +5,7 @@
   <p class="notes">{{localize "OMNIPRESENCE.dashboard.duplicatesHint"}}</p>
   <ul class="omnipresence-duplicates">
     {{#each duplicates}}
-    <li><code>{{this.omniId}}</code>: {{#each this.docs}}{{this.name}} ({{this.type}}){{#unless @last}}, {{/unless}}{{/each}}</li>
+    <li data-omni-id="{{this.omniId}}"><code>{{this.omniId}}</code>: {{#each this.docs}}{{this.name}} ({{this.type}}){{#if this.keepable}} <a data-action="keepDuplicate" data-omni-id="{{this.omniId}}" data-doc-type="{{this.type}}" data-doc-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.keepThisHint"}}"><i class="fas fa-thumbtack"></i> {{localize "OMNIPRESENCE.dashboard.keepThis"}}</a>{{/if}}{{#unless @last}}, {{/unless}}{{/each}}</li>
     {{/each}}
   </ul>
   {{/if}}

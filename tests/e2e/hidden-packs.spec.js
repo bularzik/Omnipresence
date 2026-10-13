@@ -160,7 +160,7 @@ test('a GM confirms a script macro changed in another world before it installs',
   await expect(dialog).toHaveCount(0);
 });
 
-test('documents sharing a sync id are listed in the dashboard and refused until the GM keeps one', async () => {
+test('documents sharing a sync id that the upgrade cannot settle are listed and refused until the GM keeps one', async () => {
   test.setTimeout(90_000);
   const ids = await gmPage.evaluate(async (PREFIX) => {
     const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
@@ -169,11 +169,16 @@ test('documents sharing a sync id are listed in the dashboard and refused until 
     const keep = await Actor.create({ name: `${PREFIX} Dup Keep`, type: 'npc' });
     const omniId = await SyncRegistry.enroll(keep);
     await SyncEngine.push(keep);
-    // A pre-upgrade duplicate: a second enrolled actor carrying the same id.
+    // A pre-upgrade duplicate the upgrade cannot settle by itself: the copy is
+    // GM-owned, but both carriers now belong to a player, so neither is owned
+    // like the copy. Internal writes: no hook may push or clear the id.
+    const player = game.users.getName('User 1');
+    const playerOwned = { default: 0, [player.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER };
+    await keep.update({ ownership: playerOwned }, { omnipresenceInternal: true });
     const extra = await Actor.create({
-      name: `${PREFIX} Dup Extra`, type: 'npc',
+      name: `${PREFIX} Dup Extra`, type: 'npc', ownership: playerOwned,
       flags: { omnipresence: { id: omniId, enrolled: true } }
-    });
+    }, { omnipresenceInternal: true });
     // Replay the first-login build as an upgraded world would see it.
     const map = { ...game.settings.get('omnipresence', 'bindings') };
     delete map[omniId];
@@ -212,11 +217,16 @@ test('documents sharing a sync id are listed in the dashboard and refused until 
   await expect(list).toContainText(`${PREFIX} Dup Keep`, { timeout: 10_000 });
   await expect(list).toContainText(`${PREFIX} Dup Extra`);
 
-  // The GM removes the extra copy from sync: the list clears, the survivor is
-  // back on its gate user's allow-list (so login reconcile syncs it too), and
-  // its push lands.
-  await gmPage.locator(`a[data-action="removeSync"][data-actor-id="${ids.extraId}"]`).first().click();
+  // The GM keeps the original (confirming over the existing shared copy): the
+  // list clears, the extra loses the id, the survivor is back on its gate
+  // user's allow-list (so login reconcile syncs it too), and its push lands.
+  await closeForeignDialogs();
+  await list.locator(`a[data-action="keepDuplicate"][data-doc-id="${ids.keepId}"]`).click();
+  const confirm = gmPage.locator('.omnipresence-keep-confirm');
+  await expect(confirm).toBeVisible({ timeout: 10_000 });
+  await confirm.locator('button[data-action="yes"]').click();
   await expect(list).toHaveCount(0, { timeout: 10_000 });
+  expect(await gmPage.evaluate(id => game.actors.get(id)?.getFlag('omnipresence', 'id') ?? null, ids.extraId)).toBeNull();
   await expect.poll(selected, { timeout: 10_000 }).toBe(true);
   await renameAndPush(`${PREFIX} Dup Keep Edited`);
   expect(await copyName()).toBe(`${PREFIX} Dup Keep Edited`);

@@ -58,6 +58,39 @@ export function buildBindings(carriers) {
 }
 
 /**
+ * One-time upgrade only (before `bindingsBuilt`): settle an omni id carried
+ * by several Actor/JournalEntry documents whose shared copy exists, so honest
+ * duplicates (a Foundry Duplicate of an enrolled document copies its flags)
+ * keep syncing. The copy's `ownerName` was stamped by the GM's push from the
+ * document's real ownership, which a player cannot forge, so only carriers
+ * owned like the copy are candidates (null = GM-owned on both sides). Among
+ * them the one whose last sync equals the copy's (the last pusher) wins —
+ * the oldest of those when several match, since a Duplicate copies the
+ * timestamp too — otherwise the oldest by creation time; ties go to the id.
+ * Folder carriers, or no copy, are never resolved here.
+ * @param {{carriers: Array<{type: string, id: string, enrolled: boolean, owner: string|null, lastSyncedAt: string|null, createdTime: number|null}>,
+ *   copy: {type?: string, ownerName: string|null, syncedAt: string|null}|null}} input
+ * @returns {{keep: {type: string, id: string}|null, detach: Array<{type: string, id: string}>}}
+ */
+export function resolveUpgradeDuplicate({ carriers, copy }) {
+  const none = { keep: null, detach: [] };
+  const list = carriers ?? [];
+  if (!copy || !list.length) return none;
+  if (list.some(c => c.type !== 'Actor' && c.type !== 'JournalEntry')) return none;
+  const owner = copy.ownerName ?? null;
+  const candidates = list.filter(c => (c.owner ?? null) === owner && (!copy.type || c.type === copy.type));
+  if (!candidates.length) return none;
+  const pushers = copy.syncedAt ? candidates.filter(c => c.lastSyncedAt === copy.syncedAt) : [];
+  const pool = pushers.length ? pushers : candidates;
+  const created = c => (Number.isFinite(c.createdTime) ? c.createdTime : Infinity);
+  const winner = [...pool].sort((a, b) => created(a) - created(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
+  return {
+    keep: { type: winner.type, id: winner.id },
+    detach: list.filter(c => c !== winner).map(({ type, id }) => ({ type, id }))
+  };
+}
+
+/**
  * What a refused push records in the duplicates list, or null for nothing.
  * A bound id records nothing (the bound document keeps syncing; the refusal
  * is only logged). An unbound id whose shared copy exists is always recorded

@@ -35,8 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   map-pin refresh. It closes a cross-world race where a copy created by a
   forged id overwrote the real owner's document. Refused pulls and pushes are
   logged and, by the active GM, listed under "Duplicate sync ids" with the
-  shared copy. Such a row is never bound automatically (a GM re-bind action is
-  planned); it goes away once none of its documents is in sync.
+  shared copy. Removing documents from sync never binds such a row; a GM
+  settles it with "Keep this one", and it goes away once none of its
+  documents is in sync.
 - A "Duplicate sync ids" row whose id already has a shared copy keeps its
   "shared copy" mark: a push refused for that reason records it, and a later
   refusal of the same id no longer drops it. Without the mark, removing all
@@ -50,13 +51,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shown in the dialog, not whatever the shared copy holds when Install is clicked.
 
 ### Changed
-- Documents that already shared a sync id in a world are listed in the
-  dashboard under "Duplicate sync ids" and do not sync. If the id has no shared
-  copy yet, the one left in sync once the others are removed is bound and syncs
-  again (at once for the GM dashboard's Remove from Sync, otherwise at the next
-  GM login). If a shared copy exists (the usual case for documents enrolled
-  before this upgrade), none is bound automatically and they stay out of
-  sync until a GM re-bind action is added (known limitation).
+- Upgrading keeps existing syncs working when Actors or Journals already
+  share a sync id (for example a synced character duplicated earlier): the
+  one owned like the shared copy is kept (the last to push, otherwise the
+  oldest), the others lose the sync id and leave sync, and the GM is told
+  once which documents those were. Sets that cannot be settled this way (no
+  document owned like the shared copy, or a synced folder) are listed in the
+  dashboard under "Duplicate sync ids" and do not sync.
+- "Duplicate sync ids" rows have a GM-only **Keep this one** action per
+  document: it binds that document and takes the others carrying the id out
+  of sync. A row with the existing shared copy asks for confirmation first,
+  since that copy is pulled into the kept document at the next sync. Removing
+  the extra documents from sync still settles a row with no shared copy (at
+  once for the GM dashboard's Remove from Sync, otherwise at the next GM login).
+- Duplicating a synced Actor or Journal (Foundry's Duplicate, or a hand
+  import) no longer creates a second document with the same sync id: the
+  active GM clears the id and enrollment from the new copy. Enroll it to share
+  it as its own document.
 - Only the active GM pushes edits automatically when several GMs are
   connected; Force Push and enrolling still work for any GM.
 - A macro the GM shares with everyone, without giving a player ownership, no
