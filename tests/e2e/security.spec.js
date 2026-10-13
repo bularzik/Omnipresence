@@ -117,48 +117,71 @@ test("a player's forged sync id cannot overwrite another document's shared copy 
   expect(await victimCopies()).toEqual([`${PREFIX} Victim`]);
 });
 
-test('an unbound carrier of an id whose shared copy another document made is not pulled over at login (cross-world race)', async () => {
-  test.setTimeout(90_000);
-  const result = await gmPage.evaluate(async ({ PREFIX }) => {
-    const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
-    const { SyncEngine } = await import('/modules/omnipresence/scripts/sync-engine.js');
-    const { Bindings } = await import('/modules/omnipresence/scripts/bindings.js');
-    const built = game.settings.get('omnipresence', 'bindingsBuilt');
-    // The forger's document wins the first push: it is bound to X and makes the copy.
-    const forger = await Actor.create({ name: `${PREFIX} Race Forger`, type: 'character' });
-    const omniId = await SyncRegistry.enroll(forger);
-    await SyncEngine.push(forger);
-    const pack = game.packs.get(`omnipresence.omnipresence-${game.system.id}`);
-    const copyExists = (await pack.getDocuments()).some(d => d.getFlag('omnipresence', 'id') === omniId);
-    // The victim carries X, enrolled, older than the copy, but is not bound to it.
-    const victim = await Actor.create({
-      name: `${PREFIX} Race Victim`, type: 'character',
-      flags: { omnipresence: { id: omniId, enrolled: true, syncedAt: new Date(0).toISOString() } }
-    });
-    await SyncRegistry.addToSelection(game.user.id, 'actor', omniId);
-    const unbound = !Bindings.isBoundTo(victim);
-    const before = { name: victim.name, syncedAt: victim.getFlag('omnipresence', 'syncedAt') };
+// The cross-world first-push race (I-1): a forgery in ANOTHER world won the
+// first push, so the shared copy of id X exists but nothing in this world is
+// bound to X. Simulated by writing the copy straight into the pack, then
+// creating the local carrier of X here (enrolled, unbound, older than the
+// copy). `pullPath` runs one pull entry point on the GM page; the carrier
+// must not be overwritten and the refusal must be listed for the GM.
+const crossWorldRace = (label, pullPath) => gmPage.evaluate(async ({ PREFIX, label, pullPath }) => {
+  const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+  const { SyncEngine } = await import('/modules/omnipresence/scripts/sync-engine.js');
+  const { Bindings } = await import('/modules/omnipresence/scripts/bindings.js');
+  const { OmnipresenceDashboard } = await import('/modules/omnipresence/scripts/gm-dashboard.js');
+  const built = game.settings.get('omnipresence', 'bindingsBuilt');
+  const omniId = foundry.utils.randomID(16);
+  const pack = game.packs.get(`omnipresence.omnipresence-${game.system.id}`);
+  // The copy "from another world": a newer syncedAt and a different name.
+  await Actor.create({
+    name: `${PREFIX} ${label} Remote Copy`, type: 'character',
+    flags: { omnipresence: { id: omniId, syncedAt: new Date().toISOString(), ownerName: null } }
+  }, { pack: pack.collection });
+  const victim = await Actor.create({
+    name: `${PREFIX} ${label} Local Carrier`, type: 'character',
+    flags: { omnipresence: { id: omniId, enrolled: true, syncedAt: new Date(0).toISOString() } }
+  }, { omnipresenceInternal: true });
+  await SyncRegistry.addToSelection(game.user.id, 'actor', omniId);
+  const unbound = !Bindings.get(omniId);
+  const before = { name: victim.name, syncedAt: victim.getFlag('omnipresence', 'syncedAt') };
+  if (pullPath === 'login') {
     await SyncEngine.onLogin();
-    const copyCount = (await pack.getDocuments()).filter(d => d.getFlag('omnipresence', 'id') === omniId).length;
-    const recorded = game.settings.get('omnipresence', 'bindingDuplicates')?.[omniId] ?? null;
-    return {
-      built, copyExists, unbound, copyCount, before, recorded, omniId, victimId: victim.id,
-      after: { name: game.actors.get(victim.id).name, syncedAt: game.actors.get(victim.id).getFlag('omnipresence', 'syncedAt') }
-    };
-  }, { PREFIX });
+  } else {
+    const row = document.createElement('div');
+    row.dataset.actorId = victim.id;
+    await OmnipresenceDashboard._onForcePull.call({ render() {} }, null, row);
+  }
+  const copies = (await pack.getDocuments()).filter(d => d.getFlag('omnipresence', 'id') === omniId).map(d => d.name);
+  const recorded = game.settings.get('omnipresence', 'bindingDuplicates')?.[omniId] ?? null;
+  const local = game.actors.get(victim.id);
+  const after = { name: local.name, syncedAt: local.getFlag('omnipresence', 'syncedAt') };
+  // Clean up the recorded entry and the selection here; the probes go in the sweep.
+  const dup = { ...(game.settings.get('omnipresence', 'bindingDuplicates') ?? {}) };
+  delete dup[omniId];
+  await game.settings.set('omnipresence', 'bindingDuplicates', dup);
+  await SyncRegistry.removeFromSelection(game.user.id, 'actor', omniId);
+  return { built, unbound, copies, before, after, recorded, omniId, victimId: victim.id };
+}, { PREFIX, label, pullPath });
 
+const expectRaceRefused = (result, label) => {
   expect(result.built).toBe(true);
-  expect(result.copyExists).toBe(true);
   expect(result.unbound).toBe(true);
-  expect(result.copyCount).toBe(1);
+  expect(result.copies).toEqual([`${PREFIX} ${label} Remote Copy`]);
+  // The attack assertion: the local carrier was not overwritten from the copy.
   expect(result.after).toEqual(result.before);
   expect(result.recorded).toEqual([{ type: 'Actor', id: result.victimId }, { type: 'SharedCopy', id: result.omniId }]);
-  // Probes (and the recorded entry) are cleaned up here as well as by the final sweep.
-  await gmPage.evaluate(async ({ PREFIX, omniId }) => {
-    const dup = { ...(game.settings.get('omnipresence', 'bindingDuplicates') ?? {}) };
-    delete dup[omniId];
-    await game.settings.set('omnipresence', 'bindingDuplicates', dup);
-  }, result);
+};
+
+test('an unbound carrier of an id whose shared copy came from another world is not pulled over at login (cross-world race)', async () => {
+  test.setTimeout(90_000);
+  const result = await crossWorldRace('Race Login', 'login');
+  expectRaceRefused(result, 'Race Login');
+  await sweepProbes(gmPage, PREFIX);
+});
+
+test('the dashboard force-pull refuses an unbound carrier of an id whose shared copy came from another world (cross-world race)', async () => {
+  test.setTimeout(90_000);
+  const result = await crossWorldRace('Race Force', 'force');
+  expectRaceRefused(result, 'Race Force');
   await sweepProbes(gmPage, PREFIX);
 });
 

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   decidePushBinding, buildBindings, resolveDuplicateBindings, boundOmniToLocal, validateFolderRemoval,
-  judgePendingRemoveClaim, pullAllowed
+  judgePendingRemoveClaim, pullAllowed, mergeDuplicateRecord
 } from '../scripts/security-logic.js';
 
 // --- Login pull rule (cross-world first-push race) --------------------------
@@ -30,6 +30,40 @@ test('resolveDuplicateBindings: an unbound-but-copy-exists record is never auto-
   assert.deepEqual(bind, {});
   assert.deepEqual(remaining.x, [{ type: 'Actor', id: 'a1' }, { type: 'SharedCopy', id: 'x' }]);
   assert.deepEqual(resolveDuplicateBindings(recorded, []).remaining, {});
+});
+
+test('mergeDuplicateRecord: a later refusal of the same id keeps the SharedCopy marker, so the survivor is never auto-bound', () => {
+  const first = mergeDuplicateRecord(undefined, [{ type: 'Actor', id: 'a1' }, { type: 'SharedCopy', id: 'x' }]);
+  // A push refusal (authorizePush) for a second carrier of x, without a marker.
+  const second = mergeDuplicateRecord(first, [{ type: 'Actor', id: 'a2' }, { type: 'Actor', id: 'a1' }]);
+  assert.deepEqual(second, [{ type: 'Actor', id: 'a1' }, { type: 'Actor', id: 'a2' }, { type: 'SharedCopy', id: 'x' }]);
+  // The GM removes a2 from sync: a1 is the only enrolled carrier left, still not bound.
+  const { bind, remaining } = resolveDuplicateBindings({ x: second }, [
+    { omniId: 'x', type: 'Actor', id: 'a1', enrolled: true },
+    { omniId: 'x', type: 'Actor', id: 'a2', enrolled: false }
+  ]);
+  assert.deepEqual(bind, {});
+  assert.deepEqual(remaining.x, [{ type: 'Actor', id: 'a1' }, { type: 'SharedCopy', id: 'x' }]);
+});
+
+test('resolveDuplicateBindings: a SharedCopy record whose last carrier was removed from sync is dropped, not bound', () => {
+  const recorded = { x: [{ type: 'Actor', id: 'a1' }, { type: 'SharedCopy', id: 'x' }] };
+  assert.deepEqual(
+    resolveDuplicateBindings(recorded, [{ omniId: 'x', type: 'Actor', id: 'a1', enrolled: false }]),
+    { bind: {}, remaining: {} }
+  );
+});
+
+test('resolveDuplicateBindings: a carrier removed from sync is no longer listed while others stay enrolled', () => {
+  const out = resolveDuplicateBindings(
+    { D: [{ type: 'Actor', id: 'a1' }, { type: 'Actor', id: 'a2' }, { type: 'Actor', id: 'a3' }] },
+    [
+      { omniId: 'D', type: 'Actor', id: 'a1', enrolled: true },
+      { omniId: 'D', type: 'Actor', id: 'a2', enrolled: false },
+      { omniId: 'D', type: 'Actor', id: 'a3', enrolled: true }
+    ]
+  );
+  assert.deepEqual(out, { bind: {}, remaining: { D: [{ type: 'Actor', id: 'a1' }, { type: 'Actor', id: 'a3' }] } });
 });
 
 // --- Shared-copy bindings ---------------------------------------------------

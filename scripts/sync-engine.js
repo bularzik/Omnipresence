@@ -138,7 +138,14 @@ export class SyncEngine {
     if (SyncRegistry.isPusher()) this.debouncedPush(actor);
   }
 
+  /**
+   * Overwrite `localActor` from its shared copy. Every pull path (login,
+   * dashboard force-pull) goes through here, so the pull rule lives here:
+   * once bindings are built only the bound document is written (I-1).
+   * @returns {Promise<boolean>} false when the pull was refused.
+   */
   static async pull(localActor, compActor) {
+    if (!(await Bindings.mayPull(localActor))) return false;
     // Strip world-local fields so local ownership and folder are preserved,
     // and localize canonical omnipresence ids to this world's ids.
     const actorData = LinkRewriter.localize(stripWorldLocalFields(compActor.toObject()));
@@ -154,6 +161,7 @@ export class SyncEngine {
         game.i18n.format('OMNIPRESENCE.notifications.syncFailed', { name: localActor.name })
       );
     }
+    return true;
   }
 
   static async onLogin() {

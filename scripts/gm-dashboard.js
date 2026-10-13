@@ -183,7 +183,10 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     const docs = await pack.getDocuments();
     const compActor = docs.find(d => d.getFlag('omnipresence', 'id') === omnipresenceId);
     if (!compActor) return;
-    await SyncEngine.pull(actor, compActor);
+    // SyncEngine.pull applies the pull rule (Bindings.mayPull) and records a refusal.
+    if (!(await SyncEngine.pull(actor, compActor))) {
+      ui.notifications.warn(game.i18n.format('OMNIPRESENCE.notifications.pullRefused', { name: actor.name }));
+    }
     this.render();
   }
 
@@ -232,7 +235,10 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     const docs = await pack.getDocuments();
     const compJournal = docs.find(d => d.getFlag('omnipresence', 'id') === omnipresenceId);
     if (!compJournal) return;
-    await JournalSync.pull(journal, compJournal);
+    // JournalSync.pull applies the pull rule (Bindings.mayPull) and records a refusal.
+    if (!(await JournalSync.pull(journal, compJournal))) {
+      ui.notifications.warn(game.i18n.format('OMNIPRESENCE.notifications.pullRefused', { name: journal.name }));
+    }
     this.render();
   }
 

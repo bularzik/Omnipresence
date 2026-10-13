@@ -863,6 +863,8 @@ export class FolderSync {
     for (const journal of this.members(root)) {
       const omniId = journal.getFlag('omnipresence', 'id');
       const comp = compDocs.find(d => d.getFlag('omnipresence', 'id') === omniId);
+      // JournalSync.pull applies the pull rule per member (Bindings.mayPull):
+      // an unbound member is skipped and listed, the rest are still pulled.
       if (comp) await JournalSync.pull(journal, comp);
     }
   }
@@ -972,13 +974,13 @@ export class FolderSync {
         validated = true;
         await this._removeFromPack(rootId, omniId, 'removed', docs);
       } catch (err) {
-        // A pack failure must never leave a member unenrolled locally with a live
-        // pack copy and no tombstone — other worlds would push it back. Record
-        // a GM-only queued removal so _drainPackRemovals retries at the next GM login.
+        // A pack failure after validation must never leave a member unenrolled
+        // locally with a live pack copy and no tombstone — other worlds would
+        // push it back — so a validated removal is queued in a GM-only setting
+        // for _drainPackRemovals to retry at the next GM login. A failure before
+        // validation (e.g. the pack read threw) proves nothing about the
+        // forged-flag attack, so it is logged and not queued.
         console.error('Omnipresence | folder member leave failed for', journal.name, err);
-        // Only a removal that passed validation may be queued; a failure before
-        // it (e.g. the pack read threw) proves nothing about the forged-flag
-        // attack, so the drain must not act on it.
         if (!validated) {
           console.warn('Omnipresence | folder member leave not queued (failed before validation) for', omniId);
           return;

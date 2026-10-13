@@ -21,7 +21,8 @@ export function decidePushBinding({ binding, docType, docId, copyExists, otherCa
 }
 
 /**
- * May the login reconcile pull (or push over) the shared copy for this local
+ * May any pull path (login reconcile, dashboard force-pull, folder force-pull,
+ * pin heal) write the shared copy into — or the login push over it — this local
  * document? Once bindings are built only the bound document may: an unbound
  * carrier of an id whose copy exists could be a forgery that got another
  * document bound and copied first (a cross-world first-push race). Before
@@ -57,10 +58,40 @@ export function buildBindings(carriers) {
 }
 
 /**
- * Settle recorded duplicates against the documents that exist now. An omni
- * id with exactly one enrolled carrier left is bound to it (the GM resolved
- * it by unenrolling the others); one with no carriers left is dropped; the
- * rest stay recorded with their current carriers.
+ * Merge newly refused documents into an existing duplicate record. Entries
+ * are kept (de-duplicated by type and id), so a `SharedCopy` marker, once
+ * recorded, is never dropped by a later refusal of the same id.
+ * @param {Array<{type: string, id: string}>|undefined} existing
+ * @param {Array<{type: string, id: string}>} docs
+ * @returns {Array<{type: string, id: string}>}
+ */
+export function mergeDuplicateRecord(existing, docs) {
+  const out = [];
+  const seen = new Set();
+  const all = [...(existing ?? []), ...docs];
+  // The marker goes last, after every document, wherever it came from.
+  for (const d of [...all.filter(d => d.type !== 'SharedCopy'), ...all.filter(d => d.type === 'SharedCopy')]) {
+    const key = `${d.type}.${d.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ type: d.type, id: d.id });
+  }
+  return out;
+}
+
+/**
+ * Settle recorded duplicates against the documents that exist now. A
+ * document removed from sync (unenrolled) no longer counts as a carrier
+ * once any carrier is still enrolled.
+ * - A record with a `SharedCopy` marker (a carrier refused because a shared
+ *   copy already exists; its true owner is unknowable here) is never
+ *   auto-bound: it stays listed while an enrolled carrier is left and is
+ *   dropped when none is.
+ * - Any other record: exactly one enrolled carrier left is bound (the GM
+ *   resolved it by removing the others from sync); several stay listed (the
+ *   enrolled ones); none enrolled but some still carrying the id stay listed
+ *   unbound, so a later re-enroll of one of them settles it the same way;
+ *   no carrier at all is dropped.
  * @param {Object<string, Array<{type: string, id: string}>>} duplicates
  * @param {Array<{omniId: string, type: string, id: string, enrolled: boolean}>} carriers
  * @returns {{bind: Object<string, {type: string, id: string}>, remaining: Object<string, Array<{type: string, id: string}>>}}
@@ -68,18 +99,17 @@ export function buildBindings(carriers) {
 export function resolveDuplicateBindings(duplicates, carriers) {
   const bind = {};
   const remaining = {};
+  const rows = list => list.map(c => ({ type: c.type, id: c.id }));
   for (const omniId of Object.keys(duplicates ?? {})) {
     const live = carriers.filter(c => c.omniId === omniId);
-    if (live.length === 0) continue;
-    // A carrier refused because a shared copy already exists (its true owner
-    // is unknowable here) is never auto-bound; only removing it settles it.
+    const enrolled = live.filter(c => c.enrolled);
     if ((duplicates[omniId] ?? []).some(d => d.type === 'SharedCopy')) {
-      remaining[omniId] = [...live.map(c => ({ type: c.type, id: c.id })), { type: 'SharedCopy', id: omniId }];
+      if (enrolled.length) remaining[omniId] = [...rows(enrolled), { type: 'SharedCopy', id: omniId }];
       continue;
     }
-    const enrolled = live.filter(c => c.enrolled);
+    if (live.length === 0) continue;
     if (enrolled.length === 1) bind[omniId] = { type: enrolled[0].type, id: enrolled[0].id };
-    else remaining[omniId] = live.map(c => ({ type: c.type, id: c.id }));
+    else remaining[omniId] = rows(enrolled.length ? enrolled : live);
   }
   return { bind, remaining };
 }

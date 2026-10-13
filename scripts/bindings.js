@@ -1,5 +1,5 @@
 import { SyncRegistry } from './sync-registry.js';
-import { decidePushBinding, buildBindings, resolveDuplicateBindings, pullAllowed } from './security-logic.js';
+import { decidePushBinding, buildBindings, resolveDuplicateBindings, pullAllowed, mergeDuplicateRecord } from './security-logic.js';
 
 /**
  * Shared-copy bindings (#1, #2, #6): which local document in THIS world may
@@ -51,9 +51,11 @@ export class Bindings {
   }
 
   /**
-   * The login-pull rule for `doc` whose shared copy exists. When refused, warn
-   * and (GM clients only; players cannot write world settings) list the id in
-   * the dashboard's duplicates section.
+   * The pull rule for `doc` whose shared copy exists, used by every path that
+   * writes a shared copy into a local document (login reconcile, the pulls
+   * in SyncEngine/JournalSync, the pin heal). When refused, warn and — the
+   * active GM only: players cannot write world settings, and a second GM
+   * would race it — list the id in the dashboard's duplicates section.
    */
   static async mayPull(doc) {
     const omniId = doc.getFlag('omnipresence', 'id');
@@ -63,15 +65,11 @@ export class Bindings {
     });
     if (ok) return true;
     console.warn(
-      `Omnipresence | skipping login sync of ${doc.documentName} "${doc.name}" (${doc.id}): ` +
-      `its sync id ${omniId} is not bound to it here but a shared copy exists.`
+      `Omnipresence | refusing to sync ${doc.documentName} "${doc.name}" (${doc.id}) from its shared copy: ` +
+      `its sync id ${omniId} is not bound to it here.`
     );
-    if (game.user.isGM && !this.get(omniId)) {
-      const recorded = { ...(game.settings.get('omnipresence', this.DUPLICATES) ?? {}) };
-      if (!recorded[omniId]) {
-        recorded[omniId] = [{ type: doc.documentName, id: doc.id }, { type: 'SharedCopy', id: omniId }];
-        await game.settings.set('omnipresence', this.DUPLICATES, recorded);
-      }
+    if (SyncRegistry.isPusher() && !this.get(omniId)) {
+      await this._recordDuplicate(omniId, [{ type: doc.documentName, id: doc.id }, { type: 'SharedCopy', id: omniId }]);
     }
     return false;
   }
@@ -119,7 +117,11 @@ export class Bindings {
       await this.bind(doc);
       return true;
     }
-    if (!this.get(omniId) && others.length) await this._recordDuplicate(omniId, doc, others);
+    if (!this.get(omniId) && others.length) {
+      await this._recordDuplicate(omniId, [
+        { type: doc.documentName, id: doc.id }, ...others.map(({ type, id }) => ({ type, id }))
+      ]);
+    }
     console.warn(
       `Omnipresence | refusing to sync ${doc.documentName} "${doc.name}" (${doc.id}): ` +
       `its sync id ${omniId} belongs to another document. If both are legitimate copies, ` +
@@ -128,12 +130,18 @@ export class Bindings {
     return false;
   }
 
-  /** GM only: list an unbound id carried by several documents, for the dashboard and resolveDuplicates. */
-  static async _recordDuplicate(omniId, doc, others) {
+  /**
+   * GM only: list an unbound id for the dashboard and resolveDuplicates.
+   * Merges into an existing record, so a SharedCopy marker is never dropped.
+   * @param {string} omniId
+   * @param {Array<{type: string, id: string}>} docs
+   */
+  static async _recordDuplicate(omniId, docs) {
     if (!game.user.isGM) return;
     const recorded = { ...(game.settings.get('omnipresence', this.DUPLICATES) ?? {}) };
-    const docs = [{ type: doc.documentName, id: doc.id }, ...others.map(({ type, id }) => ({ type, id }))];
-    recorded[omniId] = docs;
+    const merged = mergeDuplicateRecord(recorded[omniId], docs);
+    if (JSON.stringify(merged) === JSON.stringify(recorded[omniId])) return;
+    recorded[omniId] = merged;
     await game.settings.set('omnipresence', this.DUPLICATES, recorded);
   }
 

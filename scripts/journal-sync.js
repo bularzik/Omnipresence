@@ -294,6 +294,8 @@ export class JournalSync {
       const comp = compDocs.find(d => d.getFlag('omnipresence', 'id') === omniId);
       const pins = comp?.getFlag('omnipresence', 'pins');
       if (pins === undefined) continue;
+      // Pins are shared-copy content too: same pull rule as JournalSync.pull.
+      if (!(await Bindings.mayPull(journal))) continue;
 
       // Never mirror pins onto a journal whose sync is in unresolved conflict —
       // that would apply part of the remote state (and delete local pin
@@ -332,7 +334,15 @@ export class JournalSync {
     return { journalData, pins };
   }
 
+  /**
+   * Overwrite `localJournal` from its shared copy. Every pull path (login,
+   * dashboard force-pull, folder force-pull) goes through here, so the pull
+   * rule lives here: once bindings are built only the bound document is
+   * written (I-1).
+   * @returns {Promise<boolean>} false when the pull was refused.
+   */
   static async pull(localJournal, compJournal) {
+    if (!(await Bindings.mayPull(localJournal))) return false;
     // Same shaping as an import: world-local fields stripped (local ownership
     // and folder preserved), links localized, localModifiedAt reset to the
     // pulled syncedAt, pins split off for _applyPins.
@@ -346,6 +356,7 @@ export class JournalSync {
         game.i18n.format('OMNIPRESENCE.notifications.syncFailed', { name: localJournal.name })
       );
     }
+    return true;
   }
 
   static async onLogin() {
