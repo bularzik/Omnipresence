@@ -54,6 +54,7 @@ test('sha256Hex: FIPS 180-4 test vectors', () => {
 test('sha256Hex: multi-block and non-ASCII input are hashed as UTF-8', () => {
   assert.equal(sha256Hex('a'.repeat(1000)), '41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3');
   // NFC é (U+00E9) and NFD e + combining acute (U+0065 U+0301) are different UTF-8 bytes.
-  assert.equal(sha256Hex('é'), '4a99557e4033c3539de2eb65472017cad5f9557f7a0625a09f1c3f6e2ba69c4c');
-  assert.equal(sha256Hex('é'), 'bf12767b0f2a56b2190075bae8169f656e3ce8d6357d4aff184bc6c7ea48f9f6');
+  // Written as escape sequences so no editor or formatter can normalize them.
+  assert.equal(sha256Hex('\u00e9'), '4a99557e4033c3539de2eb65472017cad5f9557f7a0625a09f1c3f6e2ba69c4c');
+  assert.equal(sha256Hex('e\u0301'), 'bf12767b0f2a56b2190075bae8169f656e3ce8d6357d4aff184bc6c7ea48f9f6');
 });
