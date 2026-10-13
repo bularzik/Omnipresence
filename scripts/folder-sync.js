@@ -939,10 +939,10 @@ export class FolderSync {
 
   static async _enter(journal, rootId) {
     await SyncRegistry.enroll(journal, { viaFolder: rootId });
-    if (game.user.isGM) {
+    if (SyncRegistry.isPusher()) {
       JournalSync.debouncedPush(journal);
     } else {
-      // No GM connected: record the re-entry so the GM's next login pushes
+      // Not the active GM (none connected, or this is a second GM): record the re-entry so the GM's next login pushes
       // this journal even if a stale `removed` tombstone still names it
       // (it may have left and come back before the GM ever saw the leave).
       await journal.update({ 'flags.omnipresence.pendingEnter': rootId }, { omnipresenceInternal: true });
