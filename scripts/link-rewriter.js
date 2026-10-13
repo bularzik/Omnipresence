@@ -1,5 +1,7 @@
 import { SyncRegistry } from './sync-registry.js';
+import { Bindings } from './bindings.js';
 import { canonicalizeLinks, localizeLinks } from './sync-logic.js';
+import { boundOmniToLocal } from './security-logic.js';
 
 /**
  * Builds local↔omni id maps over enrolled actors + journals and drives the
@@ -23,13 +25,18 @@ export class LinkRewriter {
     return map;
   }
 
+  /**
+   * omniId → local id, for localizing incoming canonical links. Only the
+   * document an id is bound to maps (#6): a forged id stamped on another
+   * document, or an unresolved duplicate, neither hijacks nor breaks a link.
+   * Before the first GM login after the upgrade (no bindings yet) nothing
+   * maps, and canonical links stay dormant until a later login heals them.
+   */
   static buildOmniToLocal() {
-    const map = new Map();
-    for (const doc of this._enrolledDocs()) {
-      const omniId = doc.getFlag('omnipresence', 'id');
-      if (omniId) map.set(omniId, doc.id);
-    }
-    return map;
+    const docs = this._enrolledDocs()
+      .map(doc => ({ omniId: doc.getFlag('omnipresence', 'id'), type: doc.documentName, id: doc.id }))
+      .filter(d => d.omniId);
+    return boundOmniToLocal(docs, Bindings.getAll());
   }
 
   static canonicalize(data) {
