@@ -10,7 +10,7 @@ npm test                              # run all unit tests (Node's built-in runn
 node --test tests/sync-logic.test.js  # run a single test file
 ```
 
-122 tests. Only the **pure** layer (`scripts/sync-logic.js`) is unit-tested —
+149 tests. Only the **pure** layers (`scripts/sync-logic.js`, `scripts/security-logic.js`) and the `module.json` pack declarations are unit-tested —
 everything that touches Foundry globals (`game`, `Hooks`, `ui`, `ApplicationV2`)
 is not unit-testable and is covered by the Playwright suite below instead,
 plus manual verification for the onboarding dialog, which has no automated
@@ -38,13 +38,16 @@ Check which port a server is actually listening on with
 `curl -s http://localhost:<port>/api/status`.
 
 The suite runs unchanged against **Foundry v13 and v14** (`loginToFoundry`
-handles both join forms). A v14 install lives at `/Users/danbularzik/FoundryVTT-14`
-with its own copy of World B (cloned from the v13 world and migrated on first
-launch) and its own module copy at
-`/Users/danbularzik/FoundryVTT-14/Data/Data/modules/omnipresence`; both servers
-were started by hand with `--world=world-b --port=…`, so check `/api/status`
-for which version answers on which port. Verify a change on both before
-calling it done.
+handles both join forms). The v14 install is `/Users/danbularzik/FoundryVTT-14.369`
+(Foundry 14.369, World B only): it serves `http://localhost:30001`, its module
+copy is `/Users/danbularzik/FoundryVTT-14.369/Data/Data/modules/omnipresence`,
+and `start-foundry.command --world=world-b` / `stop-foundry.command` in that
+folder start and stop it. Check `/api/status` for which version answers on
+which port. The v13 run is optional per change (time-boxed runs are the rule).
+
+**Changing `module.json` needs a server restart**, not just a reload: Foundry reads packs and their ownership at startup. After copying a changed `module.json`, stop and start the server, then poll `/api/status` until `"active":true`.
+
+The Omnipresence packs are hidden from players (`PLAYER: NONE`). A spec must never look packs up by `pack.visible` or through the Compendium sidebar on a player page: use `game.packs.get(<id>)`, which works for players because Foundry does not enforce pack ownership on reads.
 
 Assertions on pack state poll for the expected outcome (`waitForPackState`,
 `expect.poll`) rather than sleeping a fixed budget — pushes are debounced and a

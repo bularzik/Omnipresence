@@ -11,6 +11,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Synced content is hidden from players.** The Omnipresence packs no longer
+  show in players' Compendium sidebar, and a GM login hides them again if a
+  world opened them. Reads through the browser console are out of scope; see
+  "What Omnipresence protects" in the README.
+- **A player can no longer overwrite or delete another document's shared
+  copy** by copying its sync id onto something they own. Each world records
+  which document owns each shared copy; pushes, folder deletes and folder
+  move-outs from any other document are refused and logged, and links
+  resolve only to the owning document.
+- **A player can no longer publish a GM-only macro** by putting it on their
+  hotbar: only macros the hotbar's user owns sync.
+- **GMs approve script macros** that are new to a world or were changed in
+  another world before they install.
+- Same-named users in two worlds no longer delete each other's shared macros:
+  a world only removes macro copies it pushed itself.
+
+### Changed
+- Documents that already shared a sync id in a world are listed in the
+  dashboard under "Duplicate sync ids" and do not sync until the GM keeps one.
+- Only the active GM pushes edits automatically when several GMs are
+  connected; Force Push and enrolling still work for any GM.
+- A macro the GM shares with everyone, without giving a player ownership, no
+  longer syncs from that player's hotbar.
+
+### Fixed
+- Failed background pushes and change markers are logged instead of surfacing
+  as unhandled promise rejections.
+
 ## [0.9.0] - 2026-10-02
 
 ### Changed

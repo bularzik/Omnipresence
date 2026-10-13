@@ -40,9 +40,11 @@ To stop syncing, right-click and choose **Remove from Omnipresence Sync**. The a
 
 ### Hotbar macro sync
 
-All macros on your hotbar — both Chat and Script types — are kept in sync across worlds. When you log into a new world, your macros are automatically created there and placed in the correct hotbar slots. Removing a macro from your hotbar removes it from the shared store; adding one pushes it within 2 seconds.
+The macros on your hotbar that you own — both Chat and Script types — are kept in sync across worlds. A macro the GM shares with everyone without giving you ownership stays in its world. When you log into a new world, your macros are automatically created there and placed in the correct hotbar slots. Removing a macro from your hotbar removes it from the shared store; adding one pushes it within 2 seconds.
 
 Each user's macros are stored independently, so two players can have completely different hotbars without interfering with each other.
+
+**GMs approve script macros.** When a GM logs in and one of their script macros is new to this world, or its code was changed in another world, Omnipresence does not install it silently. A dialog lists each one — name, owner, the world it came from, and its code — with **Install** and **Skip**. Install remembers that exact code in this browser, so it is not asked about again; Skip leaves the macro out until your next login. Chat macros, and macros pulled by players (which run with the player's own permissions), install as before.
 
 ### Journal sync
 
@@ -70,7 +72,9 @@ Open **Configure Settings → Module Settings → Manage Sync** to view and mana
 - Remove from sync
 - Force sync all enrolled documents at once
 
-**Players** see only their own documents, with controls to force pull (overwrite the local copy with the shared version) or remove from sync. Players cannot force push — only a GM can write to the shared compendium.
+**Players** see only their own documents, with controls to force pull (overwrite the local copy with the shared version) or remove from sync. Players cannot force push — only a GM can write to the shared compendium. When several GMs are connected, only the active GM (Foundry's designated GM) pushes edits automatically; any GM can still Force Push or enroll.
+
+If two or more documents in the world carry the same sync id (for example a character duplicated after it was enrolled), the dashboard lists them under **Duplicate sync ids**. None of them syncs until you remove the extra copies with **Remove from Sync**; the one left syncs again straight away.
 
 ## Per-User Sync Preferences
 
@@ -95,6 +99,18 @@ The dialog closes automatically once every conflict is resolved. Characters you 
 
 Because only a GM can write to the shared compendium, players resolve conflicts by pulling the shared version. A GM additionally has a **force push** option to make a local copy the new master.
 
+## What Omnipresence protects
+
+**Synced content is hidden from players in Foundry's interface.** The Omnipresence packs hold GM content from every world on the server, so they are hidden from players and trusted players. If a GM in any world opens one to players in the Compendium sidebar, Omnipresence hides it again at that GM's next login and says why. This matches how Foundry treats GM-only world documents: present on every client, hidden in the UI.
+
+**Reads through the browser console are out of scope.** Foundry does not enforce compendium permissions when a client reads a pack through its API, just as it sends GM-only world documents to every client. A player who uses the browser console can still read pack contents. Keeping GM content secret from such a player would need encryption with a passphrase shared by every GM, which Omnipresence does not do.
+
+**Players sync their own content because of that same behaviour.** A player's client reads its own characters, journals and macros from the hidden packs at login, with no GM online. If a future Foundry version starts enforcing pack permissions on reads, players would stop receiving updates until a GM logs in. The fallback design for that case is to split each pack into a GM-only pack and a player pack.
+
+**No player can change or delete someone else's synced document.** Each world records which of its documents each shared copy belongs to. Only that document can update or delete the copy, and links resolve only to it. A sync id copied onto another document — by hand, by a macro, or by duplicating an enrolled document — is ignored, with a warning in the console. When upgrading, the first GM login records this from the world's documents. If two documents already carried the same id, neither syncs until the GM keeps one (see [Settings Dashboard](#settings-dashboard)).
+
+**Macros:** only macros you own sync from your hotbar, a world only removes the shared macro copies it pushed itself, and a GM approves any script macro that is new to a world or was changed elsewhere (see [Hotbar macro sync](#hotbar-macro-sync)).
+
 ## Notes
 
 - Same-server only. Cross-server sync is not supported in this version.
@@ -109,6 +125,8 @@ Because only a GM can write to the shared compendium, players resolve conflicts 
 - Documents with no player owner (GM-owned NPCs, GM journals) sync for the GM: they cross into another world once the GM checks them in *Manage synced documents* there. Player-owned documents are gated by their owner's selection, never the GM's.
 - Macro sync is all-or-nothing per user — there is no per-macro opt-in. If you want a macro local-only, keep it off your hotbar.
 - Sync preferences are world-scoped. A preference set in World A does not carry to World B automatically, since user IDs differ between worlds.
+- A document dragged out of an Omnipresence pack by hand is not linked to the shared copy (it carries the id but is not the document that copy belongs to here). Let Omnipresence import it instead, through *Manage synced documents*.
+- Deleting or moving out a member of a synced folder when you own neither that member's shared copy nor the folder (for example a journal the GM shares with everyone) removes it only from your world; it comes back at the next login there.
 
 ## Development
 
