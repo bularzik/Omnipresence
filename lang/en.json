@@ -79,5 +79,11 @@
   "OMNIPRESENCE.sharedFolders.waiting": "Waiting for a GM",
   "OMNIPRESENCE.notifications.packsRehidden": "Omnipresence: {packs} had been opened to players in this world's Compendium settings. They hold synced content from every world on this server, so they were hidden from players again.",
   "OMNIPRESENCE.dashboard.duplicatesHeading": "Duplicate sync ids — resolve by unenrolling one copy",
-  "OMNIPRESENCE.dashboard.duplicatesHint": "Each id below is carried by more than one document, so none of them syncs. Remove the extra copies from sync (Remove from Sync in the tables below); the one left syncs again."
+  "OMNIPRESENCE.dashboard.duplicatesHint": "Each id below is carried by more than one document, so none of them syncs. Remove the extra copies from sync (Remove from Sync in the tables below); the one left syncs again.",
+  "OMNIPRESENCE.macroConfirm.title": "Omnipresence — Install Script Macros?",
+  "OMNIPRESENCE.macroConfirm.intro": "These script macros for your hotbar are new here or were changed in another world. A script macro runs with your GM permissions: install them only if you recognise the code. Skipped macros are offered again at your next login.",
+  "OMNIPRESENCE.macroConfirm.origin": "Owner: {owner} · from world: {world}",
+  "OMNIPRESENCE.macroConfirm.unknownWorld": "unknown (synced before worlds were recorded)",
+  "OMNIPRESENCE.macroConfirm.install": "Install",
+  "OMNIPRESENCE.macroConfirm.skip": "Skip"
 }

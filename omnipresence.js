@@ -16,6 +16,7 @@ import { Bindings } from './scripts/bindings.js';
 Hooks.once('init', () => {
   SyncRegistry.register();
   Bindings.register();
+  MacroSync.registerSettings();
 
   game.settings.registerMenu('omnipresence', 'dashboard', {
     name: 'OMNIPRESENCE.settings.dashboard.name',

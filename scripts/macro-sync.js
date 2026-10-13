@@ -1,12 +1,30 @@
 import { SyncRegistry } from './sync-registry.js';
 import { stripMacroLocalFields } from './sync-logic.js';
-import { macroPushDecision, macroCopiesToDelete } from './security-logic.js';
+import { macroPushDecision, macroCopiesToDelete, decideScriptMacroInstall, sha256Hex } from './security-logic.js';
 import { LinkRewriter } from './link-rewriter.js';
 
 const DEBOUNCE_MS = 2000;
 
 export class MacroSync {
   static _timers = new Map(); // userId → timeout handle
+
+  /** Client setting: SHA-256 hashes of script-macro commands this GM approved (#5). */
+  static APPROVED_SETTING = 'approvedMacroHashes';
+
+  static registerSettings() {
+    game.settings.register('omnipresence', this.APPROVED_SETTING, {
+      name: 'Approved script macro hashes', scope: 'client', config: false, type: Array, default: []
+    });
+  }
+
+  static _approvedHashes() {
+    return game.settings.get('omnipresence', this.APPROVED_SETTING) ?? [];
+  }
+
+  /** Hash of the pack copy's canonical command — identical in every world, unlike the localized one. */
+  static _commandHash(compMacro) {
+    return sha256Hex(compMacro._source.command ?? '');
+  }
 
   static get PACK_ID() {
     return 'omnipresence.omnipresence-macros';
@@ -189,6 +207,8 @@ export class MacroSync {
     );
 
     const newHotbarEntries = {};
+    const approved = this._approvedHashes();
+    const needsConfirm = [];
 
     for (const compMacro of myDocs) {
       const ompId = compMacro.getFlag('omnipresence', 'id');
@@ -200,12 +220,35 @@ export class MacroSync {
       // assigns the current user as author/owner.
       // …and localize canonical omnipresence ids to this world's ids.
       const macroData = LinkRewriter.localize(stripMacroLocalFields(compMacro.toObject()));
-      const installed = await this._installPulled(localById.get(ompId) ?? null, macroData, compMacro.name);
+      const localMacro = localById.get(ompId) ?? null;
+
+      // A GM never runs a script macro from another world's pack copy without
+      // seeing it first (#5): new here, or changed, and not approved before.
+      const decision = decideScriptMacroInstall({
+        isGM: game.user.isGM,
+        type: macroData.type,
+        localCommand: localMacro ? localMacro.command : null,
+        packCommand: macroData.command,
+        packHash: this._commandHash(compMacro),
+        approvedHashes: approved
+      });
+      if (decision === 'confirm') {
+        needsConfirm.push({ compMacro, macroData, localMacro, slots });
+        continue;
+      }
+
+      const installed = await this._installPulled(localMacro, macroData, compMacro.name);
       if (!installed) continue;
       for (const slot of slots) newHotbarEntries[slot] = installed.id;
     }
 
     await this._writeHotbar(newHotbarEntries);
+
+    // Never hold the login reconcile on the GM's answer.
+    if (needsConfirm.length) {
+      this._confirmScriptMacros(needsConfirm)
+        .catch(err => console.error('Omnipresence | script macro confirmation failed', err));
+    }
   }
 
   /** Create or update the local macro from pulled data. Null on failure (logged). */
@@ -237,5 +280,49 @@ export class MacroSync {
       else update[`hotbar.-=${slot}`] = null;
     }
     await game.user.update(update, { omnipresenceInternal: true });
+  }
+
+  /**
+   * One dialog per login listing every script macro that needs the GM's
+   * approval (name, owner, origin world, command). Install installs them all
+   * and remembers each command's hash; Skip installs nothing (asked again
+   * at the next login).
+   */
+  static async _confirmScriptMacros(items) {
+    const esc = foundry.utils.escapeHTML;
+    const L = key => game.i18n.localize(`OMNIPRESENCE.macroConfirm.${key}`);
+    const rows = items.map(({ compMacro, macroData }) => {
+      const world = compMacro.getFlag('omnipresence', 'originWorld') ?? L('unknownWorld');
+      const owner = compMacro.getFlag('omnipresence', 'ownerName') ?? '';
+      return `
+      <section class="omnipresence-macro-confirm-item">
+        <h4>${esc(compMacro.name)}</h4>
+        <p class="notes">${esc(game.i18n.format('OMNIPRESENCE.macroConfirm.origin', { owner, world }))}</p>
+        <pre><code>${esc(macroData.command ?? '')}</code></pre>
+      </section>`;
+    }).join('');
+
+    const choice = await foundry.applications.api.DialogV2.wait({
+      window: { title: L('title') },
+      classes: ['omnipresence-macro-confirm'],
+      content: `<p>${L('intro')}</p>${rows}`,
+      buttons: [
+        { action: 'install', label: L('install'), callback: () => 'install' },
+        { action: 'skip', label: L('skip'), default: true, callback: () => 'skip' }
+      ],
+      rejectClose: false
+    });
+    if (choice !== 'install') return;
+
+    const approved = new Set(this._approvedHashes());
+    const entries = {};
+    for (const { compMacro, macroData, localMacro, slots } of items) {
+      const installed = await this._installPulled(localMacro, macroData, compMacro.name);
+      if (!installed) continue;
+      approved.add(this._commandHash(compMacro));
+      for (const slot of slots) entries[slot] = installed.id;
+    }
+    await game.settings.set('omnipresence', this.APPROVED_SETTING, [...approved]);
+    await this._writeHotbar(entries);
   }
 }
