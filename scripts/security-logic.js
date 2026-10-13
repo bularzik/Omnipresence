@@ -13,9 +13,11 @@
  *   genuinely new enrollment (no copy anywhere) — bind, then proceed;
  *   refuse: bound to another doc, or unbound while a copy already exists.
  */
-export function decidePushBinding({ binding, docType, docId, copyExists }) {
+export function decidePushBinding({ binding, docType, docId, copyExists, otherCarrier = false }) {
   if (binding) return binding.type === docType && binding.id === docId ? 'proceed' : 'refuse';
-  return copyExists ? 'refuse' : 'bind';
+  // Unbound: a second local document carrying the id may be a forgery racing
+  // the real owner's first push, so neither binds until a GM settles it.
+  return copyExists || otherCarrier ? 'refuse' : 'bind';
 }
 
 /**

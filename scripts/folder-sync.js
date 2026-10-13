@@ -512,18 +512,22 @@ export class FolderSync {
 
   /** Move-outs a player made with no GM connected. */
   static async _materializeRemoves() {
-    const pending = game.journal.filter(j => typeof j.getFlag('omnipresence', 'pendingRemove') === 'string');
+    // Current shape: { rootId, userId } (the user who moved the journal out).
+    // Legacy shape: a bare rootId string with no author; it cannot be attributed, so it is refused.
+    const hasPending = j => {
+      const v = j.getFlag('omnipresence', 'pendingRemove');
+      return typeof v === 'string' || (!!v && typeof v === 'object' && typeof v.rootId === 'string');
+    };
+    const pending = game.journal.filter(hasPending);
     if (!pending.length) return;
     const docs = await this._getPack().getDocuments();
     for (const journal of pending) {
       try {
-        const rootId = journal.getFlag('omnipresence', 'pendingRemove');
+        const flag = journal.getFlag('omnipresence', 'pendingRemove');
+        const rootId = typeof flag === 'string' ? flag : flag.rootId;
         const omniId = journal.getFlag('omnipresence', 'id');
-        // Only an owner can have written pendingRemove: the journal's player
-        // owner, or (no player owner) a GM.
-        const ownerName = SyncRegistry.resolveOwnerName(journal);
-        const actingUser = ownerName ? game.users.getName(ownerName) : game.user;
-        if (this._mayRemove({ rootId, omniId, docs, journal, actingUser })) {
+        const actingUser = typeof flag === 'string' ? null : game.users.get(flag.userId) ?? null;
+        if (actingUser && this._mayRemove({ rootId, omniId, docs, journal, actingUser })) {
           await this._removeFromPack(rootId, omniId, 'removed', docs);
         } else {
           console.warn('Omnipresence | refusing pending folder remove for', journal.name, '— invalid for', omniId);
@@ -938,10 +942,10 @@ export class FolderSync {
         // pack copy and no tombstone — other worlds would push it back. Record
         // pendingRemove so _materializeRemoves retries at the next GM login.
         console.error('Omnipresence | folder member leave failed for', journal.name, err);
-        await journal.update({ 'flags.omnipresence.pendingRemove': rootId }, { omnipresenceInternal: true });
+        await journal.update({ 'flags.omnipresence.pendingRemove': { rootId, userId } }, { omnipresenceInternal: true });
       }
     } else {
-      await journal.update({ 'flags.omnipresence.pendingRemove': rootId }, { omnipresenceInternal: true });
+      await journal.update({ 'flags.omnipresence.pendingRemove': { rootId, userId: game.user.id } }, { omnipresenceInternal: true });
     }
   }
 

@@ -357,6 +357,13 @@ export class JournalSync {
       const omnipresenceId = journal.getFlag('omnipresence', 'id');
       const compJournal = compJournals.find(d => d.getFlag('omnipresence', 'id') === omnipresenceId);
 
+      // A local journal whose id is bound to a different document must never
+      // be overwritten from (or pushed over) that document's shared copy (#1).
+      if (Bindings.get(omnipresenceId) && !Bindings.isBoundTo(journal)) {
+        console.warn(`Omnipresence | skipping login sync of "${journal.name}" (${journal.id}): its sync id is bound to another document.`);
+        continue;
+      }
+
       // Allow-list gate on the OWNER (the user named by ownerName, or this GM
       // for a GM-owned journal) — never the acting GM's own list. A folder
       // member is gated by its root's owner and folderIds, never by journalIds.

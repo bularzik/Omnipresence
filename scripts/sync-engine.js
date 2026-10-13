@@ -170,6 +170,14 @@ export class SyncEngine {
       const omnipresenceId = actor.getFlag('omnipresence', 'id');
       const compActor = compActors.find(d => d.getFlag('omnipresence', 'id') === omnipresenceId);
 
+      // A local actor whose id is bound to a different document must never be
+      // overwritten from (or pushed over) that document's shared copy (#1).
+      const bound = Bindings.get(omnipresenceId);
+      if (bound && !Bindings.isBoundTo(actor)) {
+        console.warn(`Omnipresence | skipping login sync of "${actor.name}" (${actor.id}): its sync id is bound to another document.`);
+        continue;
+      }
+
       // Gate on the OWNER's preference and allow-list (the user named by
       // ownerName, or this GM for a GM-owned actor) — never on the acting
       // GM's list, which would let a GM's picker silently stop a player's

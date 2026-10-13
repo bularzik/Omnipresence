@@ -67,3 +67,35 @@ test('a deleted then re-imported actor is re-bound and keeps pushing', async () 
   }, NAME);
   expect(out).toEqual({ newId: true, bound: true, names: [`${NAME} Reimport Edited`] });
 });
+
+test('a forged carrier of a not-yet-pushed id is refused, not bound (first-push race)', async () => {
+  const out = await gmPage.evaluate(async (NAME) => {
+    const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+    const { SyncEngine } = await import('/modules/omnipresence/scripts/sync-engine.js');
+    const { Bindings } = await import('/modules/omnipresence/scripts/bindings.js');
+    const pack = game.packs.get(SyncEngine.PACK_ID);
+    // Victim: enrolled, never pushed — unbound and no copy yet.
+    const victim = await Actor.create({ name: `${NAME} Victim`, type: 'npc' });
+    const omniId = await SyncRegistry.enroll(victim);
+    // Attacker stamps the victim's id and enrolled flag on their own actor.
+    const forged = await Actor.create({
+      name: `${NAME} Forged`, type: 'npc',
+      flags: { omnipresence: { id: omniId, enrolled: true } }
+    });
+    await SyncEngine.push(forged);
+    const binding = Bindings.get(omniId);
+    const copies = (await pack.getDocuments()).filter(d => d.getFlag('omnipresence', 'id') === omniId).map(d => d.name);
+    const dups = game.settings.get('omnipresence', Bindings.DUPLICATES) ?? {};
+    const result = {
+      boundToForged: !!binding && binding.id === forged.id,
+      copies,
+      recorded: omniId in dups,
+      victimName: game.actors.get(victim.id).name
+    };
+    // Settle the recorded duplicate so it does not outlive the probe.
+    const next = { ...dups }; delete next[omniId];
+    await game.settings.set('omnipresence', Bindings.DUPLICATES, next);
+    return result;
+  }, NAME);
+  expect(out).toEqual({ boundToForged: false, copies: [], recorded: true, victimName: `${NAME} Victim` });
+});

@@ -69,20 +69,32 @@ export class Bindings {
   /** The push check: may `doc` write (or delete) the shared copy of its omni id? */
   static async authorizePush(doc, copyExists) {
     const omniId = doc.getFlag('omnipresence', 'id');
+    const others = this._carriers().filter(c => c.omniId === omniId && !(c.type === doc.documentName && c.id === doc.id));
     const decision = decidePushBinding({
-      binding: this.get(omniId), docType: doc.documentName, docId: doc.id, copyExists
+      binding: this.get(omniId), docType: doc.documentName, docId: doc.id, copyExists,
+      otherCarrier: others.length > 0
     });
     if (decision === 'proceed') return true;
     if (decision === 'bind') {
       await this.bind(doc);
       return true;
     }
+    if (!this.get(omniId) && others.length) await this._recordDuplicate(omniId, doc, others);
     console.warn(
       `Omnipresence | refusing to sync ${doc.documentName} "${doc.name}" (${doc.id}): ` +
       `its sync id ${omniId} belongs to another document. If both are legitimate copies, ` +
       'remove one from sync in the Omnipresence dashboard.'
     );
     return false;
+  }
+
+  /** GM only: list an unbound id carried by several documents, for the dashboard and resolveDuplicates. */
+  static async _recordDuplicate(omniId, doc, others) {
+    if (!game.user.isGM) return;
+    const recorded = { ...(game.settings.get('omnipresence', this.DUPLICATES) ?? {}) };
+    const docs = [{ type: doc.documentName, id: doc.id }, ...others.map(({ type, id }) => ({ type, id }))];
+    recorded[omniId] = docs;
+    await game.settings.set('omnipresence', this.DUPLICATES, recorded);
   }
 
   /** Every local document carrying an omni id, as binding carriers. */

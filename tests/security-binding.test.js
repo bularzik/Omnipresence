@@ -24,6 +24,15 @@ test('decidePushBinding: bound to another doc or another type → refuse', () =>
   assert.equal(decidePushBinding({ binding: { type: 'Actor', id: 'a2' }, docType: 'Actor', docId: 'a1', copyExists: false }), 'refuse');
 });
 
+test('decidePushBinding: unbound, no copy, but another local carrier → refuse (first-push race)', () => {
+  assert.equal(decidePushBinding({ binding: null, docType: 'Actor', docId: 'a1', copyExists: false, otherCarrier: true }), 'refuse');
+  assert.equal(decidePushBinding({ binding: null, docType: 'Actor', docId: 'a1', copyExists: false, otherCarrier: false }), 'bind');
+});
+
+test('decidePushBinding: a binding wins over otherCarrier', () => {
+  assert.equal(decidePushBinding({ binding: { type: 'Actor', id: 'a1' }, docType: 'Actor', docId: 'a1', copyExists: true, otherCarrier: true }), 'proceed');
+});
+
 test('buildBindings: unique ids bound, duplicates left unbound and reported', () => {
   const { bindings, duplicates } = buildBindings([
     { omniId: 'U', type: 'Actor', id: 'a1' },
