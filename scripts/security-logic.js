@@ -122,9 +122,11 @@ export function macroPushDecision({ exists, ownedByUser }) {
  * the GM has not already approved that exact command (by hash).
  * @returns {'install'|'confirm'}
  */
-export function decideScriptMacroInstall({ isGM, type, localCommand, packCommand, packHash, approvedHashes }) {
+export function decideScriptMacroInstall({ isGM, type, localType, localCommand, packCommand, packHash, approvedHashes }) {
   if (!isGM || type !== 'script') return 'install';
-  if (localCommand !== null && localCommand !== undefined && localCommand === packCommand) return 'install';
+  // Only an already-script local macro with the same command is unchanged; a
+  // chat macro becoming a script is new code and goes through the hash check.
+  if (localType === 'script' && localCommand !== null && localCommand !== undefined && localCommand === packCommand) return 'install';
   if (Array.isArray(approvedHashes) && approvedHashes.includes(packHash)) return 'install';
   return 'confirm';
 }

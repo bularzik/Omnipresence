@@ -227,6 +227,7 @@ export class MacroSync {
       const decision = decideScriptMacroInstall({
         isGM: game.user.isGM,
         type: macroData.type,
+        localType: localMacro?.type,
         localCommand: localMacro ? localMacro.command : null,
         packCommand: macroData.command,
         packHash: this._commandHash(compMacro),

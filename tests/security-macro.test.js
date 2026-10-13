@@ -23,8 +23,13 @@ test('decideScriptMacroInstall: GM script macro new locally or changed → confi
 });
 
 test('decideScriptMacroInstall: unchanged command or previously approved hash → install', () => {
-  assert.equal(decideScriptMacroInstall({ isGM: true, type: 'script', localCommand: 'x', packCommand: 'x', packHash: 'h', approvedHashes: [] }), 'install');
+  assert.equal(decideScriptMacroInstall({ isGM: true, type: 'script', localType: 'script', localCommand: 'x', packCommand: 'x', packHash: 'h', approvedHashes: [] }), 'install');
   assert.equal(decideScriptMacroInstall({ isGM: true, type: 'script', localCommand: null, packCommand: 'x', packHash: 'h', approvedHashes: ['h'] }), 'install');
+});
+
+test('decideScriptMacroInstall: a local chat macro with the same command still confirms (no silent chat→script)', () => {
+  assert.equal(decideScriptMacroInstall({ isGM: true, type: 'script', localType: 'chat', localCommand: 'x', packCommand: 'x', packHash: 'h', approvedHashes: [] }), 'confirm');
+  assert.equal(decideScriptMacroInstall({ isGM: true, type: 'script', localType: 'chat', localCommand: 'x', packCommand: 'x', packHash: 'h', approvedHashes: ['h'] }), 'install');
 });
 
 test("macroCopiesToDelete: only this user's copies from this world, not pushed, not held by a dangling slot", () => {
