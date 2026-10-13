@@ -198,3 +198,21 @@ export function sha256Hex(text) {
   }
   return [...h].map(x => x.toString(16).padStart(8, '0')).join('');
 }
+
+// ---------------------------------------------------------------------------
+// Hidden packs (#3).
+
+/** Ownership every Omnipresence pack must have: hidden from players and trusted players in the UI. */
+export const HIDDEN_PACK_OWNERSHIP = Object.freeze({ PLAYER: 'NONE', TRUSTED: 'NONE', ASSISTANT: 'OWNER' });
+
+const OWNERSHIP_RANK = { NONE: 0, INHERIT: 0, LIMITED: 1, OBSERVER: 2, OWNER: 3 };
+
+/**
+ * Whether a pack ownership map gives PLAYER or TRUSTED anything above NONE.
+ * Unknown or missing levels count as NONE (Foundry ignores them too); a
+ * TRUSTED of INHERIT takes PLAYER's level, which is checked on its own.
+ */
+export function ownershipExposesPlayers(ownership) {
+  const rank = level => OWNERSHIP_RANK[level] ?? 0;
+  return rank(ownership?.PLAYER) > 0 || rank(ownership?.TRUSTED) > 0;
+}

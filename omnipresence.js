@@ -10,6 +10,7 @@ import { LinkRewriter } from './scripts/link-rewriter.js';
 import { Onboarding } from './scripts/onboarding.js';
 import { runLoginReconcile } from './scripts/reconcile.js';
 import { FolderDirectory } from './scripts/folder-directory.js';
+import { unlockPacks, hidePacksFromPlayers } from './scripts/pack-ownership.js';
 
 Hooks.once('init', () => {
   SyncRegistry.register();
@@ -29,12 +30,18 @@ Hooks.once('init', () => {
 
 Hooks.once('ready', async () => {
   if (game.user.isGM) {
-    const pack = game.packs.get(SyncEngine.PACK_ID);
-    if (pack && pack.locked) await pack.configure({ locked: false });
-    const macroPack = game.packs.get(MacroSync.PACK_ID);
-    if (macroPack && macroPack.locked) await macroPack.configure({ locked: false });
-    const journalPack = game.packs.get(JournalSync.PACK_ID);
-    if (journalPack && journalPack.locked) await journalPack.configure({ locked: false });
+    try {
+      await unlockPacks();
+    } catch (err) {
+      console.error('Omnipresence | pack unlock failed', err);
+    }
+    // A per-world override would put every world's synced content back in
+    // players' Compendium sidebar: hide the packs again.
+    try {
+      await hidePacksFromPlayers();
+    } catch (err) {
+      console.error('Omnipresence | pack ownership check failed', err);
+    }
   }
   // Folder sync is explicit per world since 0.9.0: users whose folders were
   // admitted by the old "every folder" rule keep the ones already here.

@@ -76,5 +76,6 @@
   "OMNIPRESENCE.dashboard.noFolders": "No journal folders enrolled in sync.",
   "OMNIPRESENCE.sharedFolders.heading": "Shared from other worlds",
   "OMNIPRESENCE.sharedFolders.syncHere": "Sync here",
-  "OMNIPRESENCE.sharedFolders.waiting": "Waiting for a GM"
+  "OMNIPRESENCE.sharedFolders.waiting": "Waiting for a GM",
+  "OMNIPRESENCE.notifications.packsRehidden": "Omnipresence: {packs} had been opened to players in this world's Compendium settings. They hold synced content from every world on this server, so they were hidden from players again."
 }
