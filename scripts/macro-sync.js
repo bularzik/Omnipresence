@@ -225,17 +225,18 @@ export class MacroSync {
 
       // A GM never runs a script macro from another world's pack copy without
       // seeing it first (#5): new here, or changed, and not approved before.
+      const packHash = this._commandHash(compMacro);
       const decision = decideScriptMacroInstall({
         isGM: game.user.isGM,
         type: macroData.type,
         localType: localMacro?.type,
         localCommand: localMacro ? localMacro.command : null,
         packCommand: macroData.command,
-        packHash: this._commandHash(compMacro),
+        packHash,
         approvedHashes: approved
       });
       if (decision === 'confirm') {
-        needsConfirm.push({ compMacro, macroData, localMacro, slots });
+        needsConfirm.push({ compMacro, macroData, localMacro, slots, packHash });
         continue;
       }
 
@@ -318,10 +319,12 @@ export class MacroSync {
 
     const approved = new Set(this._approvedHashes());
     const entries = {};
-    for (const { compMacro, macroData, localMacro, slots } of items) {
+    for (const { compMacro, macroData, localMacro, slots, packHash } of items) {
       const installed = await this._installPulled(localMacro, macroData, compMacro.name);
       if (!installed) continue;
-      approved.add(this._commandHash(compMacro));
+      // The hash of what was pulled and shown, not the live copy, which may
+      // have changed while the dialog was open.
+      approved.add(packHash);
       for (const slot of slots) entries[slot] = installed.id;
     }
     await game.settings.set('omnipresence', this.APPROVED_SETTING, [...approved]);

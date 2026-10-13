@@ -961,6 +961,7 @@ export class FolderSync {
     await SyncRegistry.unenrollMember(journal);
     if (game.user.isGM) {
       const omniId = journal.getFlag('omnipresence', 'id');
+      let validated = false;
       try {
         const docs = await this._getPack().getDocuments();
         const actingUser = game.users.get(userId) ?? game.user;
@@ -968,12 +969,20 @@ export class FolderSync {
           console.warn('Omnipresence | refusing folder member remove for', journal.name, '— invalid for', omniId);
           return;
         }
+        validated = true;
         await this._removeFromPack(rootId, omniId, 'removed', docs);
       } catch (err) {
         // A pack failure must never leave a member unenrolled locally with a live
         // pack copy and no tombstone — other worlds would push it back. Record
         // a GM-only queued removal so _drainPackRemovals retries at the next GM login.
         console.error('Omnipresence | folder member leave failed for', journal.name, err);
+        // Only a removal that passed validation may be queued; a failure before
+        // it (e.g. the pack read threw) proves nothing about the forged-flag
+        // attack, so the drain must not act on it.
+        if (!validated) {
+          console.warn('Omnipresence | folder member leave not queued (failed before validation) for', omniId);
+          return;
+        }
         const queue = game.settings.get('omnipresence', Bindings.PACK_REMOVALS) ?? [];
         await game.settings.set('omnipresence', Bindings.PACK_REMOVALS, [...queue, { omniId, rootId }]);
       }
