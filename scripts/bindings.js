@@ -1,5 +1,5 @@
 import { SyncRegistry } from './sync-registry.js';
-import { decidePushBinding, buildBindings, resolveDuplicateBindings, pullAllowed, mergeDuplicateRecord } from './security-logic.js';
+import { decidePushBinding, buildBindings, resolveDuplicateBindings, pullAllowed, mergeDuplicateRecord, pushRefusalRecord } from './security-logic.js';
 
 /**
  * Shared-copy bindings (#1, #2, #6): which local document in THIS world may
@@ -117,11 +117,11 @@ export class Bindings {
       await this.bind(doc);
       return true;
     }
-    if (!this.get(omniId) && others.length) {
-      await this._recordDuplicate(omniId, [
-        { type: doc.documentName, id: doc.id }, ...others.map(({ type, id }) => ({ type, id }))
-      ]);
-    }
+    const record = pushRefusalRecord({
+      omniId, bound: !!this.get(omniId), copyExists,
+      doc: { type: doc.documentName, id: doc.id }, others
+    });
+    if (record) await this._recordDuplicate(omniId, record);
     console.warn(
       `Omnipresence | refusing to sync ${doc.documentName} "${doc.name}" (${doc.id}): ` +
       `its sync id ${omniId} belongs to another document. If both are legitimate copies, ` +

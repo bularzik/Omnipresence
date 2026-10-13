@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   decidePushBinding, buildBindings, resolveDuplicateBindings, boundOmniToLocal, validateFolderRemoval,
-  judgePendingRemoveClaim, pullAllowed, mergeDuplicateRecord
+  judgePendingRemoveClaim, pullAllowed, mergeDuplicateRecord, pushRefusalRecord
 } from '../scripts/security-logic.js';
 
 // --- Login pull rule (cross-world first-push race) --------------------------
@@ -44,6 +44,35 @@ test('mergeDuplicateRecord: a later refusal of the same id keeps the SharedCopy 
   ]);
   assert.deepEqual(bind, {});
   assert.deepEqual(remaining.x, [{ type: 'Actor', id: 'a1' }, { type: 'SharedCopy', id: 'x' }]);
+});
+
+test('pushRefusalRecord: unbound with a shared copy → marked, even with no other carrier; the survivor is never auto-bound', () => {
+  const doc = { type: 'Actor', id: 'b1' };
+  const others = [{ omniId: 'x', type: 'Actor', id: 'b2', enrolled: true }];
+  const record = pushRefusalRecord({ omniId: 'x', bound: false, copyExists: true, doc, others });
+  assert.deepEqual(record, [{ type: 'Actor', id: 'b1' }, { type: 'Actor', id: 'b2' }, { type: 'SharedCopy', id: 'x' }]);
+  assert.deepEqual(
+    pushRefusalRecord({ omniId: 'x', bound: false, copyExists: true, doc, others: [] }),
+    [{ type: 'Actor', id: 'b1' }, { type: 'SharedCopy', id: 'x' }]
+  );
+  // b2 is removed from sync: b1 is the one enrolled carrier left, and stays unbound.
+  const { bind, remaining } = resolveDuplicateBindings({ x: record }, [
+    { omniId: 'x', type: 'Actor', id: 'b1', enrolled: true },
+    { omniId: 'x', type: 'Actor', id: 'b2', enrolled: false }
+  ]);
+  assert.deepEqual(bind, {});
+  assert.deepEqual(remaining.x, [{ type: 'Actor', id: 'b1' }, { type: 'SharedCopy', id: 'x' }]);
+});
+
+test('pushRefusalRecord: bound → nothing; unbound, no copy → plain duplicate only with other carriers', () => {
+  const doc = { type: 'Actor', id: 'a1' };
+  const others = [{ type: 'Actor', id: 'a2' }];
+  assert.equal(pushRefusalRecord({ omniId: 'x', bound: true, copyExists: true, doc, others }), null);
+  assert.deepEqual(
+    pushRefusalRecord({ omniId: 'x', bound: false, copyExists: false, doc, others }),
+    [{ type: 'Actor', id: 'a1' }, { type: 'Actor', id: 'a2' }]
+  );
+  assert.equal(pushRefusalRecord({ omniId: 'x', bound: false, copyExists: false, doc, others: [] }), null);
 });
 
 test('resolveDuplicateBindings: a SharedCopy record whose last carrier was removed from sync is dropped, not bound', () => {

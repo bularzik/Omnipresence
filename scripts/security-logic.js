@@ -58,6 +58,24 @@ export function buildBindings(carriers) {
 }
 
 /**
+ * What a refused push records in the duplicates list, or null for nothing.
+ * A bound id records nothing (the bound document keeps syncing; the refusal
+ * is only logged). An unbound id whose shared copy exists is always recorded
+ * with the `SharedCopy` marker — even with no other local carrier — so that
+ * removing the other carriers from sync never auto-binds the survivor to a
+ * copy another world made. An unbound id with no copy but other carriers is
+ * a plain duplicate.
+ * @param {{omniId: string, bound: boolean, copyExists: boolean, doc: {type: string, id: string}, others: Array<{type: string, id: string}>}} input
+ * @returns {Array<{type: string, id: string}>|null}
+ */
+export function pushRefusalRecord({ omniId, bound, copyExists, doc, others }) {
+  if (bound) return null;
+  const docs = [{ type: doc.type, id: doc.id }, ...others.map(({ type, id }) => ({ type, id }))];
+  if (copyExists) return [...docs, { type: 'SharedCopy', id: omniId }];
+  return others.length ? docs : null;
+}
+
+/**
  * Merge newly refused documents into an existing duplicate record. Entries
  * are kept (de-duplicated by type and id), so a `SharedCopy` marker, once
  * recorded, is never dropped by a later refusal of the same id.

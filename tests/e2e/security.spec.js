@@ -185,6 +185,60 @@ test('the dashboard force-pull refuses an unbound carrier of an id whose shared 
   await sweepProbes(gmPage, PREFIX);
 });
 
+test('two unbound carriers of an id whose shared copy came from another world: removing one from sync does not bind the other (cross-world race)', async () => {
+  test.setTimeout(90_000);
+  const result = await gmPage.evaluate(async ({ PREFIX }) => {
+    const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+    const { SyncEngine } = await import('/modules/omnipresence/scripts/sync-engine.js');
+    const { Bindings } = await import('/modules/omnipresence/scripts/bindings.js');
+    const omniId = foundry.utils.randomID(16);
+    const pack = game.packs.get(`omnipresence.omnipresence-${game.system.id}`);
+    await Actor.create({
+      name: `${PREFIX} Race Push Remote Copy`, type: 'character',
+      flags: { omnipresence: { id: omniId, syncedAt: new Date().toISOString(), ownerName: null } }
+    }, { pack: pack.collection });
+    const carrier = n => Actor.create({
+      name: `${PREFIX} Race Push Carrier ${n}`, type: 'character',
+      flags: { omnipresence: { id: omniId, enrolled: true, syncedAt: new Date(0).toISOString() } }
+    }, { omnipresenceInternal: true });
+    const b1 = await carrier(1);
+    const b2 = await carrier(2);
+    const unbound = !Bindings.get(omniId);
+    // The push is refused (unbound, copy exists) and recorded with B2 as another carrier.
+    await SyncEngine.push(b1);
+    const recordedAfterPush = game.settings.get('omnipresence', 'bindingDuplicates')?.[omniId] ?? null;
+    // The extra carrier is removed from sync; the duplicates are re-resolved.
+    await SyncRegistry.unenroll(b2);
+    await Bindings.resolveDuplicates();
+    const binding = Bindings.get(omniId);
+    const before = { name: b1.name, syncedAt: b1.getFlag('omnipresence', 'syncedAt') };
+    await SyncRegistry.addToSelection(game.user.id, 'actor', omniId);
+    await SyncEngine.onLogin();
+    const local = game.actors.get(b1.id);
+    const after = { name: local.name, syncedAt: local.getFlag('omnipresence', 'syncedAt') };
+    const copies = (await pack.getDocuments()).filter(d => d.getFlag('omnipresence', 'id') === omniId).map(d => d.name);
+    // Clean up the binding (if the attack bound it), the record and the selection.
+    const bindings = { ...(game.settings.get('omnipresence', 'bindings') ?? {}) };
+    delete bindings[omniId];
+    await game.settings.set('omnipresence', 'bindings', bindings);
+    const dup = { ...(game.settings.get('omnipresence', 'bindingDuplicates') ?? {}) };
+    delete dup[omniId];
+    await game.settings.set('omnipresence', 'bindingDuplicates', dup);
+    await SyncRegistry.removeFromSelection(game.user.id, 'actor', omniId);
+    return { unbound, recordedAfterPush, binding, before, after, copies, omniId, b1: b1.id, b2: b2.id };
+  }, { PREFIX });
+
+  expect(result.unbound).toBe(true);
+  // The attack assertions: nothing bound, the survivor not overwritten, the copy untouched.
+  expect(result.binding).toBeNull();
+  expect(result.after).toEqual(result.before);
+  expect(result.copies).toEqual([`${PREFIX} Race Push Remote Copy`]);
+  expect(result.recordedAfterPush).toEqual([
+    { type: 'Actor', id: result.b1 }, { type: 'Actor', id: result.b2 }, { type: 'SharedCopy', id: result.omniId }
+  ]);
+  await sweepProbes(gmPage, PREFIX);
+});
+
 test('a forged viaFolder flag cannot delete a shared journal (#2)', async () => {
   test.setTimeout(90_000);
   const setup = await gmPage.evaluate(async ({ PREFIX, PLAYER }) => {
