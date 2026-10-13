@@ -92,7 +92,7 @@ export class SyncEngine {
     if (this._timers.has(id)) clearTimeout(this._timers.get(id));
     const timer = setTimeout(() => {
       this._timers.delete(id);
-      this.push(actor);
+      this.push(actor).catch(err => console.error('Omnipresence | push failed for', actor.name, err));
     }, DEBOUNCE_MS);
     this._timers.set(id, timer);
   }
@@ -107,11 +107,19 @@ export class SyncEngine {
     this._timers.clear();
   }
 
+  /**
+   * Mark an actor dirty. Every caller is a hook that does not await it, so
+   * log failures here instead of leaving an unhandled rejection.
+   */
   static async trackLocalModification(actor) {
-    await actor.update(
-      { 'flags.omnipresence.localModifiedAt': new Date().toISOString() },
-      { omnipresenceInternal: true }
-    );
+    try {
+      await actor.update(
+        { 'flags.omnipresence.localModifiedAt': new Date().toISOString() },
+        { omnipresenceInternal: true }
+      );
+    } catch (err) {
+      console.error('Omnipresence | dirty-mark failed for', actor.name, err);
+    }
   }
 
   /**
@@ -127,7 +135,7 @@ export class SyncEngine {
     if (!actor) return;
     if (!SyncRegistry.isEnrolled(actor)) return;
     if (userId === game.user.id) this.trackLocalModification(actor);
-    if (game.user.isGM) this.debouncedPush(actor);
+    if (SyncRegistry.isPusher()) this.debouncedPush(actor);
   }
 
   static async pull(localActor, compActor) {
@@ -188,8 +196,8 @@ export class SyncEngine {
       if (!SyncRegistry.isDocSelected(gateUser.id, 'actor', omnipresenceId)) continue;
 
       if (!compActor) {
-        // No compendium entry — push local copy as master (GM only; no-op for players).
-        await this.push(actor);
+        // No compendium entry — push local copy as master (the active GM only, #7).
+        if (SyncRegistry.isPusher()) await this.push(actor);
         continue;
       }
 
@@ -204,7 +212,7 @@ export class SyncEngine {
       } else if (action === 'pull') {
         await this.pull(actor, compActor);
       } else if (action === 'push') {
-        await this.push(actor);
+        if (SyncRegistry.isPusher()) await this.push(actor);
       }
       // 'none': in sync
     }

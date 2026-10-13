@@ -162,7 +162,7 @@ export class JournalSync {
     if (this._timers.has(id)) clearTimeout(this._timers.get(id));
     const timer = setTimeout(() => {
       this._timers.delete(id);
-      this.push(journal);
+      this.push(journal).catch(err => console.error('Omnipresence | journal push failed for', journal.name, err));
     }, DEBOUNCE_MS);
     this._timers.set(id, timer);
   }
@@ -177,11 +177,19 @@ export class JournalSync {
     this._timers.clear();
   }
 
+  /**
+   * Mark a journal dirty. Every caller is a hook that does not await it, so
+   * log failures here instead of leaving an unhandled rejection.
+   */
   static async trackLocalModification(journal) {
-    await journal.update(
-      { 'flags.omnipresence.localModifiedAt': new Date().toISOString() },
-      { omnipresenceInternal: true }
-    );
+    try {
+      await journal.update(
+        { 'flags.omnipresence.localModifiedAt': new Date().toISOString() },
+        { omnipresenceInternal: true }
+      );
+    } catch (err) {
+      console.error('Omnipresence | dirty-mark failed for', journal.name, err);
+    }
   }
 
   /**
@@ -198,7 +206,7 @@ export class JournalSync {
     if (!SyncRegistry.isEnrolled(journal)) return;
     if (!SyncRegistry.isJournalSyncEnabled(userId)) return;
     if (userId === game.user.id) this.trackLocalModification(journal);
-    if (game.user.isGM) this.debouncedPush(journal);
+    if (SyncRegistry.isPusher()) this.debouncedPush(journal);
   }
 
   /**
@@ -213,7 +221,7 @@ export class JournalSync {
     if (!SyncRegistry.isEnrolled(journal)) return;
     if (!SyncRegistry.isJournalSyncEnabled(userId)) return;
     if (userId === game.user.id) this.trackLocalModification(journal);
-    if (game.user.isGM) this.debouncedPush(journal);
+    if (SyncRegistry.isPusher()) this.debouncedPush(journal);
   }
 
   /**
@@ -380,7 +388,7 @@ export class JournalSync {
       }
 
       if (!compJournal) {
-        await this.push(journal);
+        if (SyncRegistry.isPusher()) await this.push(journal);
         touched.push(journal);
         continue;
       }
@@ -396,7 +404,7 @@ export class JournalSync {
       } else if (action === 'pull') {
         await this.pull(journal, compJournal);
       } else if (action === 'push') {
-        await this.push(journal);
+        if (SyncRegistry.isPusher()) await this.push(journal);
       }
       touched.push(journal);
     }

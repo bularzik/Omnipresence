@@ -108,7 +108,8 @@ Hooks.on('updateActor', (actor, changes, options, userId) => {
   if (!SyncRegistry.isEnrolled(actor)) return;
   if (!SyncRegistry.isActorSyncEnabled(userId)) return;
   if (userId === game.user.id) SyncEngine.trackLocalModification(actor);
-  if (game.user.isGM) SyncEngine.debouncedPush(actor);
+  // One automatic pusher per world (#7): every GM client sees this hook.
+  if (SyncRegistry.isPusher()) SyncEngine.debouncedPush(actor);
 });
 
 // Deleting an enrolled actor is deliberately NOT an unenroll (README, Notes):
@@ -183,7 +184,7 @@ Hooks.on('updateJournalEntry', (journal, changes, options, userId) => {
   if (!SyncRegistry.isEnrolled(journal)) return;
   if (!SyncRegistry.isJournalSyncEnabled(userId)) return;
   if (userId === game.user.id) JournalSync.trackLocalModification(journal);
-  if (game.user.isGM) JournalSync.debouncedPush(journal);
+  if (SyncRegistry.isPusher()) JournalSync.debouncedPush(journal);
 });
 
 Hooks.on('deleteJournalEntry', (journal, options, userId) => {

@@ -144,7 +144,7 @@ export class MacroSync {
     if (this._timers.has(id)) clearTimeout(this._timers.get(id));
     const timer = setTimeout(() => {
       this._timers.delete(id);
-      this.pushForUser(user);
+      this.pushForUser(user).catch(err => console.error('Omnipresence | macro push failed for user', user.name, err));
     }, DEBOUNCE_MS);
     this._timers.set(id, timer);
   }
@@ -160,21 +160,22 @@ export class MacroSync {
   }
 
   static handleMacroChange(macro) {
-    if (!game.user.isGM) return;
+    if (!SyncRegistry.isPusher()) return;
     for (const user of this._getUsersWithMacro(macro.id)) {
       this.debouncedPushForUser(user);
     }
   }
 
   static handleHotbarChange(user) {
-    if (!game.user.isGM) return;
+    if (!SyncRegistry.isPusher()) return;
     if (!SyncRegistry.isMacroSyncEnabled(user.id)) return;
     this.debouncedPushForUser(user);
   }
 
   static async onLogin() {
-    // GM: push all users' hotbars to catch up changes made while GM was offline.
-    if (game.user.isGM) {
+    // The active GM pushes every user's hotbar to catch up on changes made
+    // while no GM was here; a second GM must not push the same hotbars (#7).
+    if (SyncRegistry.isPusher()) {
       for (const user of game.users) {
         if (SyncRegistry.isMacroSyncEnabled(user.id)) {
           try {
