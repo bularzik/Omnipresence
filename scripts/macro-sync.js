@@ -1,5 +1,6 @@
 import { SyncRegistry } from './sync-registry.js';
 import { stripMacroLocalFields } from './sync-logic.js';
+import { macroPushDecision, macroCopiesToDelete } from './security-logic.js';
 import { LinkRewriter } from './link-rewriter.js';
 
 const DEBOUNCE_MS = 2000;
@@ -58,8 +59,18 @@ export class MacroSync {
 
     for (const [macroId, slots] of macroSlots) {
       const macro = game.macros.get(macroId);
-      if (!macro) {
+      const decision = macroPushDecision({
+        exists: !!macro,
+        ownedByUser: !!macro?.testUserPermission(user, 'OWNER')
+      });
+      if (decision === 'dangling') {
         for (const slot of slots) danglingSlots.add(slot);
+        continue;
+      }
+      if (decision === 'skip') {
+        // A player can put any macro id on their own hotbar; publishing a
+        // macro they do not own would leak a GM-only macro under their name (#4).
+        console.warn('Omnipresence | not publishing macro', macro.name, 'from the hotbar of', user.name, '— they do not own it');
         continue;
       }
 
@@ -78,7 +89,8 @@ export class MacroSync {
       // it, then canonicalize links so the pack copy is world-independent.
       const macroData = LinkRewriter.canonicalize(stripMacroLocalFields(macro.toObject()));
       macroData.flags ??= {};
-      macroData.flags.omnipresence = { id: ompId, ownerName: user.name, hotbarSlots: slots };
+      // originWorld scopes cleanup to the world that pushed the copy (#8).
+      macroData.flags.omnipresence = { id: ompId, ownerName: user.name, hotbarSlots: slots, originWorld: game.world.id };
 
       const existing = compByOmpId.get(ompId);
       if (existing) {
@@ -91,13 +103,21 @@ export class MacroSync {
       pushedOmpIds.add(ompId);
     }
 
-    // Delete compendium entries for macros no longer on this user's hotbar —
-    // except copies a dangling slot still points at (restored on pull).
+    // Delete copies of macros no longer on this user's hotbar — except copies
+    // a dangling slot still points at (restored on pull), and only copies
+    // pushed FROM THIS WORLD: a same-named user in another world owns the
+    // rest (#8). Untagged pre-upgrade copies are never deleted here.
+    const toDelete = new Set(macroCopiesToDelete(
+      userCompDocs.map(d => ({
+        omniId: d.getFlag('omnipresence', 'id'),
+        ownerName: user.name,
+        originWorld: d.getFlag('omnipresence', 'originWorld'),
+        slots: d.getFlag('omnipresence', 'hotbarSlots') ?? []
+      })),
+      { userName: user.name, worldId: game.world.id, pushedIds: [...pushedOmpIds], danglingSlots: [...danglingSlots] }
+    ));
     for (const doc of userCompDocs) {
-      if (pushedOmpIds.has(doc.getFlag('omnipresence', 'id'))) continue;
-      const copySlots = doc.getFlag('omnipresence', 'hotbarSlots') ?? [];
-      if (copySlots.some(slot => danglingSlots.has(slot))) continue;
-      await doc.delete();
+      if (toDelete.has(doc.getFlag('omnipresence', 'id'))) await doc.delete();
     }
   }
 
@@ -135,9 +155,6 @@ export class MacroSync {
   }
 
   static async onLogin() {
-    const pack = this._getPack();
-    if (!pack) return;
-
     // GM: push all users' hotbars to catch up changes made while GM was offline.
     if (game.user.isGM) {
       for (const user of game.users) {
@@ -150,7 +167,13 @@ export class MacroSync {
         }
       }
     }
+    await this.pullOwn();
+  }
 
+  /** Pull the current user's own macros and place them on their hotbar. */
+  static async pullOwn() {
+    const pack = this._getPack();
+    if (!pack) return;
     if (!SyncRegistry.isMacroSyncEnabled(game.user.id)) return;
 
     const compDocs = await pack.getDocuments();
@@ -177,37 +200,42 @@ export class MacroSync {
       // assigns the current user as author/owner.
       // …and localize canonical omnipresence ids to this world's ids.
       const macroData = LinkRewriter.localize(stripMacroLocalFields(compMacro.toObject()));
-
-      let localMacro = localById.get(ompId);
-      try {
-        if (localMacro) {
-          await localMacro.update(macroData, { omnipresenceInternal: true, recursive: false });
-        } else {
-          localMacro = await Macro.create(macroData);
-        }
-      } catch (err) {
-        console.error('Omnipresence | macro pull failed for', compMacro.name, err);
-        continue;
-      }
-
-      for (const slot of slots) {
-        newHotbarEntries[slot] = localMacro.id;
-      }
+      const installed = await this._installPulled(localById.get(ompId) ?? null, macroData, compMacro.name);
+      if (!installed) continue;
+      for (const slot of slots) newHotbarEntries[slot] = installed.id;
     }
 
-    if (Object.keys(newHotbarEntries).length > 0) {
-      // Write slot by slot and DELETE any empty slot instead of carrying it.
-      // Foundry (v14 verified) accepts a null slot on write but then rejects
-      // the whole User document at the next load, which removes that user
-      // from the join screen. A whole-object write would not clear a null
-      // already stored (the update is diffed against the source), so the
-      // `-=` deletion key is what actually repairs it.
-      const update = {};
-      for (const [slot, id] of Object.entries({ ...game.user.hotbar, ...newHotbarEntries })) {
-        if (id) update[`hotbar.${slot}`] = id;
-        else update[`hotbar.-=${slot}`] = null;
+    await this._writeHotbar(newHotbarEntries);
+  }
+
+  /** Create or update the local macro from pulled data. Null on failure (logged). */
+  static async _installPulled(localMacro, macroData, name) {
+    try {
+      if (localMacro) {
+        await localMacro.update(macroData, { omnipresenceInternal: true, recursive: false });
+        return localMacro;
       }
-      await game.user.update(update, { omnipresenceInternal: true });
+      return await Macro.create(macroData);
+    } catch (err) {
+      console.error('Omnipresence | macro pull failed for', name, err);
+      return null;
     }
+  }
+
+  /** Point hotbar slots at local macros: {slot: macroId}. */
+  static async _writeHotbar(entries) {
+    if (Object.keys(entries).length === 0) return;
+    // Write slot by slot and DELETE any empty slot instead of carrying it.
+    // Foundry (v14 verified) accepts a null slot on write but then rejects
+    // the whole User document at the next load, which removes that user
+    // from the join screen. A whole-object write would not clear a null
+    // already stored (the update is diffed against the source), so the
+    // `-=` deletion key is what actually repairs it.
+    const update = {};
+    for (const [slot, id] of Object.entries({ ...game.user.hotbar, ...entries })) {
+      if (id) update[`hotbar.${slot}`] = id;
+      else update[`hotbar.-=${slot}`] = null;
+    }
+    await game.user.update(update, { omnipresenceInternal: true });
   }
 }
