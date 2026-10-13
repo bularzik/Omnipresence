@@ -2,8 +2,35 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   decidePushBinding, buildBindings, resolveDuplicateBindings, boundOmniToLocal, validateFolderRemoval,
-  judgePendingRemoveClaim
+  judgePendingRemoveClaim, pullAllowed
 } from '../scripts/security-logic.js';
+
+// --- Login pull rule (cross-world first-push race) --------------------------
+
+test('pullAllowed: once bindings are built, only the bound document may pull', () => {
+  const base = { bindingsBuilt: true, docType: 'Actor', docId: 'a1' };
+  assert.equal(pullAllowed({ ...base, binding: { type: 'Actor', id: 'a1' } }), true);
+  assert.equal(pullAllowed({ ...base, binding: null }), false);
+  assert.equal(pullAllowed({ ...base, binding: undefined }), false);
+  assert.equal(pullAllowed({ ...base, binding: { type: 'Actor', id: 'a2' } }), false);
+  assert.equal(pullAllowed({ ...base, binding: { type: 'JournalEntry', id: 'a1' } }), false);
+});
+
+test('pullAllowed: before bindings are built, only a binding to another document refuses', () => {
+  const base = { bindingsBuilt: false, docType: 'Actor', docId: 'a1' };
+  assert.equal(pullAllowed({ ...base, binding: null }), true);
+  assert.equal(pullAllowed({ ...base, binding: { type: 'Actor', id: 'a1' } }), true);
+  assert.equal(pullAllowed({ ...base, binding: { type: 'Actor', id: 'a2' } }), false);
+});
+
+test('resolveDuplicateBindings: an unbound-but-copy-exists record is never auto-bound and survives while its carrier lives', () => {
+  const recorded = { x: [{ type: 'Actor', id: 'a1' }, { type: 'SharedCopy', id: 'x' }] };
+  const live = [{ omniId: 'x', type: 'Actor', id: 'a1', enrolled: true }];
+  const { bind, remaining } = resolveDuplicateBindings(recorded, live);
+  assert.deepEqual(bind, {});
+  assert.deepEqual(remaining.x, [{ type: 'Actor', id: 'a1' }, { type: 'SharedCopy', id: 'x' }]);
+  assert.deepEqual(resolveDuplicateBindings(recorded, []).remaining, {});
+});
 
 // --- Shared-copy bindings ---------------------------------------------------
 

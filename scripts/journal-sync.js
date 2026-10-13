@@ -371,6 +371,9 @@ export class JournalSync {
         console.warn(`Omnipresence | skipping login sync of "${journal.name}" (${journal.id}): its sync id is bound to another document.`);
         continue;
       }
+      // Once bindings exist, an unbound carrier of an id whose shared copy
+      // exists never syncs (cross-world first-push race).
+      if (compJournal && !(await Bindings.mayPull(journal))) continue;
 
       // Allow-list gate on the OWNER (the user named by ownerName, or this GM
       // for a GM-owned journal) — never the acting GM's own list. A folder

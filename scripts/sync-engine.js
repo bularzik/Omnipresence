@@ -185,6 +185,10 @@ export class SyncEngine {
         console.warn(`Omnipresence | skipping login sync of "${actor.name}" (${actor.id}): its sync id is bound to another document.`);
         continue;
       }
+      // Once bindings exist, an unbound carrier of an id whose shared copy
+      // exists never syncs: the copy may have been made by a forgery in
+      // another world's first-push race.
+      if (compActor && !(await Bindings.mayPull(actor))) continue;
 
       // Gate on the OWNER's preference and allow-list (the user named by
       // ownerName, or this GM for a GM-owned actor) — never on the acting

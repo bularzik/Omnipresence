@@ -117,6 +117,51 @@ test("a player's forged sync id cannot overwrite another document's shared copy 
   expect(await victimCopies()).toEqual([`${PREFIX} Victim`]);
 });
 
+test('an unbound carrier of an id whose shared copy another document made is not pulled over at login (cross-world race)', async () => {
+  test.setTimeout(90_000);
+  const result = await gmPage.evaluate(async ({ PREFIX }) => {
+    const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+    const { SyncEngine } = await import('/modules/omnipresence/scripts/sync-engine.js');
+    const { Bindings } = await import('/modules/omnipresence/scripts/bindings.js');
+    const built = game.settings.get('omnipresence', 'bindingsBuilt');
+    // The forger's document wins the first push: it is bound to X and makes the copy.
+    const forger = await Actor.create({ name: `${PREFIX} Race Forger`, type: 'character' });
+    const omniId = await SyncRegistry.enroll(forger);
+    await SyncEngine.push(forger);
+    const pack = game.packs.get(`omnipresence.omnipresence-${game.system.id}`);
+    const copyExists = (await pack.getDocuments()).some(d => d.getFlag('omnipresence', 'id') === omniId);
+    // The victim carries X, enrolled, older than the copy, but is not bound to it.
+    const victim = await Actor.create({
+      name: `${PREFIX} Race Victim`, type: 'character',
+      flags: { omnipresence: { id: omniId, enrolled: true, syncedAt: new Date(0).toISOString() } }
+    });
+    await SyncRegistry.addToSelection(game.user.id, 'actor', omniId);
+    const unbound = !Bindings.isBoundTo(victim);
+    const before = { name: victim.name, syncedAt: victim.getFlag('omnipresence', 'syncedAt') };
+    await SyncEngine.onLogin();
+    const copyCount = (await pack.getDocuments()).filter(d => d.getFlag('omnipresence', 'id') === omniId).length;
+    const recorded = game.settings.get('omnipresence', 'bindingDuplicates')?.[omniId] ?? null;
+    return {
+      built, copyExists, unbound, copyCount, before, recorded, omniId, victimId: victim.id,
+      after: { name: game.actors.get(victim.id).name, syncedAt: game.actors.get(victim.id).getFlag('omnipresence', 'syncedAt') }
+    };
+  }, { PREFIX });
+
+  expect(result.built).toBe(true);
+  expect(result.copyExists).toBe(true);
+  expect(result.unbound).toBe(true);
+  expect(result.copyCount).toBe(1);
+  expect(result.after).toEqual(result.before);
+  expect(result.recorded).toEqual([{ type: 'Actor', id: result.victimId }, { type: 'SharedCopy', id: result.omniId }]);
+  // Probes (and the recorded entry) are cleaned up here as well as by the final sweep.
+  await gmPage.evaluate(async ({ PREFIX, omniId }) => {
+    const dup = { ...(game.settings.get('omnipresence', 'bindingDuplicates') ?? {}) };
+    delete dup[omniId];
+    await game.settings.set('omnipresence', 'bindingDuplicates', dup);
+  }, result);
+  await sweepProbes(gmPage, PREFIX);
+});
+
 test('a forged viaFolder flag cannot delete a shared journal (#2)', async () => {
   test.setTimeout(90_000);
   const setup = await gmPage.evaluate(async ({ PREFIX, PLAYER }) => {

@@ -1,5 +1,5 @@
 import { SyncRegistry } from './sync-registry.js';
-import { decidePushBinding, buildBindings, resolveDuplicateBindings } from './security-logic.js';
+import { decidePushBinding, buildBindings, resolveDuplicateBindings, pullAllowed } from './security-logic.js';
 
 /**
  * Shared-copy bindings (#1, #2, #6): which local document in THIS world may
@@ -50,13 +50,47 @@ export class Bindings {
     return !!b && b.type === doc.documentName && b.id === doc.id;
   }
 
+  /**
+   * The login-pull rule for `doc` whose shared copy exists. When refused, warn
+   * and (GM clients only; players cannot write world settings) list the id in
+   * the dashboard's duplicates section.
+   */
+  static async mayPull(doc) {
+    const omniId = doc.getFlag('omnipresence', 'id');
+    const ok = pullAllowed({
+      bindingsBuilt: !!game.settings.get('omnipresence', this.BUILT),
+      binding: this.get(omniId), docId: doc.id, docType: doc.documentName
+    });
+    if (ok) return true;
+    console.warn(
+      `Omnipresence | skipping login sync of ${doc.documentName} "${doc.name}" (${doc.id}): ` +
+      `its sync id ${omniId} is not bound to it here but a shared copy exists.`
+    );
+    if (game.user.isGM && !this.get(omniId)) {
+      const recorded = { ...(game.settings.get('omnipresence', this.DUPLICATES) ?? {}) };
+      if (!recorded[omniId]) {
+        recorded[omniId] = [{ type: doc.documentName, id: doc.id }, { type: 'SharedCopy', id: omniId }];
+        await game.settings.set('omnipresence', this.DUPLICATES, recorded);
+      }
+    }
+    return false;
+  }
+
   /** GM only. Apply `entries` ({omniId: {type, id}}) to the setting, one write at a time. */
   static _write(entries) {
     if (!game.user.isGM || !Object.keys(entries).length) return Promise.resolve();
     Object.assign(this._pending, entries);
     const run = this._writes.then(async () => {
       const next = { ...(game.settings.get('omnipresence', this.SETTING) ?? {}), ...entries };
-      await game.settings.set('omnipresence', this.SETTING, next);
+      try {
+        await game.settings.set('omnipresence', this.SETTING, next);
+      } catch (err) {
+        // Never proceed on a binding that was not saved.
+        for (const key of Object.keys(entries)) {
+          if (this._pending[key] === entries[key]) delete this._pending[key];
+        }
+        throw err;
+      }
       for (const key of Object.keys(entries)) {
         if (this._pending[key] === entries[key]) delete this._pending[key];
       }
@@ -176,7 +210,9 @@ export class Bindings {
     };
     return Object.entries(recorded).map(([omniId, docs]) => ({
       omniId,
-      docs: docs.map(({ type, id }) => ({ type, name: lookup[type]?.(id)?.name ?? id }))
+      docs: docs.map(({ type, id }) => type === 'SharedCopy'
+        ? { type: game.i18n.localize('OMNIPRESENCE.dashboard.sharedCopy'), name: game.i18n.localize('OMNIPRESENCE.dashboard.sharedCopyName') }
+        : { type, name: lookup[type]?.(id)?.name ?? id })
     }));
   }
 }

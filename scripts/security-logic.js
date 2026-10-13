@@ -21,6 +21,19 @@ export function decidePushBinding({ binding, docType, docId, copyExists, otherCa
 }
 
 /**
+ * May the login reconcile pull (or push over) the shared copy for this local
+ * document? Once bindings are built only the bound document may: an unbound
+ * carrier of an id whose copy exists could be a forgery that got another
+ * document bound and copied first (a cross-world first-push race). Before
+ * the build, only a binding to a different document refuses.
+ * @returns {boolean}
+ */
+export function pullAllowed({ bindingsBuilt, binding, docId, docType }) {
+  if (binding) return binding.type === docType && binding.id === docId;
+  return !bindingsBuilt;
+}
+
+/**
  * Build bindings from the documents of an existing world. An omni id carried
  * by exactly one document is bound to it; one carried by two or more is left
  * unbound and reported (a pre-upgrade forgery looks exactly like this).
@@ -58,6 +71,12 @@ export function resolveDuplicateBindings(duplicates, carriers) {
   for (const omniId of Object.keys(duplicates ?? {})) {
     const live = carriers.filter(c => c.omniId === omniId);
     if (live.length === 0) continue;
+    // A carrier refused because a shared copy already exists (its true owner
+    // is unknowable here) is never auto-bound; only removing it settles it.
+    if ((duplicates[omniId] ?? []).some(d => d.type === 'SharedCopy')) {
+      remaining[omniId] = [...live.map(c => ({ type: c.type, id: c.id })), { type: 'SharedCopy', id: omniId }];
+      continue;
+    }
     const enrolled = live.filter(c => c.enrolled);
     if (enrolled.length === 1) bind[omniId] = { type: enrolled[0].type, id: enrolled[0].id };
     else remaining[omniId] = live.map(c => ({ type: c.type, id: c.id }));
