@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   decidePushBinding, buildBindings, resolveDuplicateBindings, boundOmniToLocal, validateFolderRemoval,
-  judgePendingRemoveClaim, pullAllowed, mergeDuplicateRecord, pushRefusalRecord, resolveUpgradeDuplicate
+  judgePendingRemoveClaim, pullAllowed, mergeDuplicateRecord, pushRefusalRecord, resolveUpgradeDuplicate,
+  isGmOnly, pendingDeleteAllowed
 } from '../scripts/security-logic.js';
 
 // --- Login pull rule (cross-world first-push race) --------------------------
@@ -145,98 +146,129 @@ test('buildBindings: unique ids bound, duplicates left unbound and reported', ()
   assert.deepEqual(duplicates, { D: [{ type: 'JournalEntry', id: 'j1' }, { type: 'Actor', id: 'a2' }] });
 });
 
-// --- One-time upgrade: owner-match auto-resolve -----------------------------
+// --- One-time upgrade: auto-resolve by real ownership ------------------------
+// Users: gm (GM), p1 and p2 (players). Levels: 0 NONE, 3 OWNER.
 
 const T1 = '2026-01-01T00:00:00.000Z';
 const T2 = '2026-02-01T00:00:00.000Z';
+const USERS = [{ id: 'gm', isGM: true }, { id: 'p1', isGM: false }, { id: 'p2', isGM: false }];
+const GM_ONLY = { default: 0 };
+const P1 = { default: 0, p1: 3 };
+const P2 = { default: 0, p2: 3 };
+const EVERYONE = { default: 3 };
 const actorCarrier = (id, extra = {}) => ({
-  type: 'Actor', id, enrolled: true, owner: null, lastSyncedAt: T1, createdTime: 100, ...extra
+  type: 'Actor', id, enrolled: true, ownership: GM_ONLY, lastSyncedAt: T1, createdTime: 100, ...extra
+});
+const upgrade = (carriers, copy = { type: 'Actor', ownerName: null, syncedAt: T2 }) =>
+  resolveUpgradeDuplicate({ carriers, copy, users: USERS });
+
+test('isGmOnly: no non-GM OWNER explicitly or through default', () => {
+  assert.equal(isGmOnly(GM_ONLY, USERS), true);
+  assert.equal(isGmOnly({ default: 0, gm: 3, p1: 2 }, USERS), true);
+  assert.equal(isGmOnly(P1, USERS), false);
+  assert.equal(isGmOnly(EVERYONE, USERS), false);
+  // A deleted user's entry grants nobody anything.
+  assert.equal(isGmOnly({ default: 0, gone: 3 }, USERS), true);
 });
 
-test('resolveUpgradeDuplicate: GM-owned copy, two GM carriers → keep the last pusher', () => {
-  const out = resolveUpgradeDuplicate({
-    carriers: [
-      actorCarrier('older', { lastSyncedAt: T1, createdTime: 100 }),
-      actorCarrier('pusher', { lastSyncedAt: T2, createdTime: 200 })
-    ],
-    copy: { ownerName: null, syncedAt: T2 }
-  });
-  assert.deepEqual(out, { keep: { type: 'Actor', id: 'pusher' }, detach: [{ type: 'Actor', id: 'older' }] });
+test('resolveUpgradeDuplicate (A): honest GM duplicate → the last pusher, the copy detached', () => {
+  const out = upgrade([
+    actorCarrier('original', { lastSyncedAt: T2, createdTime: 100 }),
+    // Foundry adds the duplicating GM as an explicit owner; GM entries do not count.
+    actorCarrier('copy', { ownership: { default: 0, gm: 3 }, lastSyncedAt: T1, createdTime: 50 })
+  ]);
+  assert.deepEqual(out, { keep: { type: 'Actor', id: 'original' }, detach: [{ type: 'Actor', id: 'copy' }] });
 });
 
-test('resolveUpgradeDuplicate: no timestamp match → keep the oldest (tie broken by id)', () => {
-  const out = resolveUpgradeDuplicate({
-    carriers: [
-      actorCarrier('b', { createdTime: 300 }),
-      actorCarrier('z', { createdTime: 100 }),
-      actorCarrier('a', { createdTime: 100 })
-    ],
-    copy: { ownerName: null, syncedAt: T2 }
-  });
-  assert.deepEqual(out.keep, { type: 'Actor', id: 'a' });
-  assert.deepEqual(out.detach, [{ type: 'Actor', id: 'b' }, { type: 'Actor', id: 'z' }]);
+test('resolveUpgradeDuplicate (A): honest same-player duplicate, both carrying the timestamp → the oldest', () => {
+  const out = upgrade([
+    actorCarrier('copy', { ownership: P1, lastSyncedAt: T2, createdTime: 500 }),
+    actorCarrier('original', { ownership: P1, lastSyncedAt: T2, createdTime: 100 })
+  ]);
+  assert.deepEqual(out, { keep: { type: 'Actor', id: 'original' }, detach: [{ type: 'Actor', id: 'copy' }] });
 });
 
-test('resolveUpgradeDuplicate: several carriers match the timestamp (a Duplicate copies flags) → the oldest of them', () => {
-  const out = resolveUpgradeDuplicate({
-    carriers: [
-      actorCarrier('clone', { lastSyncedAt: T2, createdTime: 500 }),
-      actorCarrier('original', { lastSyncedAt: T2, createdTime: 100 }),
-      actorCarrier('stale', { lastSyncedAt: T1, createdTime: 50 })
-    ],
-    copy: { ownerName: null, syncedAt: T2 }
-  });
-  assert.deepEqual(out.keep, { type: 'Actor', id: 'original' });
-  assert.deepEqual(out.detach, [{ type: 'Actor', id: 'clone' }, { type: 'Actor', id: 'stale' }]);
+test('resolveUpgradeDuplicate (A): an enrolled newer carrier beats an unenrolled older one', () => {
+  const out = upgrade([
+    actorCarrier('older', { enrolled: false, lastSyncedAt: T2, createdTime: 1 }),
+    actorCarrier('newer', { enrolled: true, lastSyncedAt: T1, createdTime: 900 })
+  ]);
+  assert.deepEqual(out.keep, { type: 'Actor', id: 'newer' });
 });
 
-test('resolveUpgradeDuplicate: player forger + GM original, GM-owned copy → keep the GM original, detach the forger', () => {
-  const out = resolveUpgradeDuplicate({
-    carriers: [
-      actorCarrier('forger', { owner: 'User 1', lastSyncedAt: T2, createdTime: 1 }),
-      actorCarrier('original', { owner: null, lastSyncedAt: T1, createdTime: 900, enrolled: false })
-    ],
-    copy: { ownerName: null, syncedAt: T2 }
-  });
+test('resolveUpgradeDuplicate (A): no timestamp match and no copy → the oldest, tie broken by id', () => {
+  const carriers = [actorCarrier('b', { createdTime: 300 }), actorCarrier('z', { createdTime: 100 }), actorCarrier('a', { createdTime: 100 })];
+  for (const copy of [{ type: 'Actor', ownerName: null, syncedAt: '2030-01-01T00:00:00.000Z' }, null]) {
+    const out = upgrade(carriers, copy);
+    assert.deepEqual(out.keep, { type: 'Actor', id: 'a' });
+    assert.deepEqual(out.detach, [{ type: 'Actor', id: 'b' }, { type: 'Actor', id: 'z' }]);
+  }
+});
+
+test('resolveUpgradeDuplicate (B): GM-only original + player forger → the original, the forger detached', () => {
+  const out = upgrade([
+    actorCarrier('forger', { ownership: P1, lastSyncedAt: T2, createdTime: 1 }),
+    actorCarrier('original', { ownership: GM_ONLY, lastSyncedAt: T1, createdTime: 900, enrolled: false })
+  ]);
   assert.deepEqual(out, { keep: { type: 'Actor', id: 'original' }, detach: [{ type: 'Actor', id: 'forger' }] });
 });
 
-test('resolveUpgradeDuplicate: no carrier owned like the copy → keep null, nothing detached', () => {
-  const out = resolveUpgradeDuplicate({
-    carriers: [actorCarrier('a', { owner: 'User 1' }), actorCarrier('b', { owner: 'User 2' })],
-    copy: { ownerName: null, syncedAt: T1 }
-  });
-  assert.deepEqual(out, { keep: null, detach: [] });
-});
-
-test('resolveUpgradeDuplicate: a Folder carrier → not resolved', () => {
-  const out = resolveUpgradeDuplicate({
-    carriers: [
-      { type: 'Folder', id: 'f1', enrolled: true, owner: null, lastSyncedAt: T1, createdTime: 1 },
-      { type: 'JournalEntry', id: 'j1', enrolled: true, owner: null, lastSyncedAt: T1, createdTime: 2 }
+test('resolveUpgradeDuplicate (B): the forger\'s push re-stamped the copy\'s ownerName → the GM original still wins', () => {
+  const out = upgrade(
+    [
+      actorCarrier('original', { ownership: GM_ONLY, lastSyncedAt: T1, createdTime: 100 }),
+      actorCarrier('forger', { ownership: P1, lastSyncedAt: T2, createdTime: 200 })
     ],
-    copy: { ownerName: null, syncedAt: T1 }
-  });
+    { type: 'Actor', ownerName: 'User 1', syncedAt: T2 }
+  );
+  assert.deepEqual(out, { keep: { type: 'Actor', id: 'original' }, detach: [{ type: 'Actor', id: 'forger' }] });
+});
+
+test('resolveUpgradeDuplicate (B): default-OWNER forger + GM-only original → the original', () => {
+  const out = upgrade([
+    actorCarrier('forger', { ownership: EVERYONE, lastSyncedAt: T2, createdTime: 1 }),
+    actorCarrier('original', { ownership: GM_ONLY, lastSyncedAt: T1, createdTime: 900 })
+  ]);
+  assert.deepEqual(out.keep, { type: 'Actor', id: 'original' });
+});
+
+test('resolveUpgradeDuplicate (A): default-OWNER forger + default-OWNER original → the enrolled last pusher (no escalation)', () => {
+  const out = upgrade([
+    actorCarrier('forger', { ownership: EVERYONE, enrolled: false, lastSyncedAt: T2, createdTime: 1 }),
+    actorCarrier('original', { ownership: EVERYONE, enrolled: true, lastSyncedAt: T1, createdTime: 900 }),
+    actorCarrier('other', { ownership: EVERYONE, enrolled: true, lastSyncedAt: T2, createdTime: 950 })
+  ]);
+  assert.deepEqual(out.keep, { type: 'Actor', id: 'other' });
+});
+
+test('resolveUpgradeDuplicate: two different players → listed (keep null)', () => {
+  assert.deepEqual(upgrade([actorCarrier('a', { ownership: P1 }), actorCarrier('b', { ownership: P2 })]), { keep: null, detach: [] });
+});
+
+test('resolveUpgradeDuplicate: two GM-only carriers with different ownership plus a player → listed', () => {
+  const out = upgrade([
+    actorCarrier('a', { ownership: GM_ONLY }),
+    actorCarrier('b', { ownership: { default: 2 } }),
+    actorCarrier('c', { ownership: P1 })
+  ]);
   assert.deepEqual(out, { keep: null, detach: [] });
 });
 
-test('resolveUpgradeDuplicate: no shared copy → keep null', () => {
-  const out = resolveUpgradeDuplicate({
-    carriers: [actorCarrier('a'), actorCarrier('b')],
-    copy: null
-  });
+test('resolveUpgradeDuplicate: a Folder carrier → never resolved', () => {
+  const out = upgrade([
+    { type: 'Folder', id: 'f1', enrolled: true, ownership: GM_ONLY, lastSyncedAt: T1, createdTime: 1 },
+    { type: 'JournalEntry', id: 'j1', enrolled: true, ownership: GM_ONLY, lastSyncedAt: T1, createdTime: 2 }
+  ]);
   assert.deepEqual(out, { keep: null, detach: [] });
 });
 
-test('resolveUpgradeDuplicate: only carriers of the copy\'s document type are candidates', () => {
-  const out = resolveUpgradeDuplicate({
-    carriers: [
-      { type: 'JournalEntry', id: 'j1', enrolled: true, owner: null, lastSyncedAt: T2, createdTime: 1 },
-      actorCarrier('a1', { lastSyncedAt: T2, createdTime: 5 })
-    ],
-    copy: { type: 'Actor', ownerName: null, syncedAt: T2 }
-  });
-  assert.deepEqual(out, { keep: { type: 'Actor', id: 'a1' }, detach: [{ type: 'JournalEntry', id: 'j1' }] });
+test('pendingDeleteAllowed: refused while the id\'s bound local document still exists', () => {
+  // A player deleted an unbound copy (e.g. a Duplicate made with no GM online): the origin lives on.
+  assert.equal(pendingDeleteAllowed({ binding: { type: 'JournalEntry', id: 'orig' }, boundDocExists: true }), false);
+  // The bound journal itself was deleted: the delete goes ahead.
+  assert.equal(pendingDeleteAllowed({ binding: { type: 'JournalEntry', id: 'orig' }, boundDocExists: false }), true);
+  // Unbound id: the existing copy/tree/owner checks decide.
+  assert.equal(pendingDeleteAllowed({ binding: null, boundDocExists: false }), true);
 });
 
 test('resolveDuplicateBindings: one enrolled carrier left → bound; none left → dropped; several → kept', () => {

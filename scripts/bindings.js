@@ -177,6 +177,7 @@ export class Bindings {
     if (!SyncRegistry.isPusher()) return;
     if (!game.settings.get('omnipresence', this.BUILT)) await this.build();
     await this.resolveDuplicates();
+    await this.sweepInheritedIds();
   }
 
   /**
@@ -209,17 +210,19 @@ export class Bindings {
    * One-time upgrade only (called from build): an honest world can already
    * hold several documents with one omni id — a Foundry Duplicate of an
    * enrolled document copies its flags. Left listed, the login pull marks
-   * them SharedCopy and they never sync again. When the id has a shared
-   * copy, keep the carrier owned like the copy (the copy's ownerName was
-   * stamped by a GM push from real ownership, which a player cannot forge)
-   * and detach the rest. After the build, new duplicates go through the
-   * create hook (clearInheritedId) and the dashboard's Keep action instead.
+   * them SharedCopy and they never sync again. Decide by the carriers' real
+   * ownership (resolveUpgradeDuplicate rules A and B) — never by the shared
+   * copy's ownerName, which a forger's pre-upgrade push re-stamped — and
+   * detach the rest. After the build, new duplicates go through the create
+   * hook and ready sweep (clearInheritedId / sweepInheritedIds) and the
+   * dashboard's Keep action instead.
    * @param {string[]} omniIds the ids build() found duplicated
    * @returns {Promise<Array>} the detached documents
    */
   static async _resolveUpgradeDuplicates(omniIds) {
     if (!omniIds.length) return [];
     const carriers = this._carriers();
+    const users = game.users.map(u => ({ id: u.id, isGM: u.isGM }));
     const copies = {};
     const copyFor = async (type, omniId) => {
       const pack = game.packs.get(type === 'Actor' ? SyncEngine.PACK_ID : JournalSync.PACK_ID);
@@ -231,21 +234,21 @@ export class Bindings {
       try {
         const docs = carriers.filter(c => c.omniId === omniId);
         if (docs.some(c => c.type !== 'Actor' && c.type !== 'JournalEntry')) continue;
+        // The copy only supplies the last-push timestamp (rule A's tie-break).
         let copy = null;
         for (const type of ['Actor', 'JournalEntry']) {
           if (copy || !docs.some(c => c.type === type)) continue;
           const found = await copyFor(type, omniId);
-          if (found) copy = { type, ownerName: found.getFlag('omnipresence', 'ownerName') ?? null, syncedAt: found.getFlag('omnipresence', 'syncedAt') ?? null };
+          if (found) copy = { type, syncedAt: found.getFlag('omnipresence', 'syncedAt') ?? null };
         }
         const { keep } = resolveUpgradeDuplicate({
           copy,
+          users,
           carriers: docs.map(c => {
             const doc = this._lookup(c.type, c.id);
             return {
               type: c.type, id: c.id, enrolled: c.enrolled,
-              // Resolved on this GM client the way push stamps the copy, so a
-              // GM-owned document compares as null.
-              owner: SyncRegistry.resolveOwnerName(doc),
+              ownership: { ...(doc.ownership ?? {}) },
               lastSyncedAt: doc.getFlag('omnipresence', 'syncedAt') ?? null,
               createdTime: doc._stats?.createdTime ?? null
             };
@@ -315,7 +318,8 @@ export class Bindings {
     const doc = type === 'Actor' || type === 'JournalEntry' ? this._lookup(type, id) : null;
     // Folders and folder members are gated by their root's folderIds entry, not one by one.
     if (!doc || doc.getFlag('omnipresence', 'viaFolder')) return;
-    const gate = SyncRegistry.gateUser(doc.getFlag('omnipresence', 'ownerName') ?? null);
+    // Real ownership, not the owner-writable ownerName flag.
+    const gate = SyncRegistry.gateUser(SyncRegistry.resolveOwnerName(doc));
     if (gate) await SyncRegistry.addToSelection(gate.id, type === 'Actor' ? 'actor' : 'journal', omniId);
   }
 
@@ -331,13 +335,37 @@ export class Bindings {
     if (options?.omnipresenceInternal || doc.pack) return;
     if (!SyncRegistry.isPusher()) return;
     if (!game.settings.get('omnipresence', this.BUILT)) return;
+    await this._detachIfInherited(doc);
+  }
+
+  /**
+   * Active GM, at ready (after the build): the same clearing for every
+   * existing Actor/JournalEntry carrying an id bound to a different document
+   * that still exists — copies made while no GM was connected, which the
+   * create hook never saw.
+   */
+  static async sweepInheritedIds() {
+    if (!SyncRegistry.isPusher()) return;
+    if (!game.settings.get('omnipresence', this.BUILT)) return;
+    for (const doc of [...game.actors, ...game.journal]) {
+      try {
+        await this._detachIfInherited(doc);
+      } catch (err) {
+        console.error('Omnipresence | clearing an inherited sync id failed for', doc.name, err);
+      }
+    }
+  }
+
+  /** Detach `doc` when its omni id is bound to a different document that still exists here. */
+  static async _detachIfInherited(doc) {
     const omniId = doc.getFlag('omnipresence', 'id');
-    if (!omniId) return;
+    if (!omniId) return false;
     const bound = this.get(omniId);
-    if (!bound || (bound.type === doc.documentName && bound.id === doc.id)) return;
-    if (!this._lookup(bound.type, bound.id)) return;
+    if (!bound || (bound.type === doc.documentName && bound.id === doc.id)) return false;
+    if (!this._lookup(bound.type, bound.id)) return false;
     await this._detach(doc);
-    console.info(`Omnipresence | cleared the sync id inherited by new ${doc.documentName} "${doc.name}" (${doc.id}): ${omniId} belongs to another document.`);
+    console.info(`Omnipresence | cleared the sync id carried by ${doc.documentName} "${doc.name}" (${doc.id}): ${omniId} belongs to another document.`);
+    return true;
   }
 
   /**

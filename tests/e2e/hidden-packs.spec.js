@@ -5,7 +5,7 @@
 // the GM keeps one. Needs Gamemaster and User 1, and no other GM client (the
 // first test runs with no GM at all).
 import { test, expect, chromium } from '@playwright/test';
-import { loginToFoundry, newGmSession, sweepProbes } from './helpers.js';
+import { loginToFoundry, newGmSession, sweepProbes, foreignDuplicateSets } from './helpers.js';
 
 const PLAYER = 'User 1';
 const PREFIX = 'Omni Hidden Probe';
@@ -169,24 +169,30 @@ test('documents sharing a sync id that the upgrade cannot settle are listed and 
     const keep = await Actor.create({ name: `${PREFIX} Dup Keep`, type: 'npc' });
     const omniId = await SyncRegistry.enroll(keep);
     await SyncEngine.push(keep);
-    // A pre-upgrade duplicate the upgrade cannot settle by itself: the copy is
-    // GM-owned, but both carriers now belong to a player, so neither is owned
-    // like the copy. Internal writes: no hook may push or clear the id.
-    const player = game.users.getName('User 1');
-    const playerOwned = { default: 0, [player.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER };
-    await keep.update({ ownership: playerOwned }, { omnipresenceInternal: true });
+    // A pre-upgrade duplicate the upgrade cannot settle by itself: the two
+    // carriers belong to two different players (different ownership, neither
+    // GM-only). Internal writes: no hook may push or clear the id.
+    const owned = name => ({ default: 0, [game.users.getName(name).id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER });
+    await keep.update({ ownership: owned('User 1') }, { omnipresenceInternal: true });
     const extra = await Actor.create({
-      name: `${PREFIX} Dup Extra`, type: 'npc', ownership: playerOwned,
+      name: `${PREFIX} Dup Extra`, type: 'npc', ownership: owned('User 2'),
       flags: { omnipresence: { id: omniId, enrolled: true } }
     }, { omnipresenceInternal: true });
-    // Replay the first-login build as an upgraded world would see it.
+    return { omniId, keepId: keep.id, extraId: extra.id };
+  }, PREFIX);
+
+  // Never replay the build over real documents: it would settle their sets too.
+  const foreign = await foreignDuplicateSets(gmPage, [ids.omniId]);
+  test.skip(foreign.length > 0, `World has duplicate sync ids outside this test; not replaying the upgrade: ${foreign.join('; ')}`);
+  // Replay the first-login build as an upgraded world would see it.
+  await gmPage.evaluate(async (omniId) => {
+    const { Bindings } = await import('/modules/omnipresence/scripts/bindings.js');
     const map = { ...game.settings.get('omnipresence', 'bindings') };
     delete map[omniId];
     await game.settings.set('omnipresence', 'bindings', map);
     await game.settings.set('omnipresence', 'bindingsBuilt', false);
     await Bindings.init();
-    return { omniId, keepId: keep.id, extraId: extra.id };
-  }, PREFIX);
+  }, ids.omniId);
 
   const copyName = () => gmPage.evaluate(async (omniId) => {
     const pack = game.packs.get(`omnipresence.omnipresence-${game.system.id}`);
@@ -198,10 +204,10 @@ test('documents sharing a sync id that the upgrade cannot settle are listed and 
     await a.update({ name }, { omnipresenceInternal: true });
     await SyncEngine.push(a);
   }, { keepId: ids.keepId, name });
-  // The survivor is GM-owned, so its gate user is this GM.
+  // The survivor belongs to User 1, so its gate user (from real ownership) is User 1.
   const selected = () => gmPage.evaluate(async (omniId) => {
     const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
-    return SyncRegistry.isDocSelected(game.user.id, 'actor', omniId);
+    return SyncRegistry.isDocSelected(game.users.getName('User 1').id, 'actor', omniId);
   }, ids.omniId);
 
   // Refused while duplicated.
@@ -230,5 +236,13 @@ test('documents sharing a sync id that the upgrade cannot settle are listed and 
   await expect.poll(selected, { timeout: 10_000 }).toBe(true);
   await renameAndPush(`${PREFIX} Dup Keep Edited`);
   expect(await copyName()).toBe(`${PREFIX} Dup Keep Edited`);
-  await gmPage.evaluate(() => foundry.applications.instances.get('omnipresence-dashboard')?.close());
+  await gmPage.evaluate(async (omniId) => {
+    const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+    foundry.applications.instances.get('omnipresence-dashboard')?.close();
+    // The probe's binding and allow-list entries go with it (the sweep removes the documents).
+    const bindings = { ...(game.settings.get('omnipresence', 'bindings') ?? {}) };
+    delete bindings[omniId];
+    await game.settings.set('omnipresence', 'bindings', bindings);
+    for (const u of game.users) await SyncRegistry.removeFromSelection(u.id, 'actor', omniId);
+  }, ids.omniId);
 });

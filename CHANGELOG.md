@@ -52,21 +52,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Upgrading keeps existing syncs working when Actors or Journals already
-  share a sync id (for example a synced character duplicated earlier): the
-  one owned like the shared copy is kept (the last to push, otherwise the
-  oldest), the others lose the sync id and leave sync, and the GM is told
-  once which documents those were. Sets that cannot be settled this way (no
-  document owned like the shared copy, or a synced folder) are listed in the
-  dashboard under "Duplicate sync ids" and do not sync.
+  share a sync id (for example a synced character duplicated earlier). The
+  choice uses the documents' real ownership in this world, never the owner
+  recorded on the shared copy: when they all have the same ownership, one is
+  kept (enrolled first, then the last to push, then the oldest); otherwise,
+  when exactly one is GM-only, that one is kept. The others lose the sync id
+  and leave sync, and the GM is told once which documents those were. Other
+  sets, and synced folders, are listed in the dashboard under "Duplicate sync
+  ids" and do not sync.
 - "Duplicate sync ids" rows have a GM-only **Keep this one** action per
   document: it binds that document and takes the others carrying the id out
   of sync. A row with the existing shared copy asks for confirmation first,
-  since that copy is pulled into the kept document at the next sync. Removing
-  the extra documents from sync still settles a row with no shared copy (at
-  once for the GM dashboard's Remove from Sync, otherwise at the next GM login).
+  showing the document's owner here and the owner recorded on the copy: the
+  kept document will sync with a copy written elsewhere, and may overwrite it
+  or be overwritten by it. Removing the extra documents from sync still
+  settles a row with no shared copy (at once for the GM dashboard's Remove
+  from Sync, otherwise at the next GM login).
 - Duplicating a synced Actor or Journal (Foundry's Duplicate, or a hand
   import) no longer creates a second document with the same sync id: the
-  active GM clears the id and enrollment from the new copy. Enroll it to share
+  active GM clears the id and enrollment from the new copy while connected;
+  copies made otherwise are cleared at the next GM login. Enroll it to share
   it as its own document.
 - Only the active GM pushes edits automatically when several GMs are
   connected; Force Push and enrolling still work for any GM.
@@ -74,6 +79,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer syncs from that player's hotbar.
 
 ### Fixed
+- A player who duplicated their own journal inside their synced folder with
+  no GM online, then deleted the copy, no longer deletes the original and its
+  shared copy at the next GM login: a queued folder-member delete is refused
+  while the id's bound journal still exists.
 - Failed background pushes and change markers are logged instead of surfacing
   as unhandled promise rejections.
 

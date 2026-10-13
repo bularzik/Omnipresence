@@ -71,6 +71,26 @@ export async function newGmSession(browser) {
 }
 
 /**
+ * Sync ids carried by two or more world documents (Actor, JournalEntry,
+ * journal Folder), other than `ownIds`, with the carriers' names. A spec that
+ * replays the one-time bindings build must skip when this is non-empty: the
+ * build would settle those sets and detach real documents.
+ */
+export async function foreignDuplicateSets(page, ownIds = []) {
+  return page.evaluate((ownIds) => {
+    const by = {};
+    const add = (doc, type) => {
+      const id = doc.getFlag('omnipresence', 'id');
+      if (id && !ownIds.includes(id)) (by[id] ??= []).push(`${type} "${doc.name}"`);
+    };
+    for (const a of game.actors) add(a, 'Actor');
+    for (const j of game.journal) add(j, 'JournalEntry');
+    for (const f of game.folders) if (f.type === 'JournalEntry') add(f, 'Folder');
+    return Object.entries(by).filter(([, docs]) => docs.length > 1).map(([id, docs]) => `${id}: ${docs.join(', ')}`);
+  }, ownIds);
+}
+
+/**
  * Remove every world document, folder, pack document and pack folder whose
  * name starts with `prefix` (synced roots are unmarked first), whatever state
  * a failed test left them in. Runs on a GM page; uses only APIs every build has.

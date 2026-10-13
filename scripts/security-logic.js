@@ -57,37 +57,91 @@ export function buildBindings(carriers) {
   return { bindings, duplicates };
 }
 
+const OWNER_LEVEL = 3;
+
+/**
+ * The part of an ownership map that grants a non-GM user anything: `default`
+ * plus explicit entries of existing non-GM users, as a comparable string.
+ * GM entries never matter (a GM owns everything) — Foundry adds the
+ * duplicating GM as an explicit owner, which must not make an honest
+ * Duplicate look different — and entries of users that no longer exist
+ * grant nobody anything.
+ */
+function playerOwnership(ownership, users) {
+  const players = new Set((users ?? []).filter(u => !u.isGM).map(u => u.id));
+  const out = { default: Number(ownership?.default ?? 0) };
+  for (const [k, v] of Object.entries(ownership ?? {})) {
+    if (k !== 'default' && players.has(k)) out[k] = Number(v);
+  }
+  return JSON.stringify(Object.keys(out).sort().map(k => [k, out[k]]));
+}
+
+/**
+ * Whether no non-GM user holds OWNER on a document, explicitly or through
+ * `default` (only a GM can then write it, or its flags).
+ * @param {Object<string, number>} ownership
+ * @param {Array<{id: string, isGM: boolean}>} users
+ */
+export function isGmOnly(ownership, users) {
+  const players = (users ?? []).filter(u => !u.isGM);
+  if (players.length && Number(ownership?.default ?? 0) >= OWNER_LEVEL) return false;
+  return !players.some(u => Number(ownership?.[u.id] ?? 0) >= OWNER_LEVEL);
+}
+
 /**
  * One-time upgrade only (before `bindingsBuilt`): settle an omni id carried
- * by several Actor/JournalEntry documents whose shared copy exists, so honest
- * duplicates (a Foundry Duplicate of an enrolled document copies its flags)
- * keep syncing. The copy's `ownerName` was stamped by the GM's push from the
- * document's real ownership, which a player cannot forge, so only carriers
- * owned like the copy are candidates (null = GM-owned on both sides). Among
- * them the one whose last sync equals the copy's (the last pusher) wins —
- * the oldest of those when several match, since a Duplicate copies the
- * timestamp too — otherwise the oldest by creation time; ties go to the id.
- * Folder carriers, or no copy, are never resolved here.
- * @param {{carriers: Array<{type: string, id: string, enrolled: boolean, owner: string|null, lastSyncedAt: string|null, createdTime: number|null}>,
- *   copy: {type?: string, ownerName: string|null, syncedAt: string|null}|null}} input
+ * by several Actor/JournalEntry documents, so honest duplicates (a Foundry
+ * Duplicate of an enrolled document copies its flags) keep syncing. Decided
+ * by the carriers' REAL ownership, never by the shared copy's ownerName: a
+ * forger's pre-upgrade push re-stamped that name.
+ * - Rule A: every carrier has identical (player-relevant) ownership — an
+ *   honest Duplicate copies it — so binding any of them gives nobody new
+ *   access: prefer enrolled, then the last pusher (its syncedAt equals the
+ *   copy's), then the oldest by createdTime, then the id.
+ * - Rule B: otherwise, exactly one GM-only carrier → bind it (no player could
+ *   have stamped the id on it).
+ * - Anything else, any Folder carrier, or fewer than two carriers → keep null
+ *   (the set stays listed for the GM).
+ * @param {{carriers: Array<{type: string, id: string, enrolled: boolean, ownership: Object<string, number>, lastSyncedAt: string|null, createdTime: number|null}>,
+ *   copy: {type?: string, syncedAt: string|null}|null, users: Array<{id: string, isGM: boolean}>}} input
  * @returns {{keep: {type: string, id: string}|null, detach: Array<{type: string, id: string}>}}
  */
-export function resolveUpgradeDuplicate({ carriers, copy }) {
+export function resolveUpgradeDuplicate({ carriers, copy, users }) {
   const none = { keep: null, detach: [] };
   const list = carriers ?? [];
-  if (!copy || !list.length) return none;
+  if (list.length < 2) return none;
   if (list.some(c => c.type !== 'Actor' && c.type !== 'JournalEntry')) return none;
-  const owner = copy.ownerName ?? null;
-  const candidates = list.filter(c => (c.owner ?? null) === owner && (!copy.type || c.type === copy.type));
-  if (!candidates.length) return none;
-  const pushers = copy.syncedAt ? candidates.filter(c => c.lastSyncedAt === copy.syncedAt) : [];
-  const pool = pushers.length ? pushers : candidates;
-  const created = c => (Number.isFinite(c.createdTime) ? c.createdTime : Infinity);
-  const winner = [...pool].sort((a, b) => created(a) - created(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
+  let winner = null;
+  const shapes = new Set(list.map(c => playerOwnership(c.ownership, users)));
+  if (shapes.size === 1) {
+    const pushed = c => (copy?.syncedAt && (!copy.type || c.type === copy.type) && c.lastSyncedAt === copy.syncedAt ? 0 : 1);
+    const created = c => (Number.isFinite(c.createdTime) ? c.createdTime : Infinity);
+    winner = [...list].sort((a, b) =>
+      (a.enrolled ? 0 : 1) - (b.enrolled ? 0 : 1) ||
+      pushed(a) - pushed(b) ||
+      created(a) - created(b) ||
+      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
+  } else {
+    const gmOnly = list.filter(c => isGmOnly(c.ownership, users));
+    if (gmOnly.length === 1) winner = gmOnly[0];
+  }
+  if (!winner) return none;
   return {
     keep: { type: winner.type, id: winner.id },
     detach: list.filter(c => c !== winner).map(({ type, id }) => ({ type, id }))
   };
+}
+
+/**
+ * May a player's queued folder-member delete (made with no GM connected) act
+ * on its omni id? Not while the id is bound to a local document that still
+ * exists: the deleted journal was then an unbound carrier (e.g. a Duplicate
+ * made with no GM online), not the origin, and acting would delete the
+ * origin's shared copy and then the origin itself.
+ * @param {{binding: {type: string, id: string}|null, boundDocExists: boolean}} input
+ */
+export function pendingDeleteAllowed({ binding, boundDocExists }) {
+  return !(binding && boundDocExists);
 }
 
 /**

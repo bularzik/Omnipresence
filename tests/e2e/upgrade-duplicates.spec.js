@@ -6,12 +6,13 @@
 //   (b) a pre-upgrade forgery (a player's actor stamped with a GM actor's
 //       id) is detached at the build and the GM's shared copy is untouched;
 //   (c) a Duplicate made after the upgrade never inherits a bound id;
-//   (d) the dashboard's "Keep this one" settles a listed row.
+//   (d) the dashboard's "Keep this one" settles a listed row;
+//   (e) a copy made with no GM connected is cleared at the next GM login.
 // "Before the upgrade" is simulated by deleting the probe's binding and
 // re-running Bindings.init() with bindingsBuilt false. Needs the Gamemaster
 // only; no other GM client may be connected (the active GM must be this one).
 import { test, expect, chromium } from '@playwright/test';
-import { newGmSession, sweepProbes } from './helpers.js';
+import { newGmSession, sweepProbes, foreignDuplicateSets } from './helpers.js';
 
 const PREFIX = 'TT-Omni Upgrade';
 const PLAYER = 'User 1';
@@ -69,8 +70,14 @@ const preUpgradeCopy = (id, name, ownership = null) => gmPage.evaluate(async ({ 
   return (await Actor.create(data, { omnipresenceInternal: true })).id;
 }, { id, name, ownership });
 
-// Replay the first-login build as an upgraded world would see it.
-const replayUpgrade = omniId => gmPage.evaluate(async (omniId) => {
+// Replay the first-login build as an upgraded world would see it — never over
+// real documents: any duplicate set other than the probe's skips the test.
+const replayUpgrade = async omniId => {
+  const foreign = await foreignDuplicateSets(gmPage, [omniId]);
+  test.skip(foreign.length > 0, `World has duplicate sync ids outside this test; not replaying the upgrade: ${foreign.join('; ')}`);
+  return replayBuild(omniId);
+};
+const replayBuild = omniId => gmPage.evaluate(async (omniId) => {
   const { Bindings } = await import('/modules/omnipresence/scripts/bindings.js');
   const map = { ...game.settings.get('omnipresence', 'bindings') };
   delete map[omniId];
@@ -121,10 +128,16 @@ test('(b) a pre-upgrade forgery: the GM actor is bound, the player actor loses t
   test.setTimeout(90_000);
   const victim = await enrolledPushedActor(`${PREFIX} Victim`);
   omniIds.add(victim.omniId);
-  const before = (await actorState(victim.omniId, [])).copy;
   // The forgery carries every flag, the copy's syncedAt (the "last pusher"
-  // signal) included; only its owner differs from the copy's.
+  // signal) included, and its pre-upgrade push re-stamped the copy's
+  // ownerName with the forger's name: only real ownership tells them apart.
   const forgerId = await preUpgradeCopy(victim.id, `${PREFIX} Forger`, { default: 0, [PLAYER]: 3 });
+  await gmPage.evaluate(async ({ omniId, PLAYER }) => {
+    const pack = game.packs.get(`omnipresence.omnipresence-${game.system.id}`);
+    const copy = (await pack.getDocuments()).find(d => d.getFlag('omnipresence', 'id') === omniId);
+    await copy.update({ 'flags.omnipresence.ownerName': PLAYER }, { omnipresenceInternal: true });
+  }, { omniId: victim.omniId, PLAYER });
+  const before = (await actorState(victim.omniId, [])).copy;
   expect(await replayUpgrade(victim.omniId)).toBe(true);
 
   const state = await actorState(victim.omniId, [victim.id, forgerId]);
@@ -162,6 +175,21 @@ test('(c) a Duplicate made after the upgrade never inherits the bound id', async
   const journalCopyOmni = () => gmPage.evaluate(id => game.journal.get(id)?.getFlag('omnipresence', 'id') ?? null, journal.copyId);
   await expect.poll(journalCopyOmni, { timeout: 10_000 }).toBeNull();
   expect(await gmPage.evaluate(id => game.journal.get(id).getFlag('omnipresence', 'id'), journal.id)).toBe(journal.omniId);
+});
+
+test('(e) a copy made while no GM was connected is cleared at the next active-GM login', async () => {
+  test.setTimeout(90_000);
+  const orig = await enrolledPushedActor(`${PREFIX} Offline`);
+  omniIds.add(orig.omniId);
+  // Internal create: no create hook runs, as when no GM client saw it.
+  const copyId = await preUpgradeCopy(orig.id, `${PREFIX} Offline Copy`);
+  await gmPage.evaluate(async () => {
+    const { Bindings } = await import('/modules/omnipresence/scripts/bindings.js');
+    await Bindings.init(); // bindingsBuilt is true: only the resolve and the sweep run
+  });
+  const state = await actorState(orig.omniId, [orig.id, copyId]);
+  expect(state.binding).toEqual({ type: 'Actor', id: orig.id });
+  expect(state.ids).toEqual({ [orig.id]: orig.omniId, [copyId]: null });
 });
 
 test('(d) "Keep this one" in the dashboard binds that document and detaches the others', async () => {

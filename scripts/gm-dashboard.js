@@ -275,18 +275,33 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
    * GM: settle a Duplicate sync ids row by keeping one of its documents
    * (Bindings.keep binds it and takes the others out of sync). A row listed
    * with the existing shared copy is confirmed first: that copy may have been
-   * written by another world, and it is pulled into the kept document at
-   * the next sync.
+   * written elsewhere (another world), and the kept document syncs with it.
+   * The dialog shows the kept document's real owner next to the owner
+   * recorded on the copy.
    */
   static async _onKeepDuplicate(event, target) {
     if (!game.user.isGM) return;
     const { omniId, docType, docId } = target.closest('[data-doc-id]').dataset;
     const record = game.settings.get('omnipresence', Bindings.DUPLICATES)?.[omniId] ?? [];
     if (record.some(d => d.type === 'SharedCopy')) {
-      const name = Bindings._lookup(docType, docId)?.name ?? docId;
+      const doc = Bindings._lookup(docType, docId);
+      const gm = game.i18n.localize('OMNIPRESENCE.dashboard.keepConfirmGmOwner');
+      let copyOwner = gm;
+      try {
+        const pack = game.packs.get(docType === 'Actor' ? SyncEngine.PACK_ID : JournalSync.PACK_ID);
+        const copy = pack ? (await pack.getDocuments()).find(d => d.getFlag('omnipresence', 'id') === omniId) : null;
+        copyOwner = copy?.getFlag('omnipresence', 'ownerName') ?? gm;
+      } catch (err) {
+        console.warn('Omnipresence | could not read the shared copy for the keep confirmation', err);
+      }
+      const esc = foundry.utils.escapeHTML;
       const ok = await foundry.applications.api.DialogV2.confirm({
         window: { title: game.i18n.localize('OMNIPRESENCE.dashboard.keepConfirmTitle') },
-        content: `<p>${game.i18n.format('OMNIPRESENCE.dashboard.keepConfirmContent', { name: foundry.utils.escapeHTML(name) })}</p>`,
+        content: `<p>${game.i18n.format('OMNIPRESENCE.dashboard.keepConfirmContent', {
+          name: esc(doc?.name ?? docId),
+          owner: esc((doc && SyncRegistry.resolveOwnerName(doc)) ?? gm),
+          copyOwner: esc(copyOwner)
+        })}</p>`,
         classes: ['omnipresence-keep-confirm']
       });
       if (!ok) return;

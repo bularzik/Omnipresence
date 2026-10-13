@@ -2,7 +2,7 @@ import { SyncRegistry } from './sync-registry.js';
 import { JournalSync } from './journal-sync.js';
 import { LinkRewriter } from './link-rewriter.js';
 import { Bindings } from './bindings.js';
-import { validateFolderRemoval, judgePendingRemoveClaim } from './security-logic.js';
+import { validateFolderRemoval, judgePendingRemoveClaim, pendingDeleteAllowed } from './security-logic.js';
 import {
   collectFolderTree,
   diffFolderTree,
@@ -482,7 +482,8 @@ export class FolderSync {
   /**
    * Deletes a player made with no GM connected. Untrusted input: honour an
    * entry only if its pack copy exists, sits under the named root's pack
-   * tree, and its ownerName matches the queuing user — otherwise it is
+   * tree, its ownerName matches the queuing user, and the id's bound local
+   * journal (if any) no longer exists — otherwise it is
    * invalid (not merely failed) and is dropped, never retried. Entries that
    * fail to materialize (e.g. a transient pack error) are kept for the next run.
    */
@@ -493,6 +494,14 @@ export class FolderSync {
     const kept = [];
     for (const entry of deletes) {
       const { omniId, rootId } = entry;
+      // The id's bound journal still exists here, so the deleted one was an
+      // unbound carrier (e.g. a Duplicate made with no GM online), not the
+      // origin: acting would delete the origin's copy and then the origin.
+      const binding = Bindings.get(omniId);
+      if (!pendingDeleteAllowed({ binding, boundDocExists: !!(binding && Bindings._lookup(binding.type, binding.id)) })) {
+        console.warn('Omnipresence | refusing pending folder delete from', user.name, '— its sync id is bound to a document that still exists:', omniId);
+        continue;
+      }
       // A pending entry has no journal to bind-check, so unlike the hook
       // paths it still needs a live copy to act on (as before this change).
       const hasCopy = docs.some(d => d.getFlag('omnipresence', 'id') === omniId);
