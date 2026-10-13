@@ -25,11 +25,11 @@ npm run test:e2e                                    # full Playwright suite
 npx playwright test tests/e2e/allow-list.spec.js    # one spec
 ```
 
-53 tests across 16 spec files (`allow-list`, `delete-reimport`,
+60 tests across 18 spec files (`allow-list`, `bindings`, `delete-reimport`,
 `embedded-sync`, `folder-membership`, `folder-module-flags`, `folder-pending`,
 `folder-selection`, `folder-sync`,
 `journal-sync`, `link-rewriting`, `macro-dangling`, `map-pins`,
-`pack-staleness`, `sync-followups`, `sync-followups-2`, `user-config`).
+`pack-staleness`, `security`, `sync-followups`, `sync-followups-2`, `user-config`).
 
 `FOUNDRY_URL` overrides the server URL the e2e suite targets (default
 `http://localhost:30000`) — useful when a v13 test world runs on a
@@ -102,6 +102,18 @@ takes every later spec down with it.
 `folder-pending.spec.js` logs in as `User 1` and closes/reopens the GM session
 mid-test to exercise the no-GM pending path; it needs both accounts and no
 other GM client connected.
+
+`security.spec.js` pins the 2026-10-11 security review: each test fails on
+`origin/main` @ 90bc79d and passes on the fixed build. It logs in
+`Gamemaster` and `User 1`, needs no other GM client, and its browser side uses
+only APIs both builds have, so it can be run against either install. To see it
+fail, clear any per-world ownership overrides on the Omnipresence packs, copy
+main's runtime files into the install (`git archive 90bc79d scripts
+omnipresence.js templates styles lang module.json | tar -x -C <module dir>`)
+and restart the server. Its first test reopens the GM session. Each negative
+assertion first waits until the GM client has observed the attack, then one
+8 s push window; the macro test also checks that an owned macro does publish.
+Shared scaffolding (`newGmSession`, `sweepProbes`) is in `helpers.js`.
 
 Folders sync into a world only once listed in the gating user's folder
 allow-list (`flags.omnipresence.selection.folderIds`); a spec that simulates

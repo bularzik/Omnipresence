@@ -61,3 +61,31 @@ export async function loginToFoundry(page, userName) {
 export async function waitForGameReady(page) {
   await page.waitForFunction(() => window.game?.ready === true, null, { timeout: 60_000 });
 }
+
+/** A fresh browser context logged in as the Gamemaster. */
+export async function newGmSession(browser) {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await loginToFoundry(page, 'Gamemaster');
+  return { ctx, page };
+}
+
+/**
+ * Remove every world document, folder, pack document and pack folder whose
+ * name starts with `prefix` (synced roots are unmarked first), whatever state
+ * a failed test left them in. Runs on a GM page; uses only APIs every build has.
+ */
+export async function sweepProbes(page, prefix) {
+  await page.evaluate(async (prefix) => {
+    const { FolderSync } = await import('/modules/omnipresence/scripts/folder-sync.js');
+    for (const f of game.folders.filter(f => f.name.startsWith(prefix))) if (FolderSync.isRoot(f)) await FolderSync.unmarkFolder(f);
+    for (const c of [game.actors, game.journal, game.macros]) {
+      for (const d of c.filter(d => d.name.startsWith(prefix))) await d.delete({ omnipresenceInternal: true });
+    }
+    for (const f of game.folders.filter(f => f.name.startsWith(prefix))) await f.delete({ omnipresenceInternal: true });
+    for (const pack of game.packs.filter(p => p.collection.startsWith('omnipresence.'))) {
+      for (const d of await pack.getDocuments()) if (d.name.startsWith(prefix)) await d.delete({ omnipresenceInternal: true });
+      for (const f of [...pack.folders].reverse()) if (f.name.startsWith(prefix)) await f.delete({ omnipresenceInternal: true });
+    }
+  }, prefix);
+}
