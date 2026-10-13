@@ -1,5 +1,6 @@
 import { LinkRewriter } from './link-rewriter.js';
 import { SyncRegistry } from './sync-registry.js';
+import { Bindings } from './bindings.js';
 import {
   decideSyncAction,
   stripWorldLocalFields,
@@ -57,6 +58,9 @@ export class SyncEngine {
 
     try {
       const existing = await this._getCompendiumActor(omnipresenceId);
+      // Only the document bound to this omni id may write its shared copy
+      // (#1): a player can stamp any id on an actor they own.
+      if (!(await Bindings.authorizePush(actor, !!existing))) return;
       if (existing) {
         // recursive:false — the payload is a complete snapshot, so replace
         // subtrees wholesale; merge would resurrect deleted keys forever.
@@ -242,6 +246,8 @@ export class SyncEngine {
 
         const created = await Actor.create(actorData, { keepId: true });
         await SyncRegistry.enroll(created);
+        // A GM import comes from the pack: this local actor now owns the copy here.
+        await Bindings.bind(created);
       } catch (err) {
         console.error('Omnipresence | actor auto-import failed for', compActor.name, err);
       }

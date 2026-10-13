@@ -28,22 +28,22 @@ export const FOUNDRY_URL = process.env.FOUNDRY_URL ?? 'http://localhost:30000';
 export async function loginToFoundry(page, userName) {
   await page.goto(`${FOUNDRY_URL}/join`);
   await page.waitForFunction(
-    () => !!document.querySelector('select[name="userid"], input[name="username"]'),
+    () => !!document.querySelector('select[name="userid" i], input[name="username"]'),
     null,
     { timeout: 15_000 }
   );
-  const hasSelect = await page.evaluate(() => !!document.querySelector('select[name="userid"]'));
+  const hasSelect = await page.evaluate(() => !!document.querySelector('select[name="userid" i]'));
   if (hasSelect) {
     await page.waitForFunction(
       (name) => {
-        const sel = document.querySelector('select[name="userid"]');
+        const sel = document.querySelector('select[name="userid" i]');
         return [...(sel?.options ?? [])].some(o => o.text === name);
       },
       userName,
       { timeout: 15_000 }
     );
     await page.evaluate((name) => {
-      const sel = document.querySelector('select[name="userid"]');
+      const sel = document.querySelector('select[name="userid" i]');
       const opt = [...sel.options].find(o => o.text === name);
       opt.disabled = false;
       sel.value = opt.value;

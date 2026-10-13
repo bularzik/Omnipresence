@@ -1,5 +1,6 @@
 import { LinkRewriter } from './link-rewriter.js';
 import { SyncRegistry } from './sync-registry.js';
+import { Bindings } from './bindings.js';
 import {
   decideSyncAction,
   stripWorldLocalFields,
@@ -104,6 +105,8 @@ export class JournalSync {
 
     try {
       const existing = await this._getCompendiumJournal(omnipresenceId);
+      // Only the document bound to this omni id may write its shared copy (#1).
+      if (!(await Bindings.authorizePush(journal, !!existing))) return;
       if (existing) {
         // recursive:false — the payload is a complete snapshot, so replace
         // subtrees wholesale; merge would resurrect deleted keys forever.
@@ -432,6 +435,7 @@ export class JournalSync {
 
           const created = await JournalEntry.create(journalData, { keepId: true, omnipresenceInternal: true });
           await SyncRegistry.enroll(created);
+          await Bindings.bind(created);
           if (pins !== undefined) await this._applyPins(created, pins);
           touched.push(created);
         } catch (err) {
