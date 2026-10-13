@@ -51,9 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Documents that already shared a sync id in a world are listed in the
-  dashboard under "Duplicate sync ids" and do not sync until the GM keeps one:
-  once exactly one of them is left in sync, it is bound and syncs again (at
-  once for the GM dashboard's Remove from Sync, otherwise at the next GM login).
+  dashboard under "Duplicate sync ids" and do not sync. If the id has no shared
+  copy yet, the one left in sync once the others are removed is bound and syncs
+  again (at once for the GM dashboard's Remove from Sync, otherwise at the next
+  GM login). If a shared copy exists (the usual case for documents enrolled
+  before this upgrade), none is bound automatically and they stay out of
+  sync until a GM re-bind action is added (known limitation).
 - Only the active GM pushes edits automatically when several GMs are
   connected; Force Push and enrolling still work for any GM.
 - A macro the GM shares with everyone, without giving a player ownership, no
