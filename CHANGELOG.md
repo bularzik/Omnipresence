@@ -51,18 +51,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shown in the dialog, not whatever the shared copy holds when Install is clicked.
 
 ### Changed
-- Upgrading keeps existing syncs working when Actors or Journals already
-  share a sync id because one was made with Foundry's Duplicate. Foundry's
-  own record of where each copy came from settles the set: when exactly one
-  document is not a copy, every copy traces back to it, and it is the oldest,
-  it keeps the id and its copies lose the id and leave sync. The GM is told
-  once which documents those were. Ownership is never used to decide, since
-  players can set it on their own documents. Every other set (including
-  duplicates made before Foundry recorded their source, and synced folders)
-  is listed in the dashboard under "Duplicate sync ids" for "Keep this one".
+- On upgrade, documents that already share a sync id (for example a synced
+  character duplicated earlier) are never bound automatically. Every signal
+  that could tell the original apart (the owner recorded on the shared copy,
+  ownership, Foundry's "duplicated from" record) can be forged. All such
+  sets are listed in the dashboard under "Duplicate sync ids", and a set
+  with a shared copy stays listed even with one enrolled document. The GM
+  gets one notification: "N sync ids are shared by more than one document —
+  open the Omnipresence dashboard to keep one of each."
 - "Duplicate sync ids" rows have a GM-only **Keep this one** action per
   document: it binds that document and takes the others carrying the id out
-  of sync. A row with the existing shared copy asks for confirmation first,
+  of sync. Each document shows hints to help the choice (owner, created,
+  enrolled, last synced, "duplicated from"); they never act on their own. A row with the existing shared copy asks for confirmation first,
   showing the document's owner here and the owner recorded on the copy: the
   kept document will sync with a copy written elsewhere, and may overwrite it
   or be overwritten by it. Removing the extra documents from sync still
@@ -71,8 +71,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Duplicating a synced Actor or Journal (Foundry's Duplicate, or a hand
   import) no longer creates a second document with the same sync id: the
   active GM clears the id and enrollment from the new copy while connected;
-  copies made otherwise are cleared at the next GM login. Enroll it to share
-  it as its own document.
+  copies made otherwise are cleared at the next GM login, and the GM is told
+  which. Enroll it to share it as its own document. A binding whose document
+  no longer carries its id, while others do, is listed for "Keep this one".
+- A document's `_stats` (creation time, "duplicated from") is now
+  world-local: it is no longer copied into the shared copy on push or into
+  another world's document on pull.
 - Only the active GM pushes edits automatically when several GMs are
   connected; Force Push and enrolling still work for any GM.
 - A macro the GM shares with everyone, without giving a player ownership, no

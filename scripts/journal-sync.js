@@ -4,6 +4,7 @@ import { Bindings } from './bindings.js';
 import {
   decideSyncAction,
   stripWorldLocalFields,
+  withLocalStats,
   diffEmbedded,
   resolveOwningJournal,
   requiredModulesForJournal,
@@ -348,7 +349,8 @@ export class JournalSync {
     // pulled syncedAt, pins split off for _applyPins.
     const { journalData, pins } = this.prepareImportData(compJournal);
     try {
-      await localJournal.update(journalData, { omnipresenceInternal: true, recursive: false });
+      // Keep this world's _stats: a non-recursive update would replace it.
+      await localJournal.update(withLocalStats(journalData, localJournal.toObject()), { omnipresenceInternal: true, recursive: false });
       if (pins !== undefined) await this._applyPins(localJournal, pins);
     } catch (err) {
       console.error('Omnipresence | journal pull failed for', localJournal.name, err);

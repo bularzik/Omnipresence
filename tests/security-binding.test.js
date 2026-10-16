@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   decidePushBinding, buildBindings, resolveDuplicateBindings, boundOmniToLocal, validateFolderRemoval,
-  judgePendingRemoveClaim, pullAllowed, mergeDuplicateRecord, pushRefusalRecord, resolveUpgradeDuplicate,
-  pendingDeleteAllowed
+  judgePendingRemoveClaim, pullAllowed, mergeDuplicateRecord, pushRefusalRecord, markUpgradeDuplicates,
+  duplicateHints, staleBindingRecord, pendingDeleteAllowed
 } from '../scripts/security-logic.js';
 
 // --- Login pull rule (cross-world first-push race) --------------------------
@@ -146,60 +146,53 @@ test('buildBindings: unique ids bound, duplicates left unbound and reported', ()
   assert.deepEqual(duplicates, { D: [{ type: 'JournalEntry', id: 'j1' }, { type: 'Actor', id: 'a2' }] });
 });
 
-// --- One-time upgrade: auto-resolve through Foundry's duplicateSource --------
+// --- One-time upgrade: nothing shared is bound automatically -----------------
 
-const actorCarrier = (id, createdTime, duplicateSource = null, type = 'Actor') => ({
-  type, id, uuid: `${type}.${id}`, duplicateSource, createdTime
-});
-const upgrade = carriers => resolveUpgradeDuplicate({ carriers });
-const LISTED = { keep: null, detach: [] };
-
-test('resolveUpgradeDuplicate: honest Duplicate (copy records the original, original older) → the original', () => {
-  const out = upgrade([actorCarrier('orig', 100), actorCarrier('copy', 200, 'Actor.orig')]);
-  assert.deepEqual(out, { keep: { type: 'Actor', id: 'orig' }, detach: [{ type: 'Actor', id: 'copy' }] });
-});
-
-test('resolveUpgradeDuplicate: a chain orig ← d1 ← d2 → the original, both copies detached', () => {
-  const out = upgrade([actorCarrier('d2', 300, 'Actor.d1'), actorCarrier('orig', 100), actorCarrier('d1', 200, 'Actor.orig')]);
-  assert.deepEqual(out, { keep: { type: 'Actor', id: 'orig' }, detach: [{ type: 'Actor', id: 'd2' }, { type: 'Actor', id: 'd1' }] });
-});
-
-test('resolveUpgradeDuplicate: a forger with no duplicateSource + original + honest copy → listed (two non-copies)', () => {
-  assert.deepEqual(upgrade([actorCarrier('orig', 100), actorCarrier('copy', 200, 'Actor.orig'), actorCarrier('forger', 300)]), LISTED);
+test('markUpgradeDuplicates: an Actor/JournalEntry set with a shared copy is SharedCopy-marked; others unchanged', () => {
+  const duplicates = {
+    COPY: [{ type: 'Actor', id: 'a1' }, { type: 'Actor', id: 'a2' }],
+    NOCOPY: [{ type: 'JournalEntry', id: 'j1' }, { type: 'JournalEntry', id: 'j2' }],
+    FOLDER: [{ type: 'Folder', id: 'f1' }, { type: 'JournalEntry', id: 'j3' }]
+  };
+  const out = markUpgradeDuplicates(duplicates, new Set(['COPY', 'FOLDER']));
+  assert.deepEqual(out, {
+    COPY: [{ type: 'Actor', id: 'a1' }, { type: 'Actor', id: 'a2' }, { type: 'SharedCopy', id: 'COPY' }],
+    NOCOPY: [{ type: 'JournalEntry', id: 'j1' }, { type: 'JournalEntry', id: 'j2' }],
+    // Folder carriers keep their existing behaviour.
+    FOLDER: [{ type: 'Folder', id: 'f1' }, { type: 'JournalEntry', id: 'j3' }]
+  });
 });
 
-test('resolveUpgradeDuplicate: a forger that marks itself a copy of the victim only loses', () => {
-  const out = upgrade([actorCarrier('victim', 100), actorCarrier('forger', 200, 'Actor.victim')]);
-  assert.deepEqual(out, { keep: { type: 'Actor', id: 'victim' }, detach: [{ type: 'Actor', id: 'forger' }] });
+test('markUpgradeDuplicates: a marked set with one enrolled carrier is never bound by resolveDuplicateBindings', () => {
+  const marked = markUpgradeDuplicates({ X: [{ type: 'Actor', id: 'orig' }, { type: 'Actor', id: 'copy' }] }, new Set(['X']));
+  const out = resolveDuplicateBindings(marked, [
+    { omniId: 'X', type: 'Actor', id: 'orig', enrolled: true },
+    { omniId: 'X', type: 'Actor', id: 'copy', enrolled: false }
+  ]);
+  assert.deepEqual(out.bind, {});
+  assert.deepEqual(out.remaining.X, [{ type: 'Actor', id: 'orig' }, { type: 'SharedCopy', id: 'X' }]);
 });
 
-test('resolveUpgradeDuplicate: the lone non-copy must be strictly the oldest → otherwise listed', () => {
-  // The forger is older than the victim and points at it: the victim is not the oldest.
-  assert.deepEqual(upgrade([actorCarrier('victim', 200), actorCarrier('forger', 100, 'Actor.victim')]), LISTED);
-  // A tie is not "strictly oldest" either, nor is a missing createdTime.
-  assert.deepEqual(upgrade([actorCarrier('orig', 100), actorCarrier('copy', 100, 'Actor.orig')]), LISTED);
-  assert.deepEqual(upgrade([actorCarrier('orig', null), actorCarrier('copy', 100, 'Actor.orig')]), LISTED);
+test('duplicateHints: "duplicated from" names another carrier only; self, outsiders and missing sources give null', () => {
+  const carriers = [
+    { uuid: 'Actor.orig', name: 'Orig', duplicateSource: null },
+    { uuid: 'Actor.copy', name: 'Copy', duplicateSource: 'Actor.orig' },
+    { uuid: 'Actor.self', name: 'Self', duplicateSource: 'Actor.self' },
+    { uuid: 'Actor.out', name: 'Out', duplicateSource: 'Actor.elsewhere' }
+  ];
+  assert.deepEqual(duplicateHints(carriers).map(h => h.duplicatedFrom), [null, 'Orig', null, null]);
 });
 
-test('resolveUpgradeDuplicate: a cycle or a dangling duplicateSource → listed', () => {
-  // a ↔ b cycle beside a non-copy x.
-  assert.deepEqual(upgrade([actorCarrier('x', 1), actorCarrier('a', 2, 'Actor.b'), actorCarrier('b', 3, 'Actor.a')]), LISTED);
-  // A source that is not a carrier makes the document a non-copy: two non-copies.
-  assert.deepEqual(upgrade([actorCarrier('orig', 1), actorCarrier('d', 2, 'Actor.gone')]), LISTED);
-});
-
-test('resolveUpgradeDuplicate: no duplicateSource anywhere (duplicates from before Foundry recorded it) → listed', () => {
-  assert.deepEqual(upgrade([actorCarrier('a', 1), actorCarrier('b', 2)]), LISTED);
-});
-
-test('resolveUpgradeDuplicate: a Folder carrier → never resolved', () => {
-  const out = upgrade([actorCarrier('f1', 1, null, 'Folder'), actorCarrier('j1', 2, 'Folder.f1', 'JournalEntry')]);
-  assert.deepEqual(out, LISTED);
-});
-
-test('resolveUpgradeDuplicate: journals resolve the same way', () => {
-  const out = upgrade([actorCarrier('j', 1, null, 'JournalEntry'), actorCarrier('jc', 2, 'JournalEntry.j', 'JournalEntry')]);
-  assert.deepEqual(out, { keep: { type: 'JournalEntry', id: 'j' }, detach: [{ type: 'JournalEntry', id: 'jc' }] });
+test('staleBindingRecord: bound document lost the id while others carry it → a row (SharedCopy-marked with a copy)', () => {
+  const others = [{ type: 'Actor', id: 'b' }];
+  assert.deepEqual(staleBindingRecord({ omniId: 'X', boundExists: true, boundCarriesId: false, others, copyExists: true }),
+    [{ type: 'Actor', id: 'b' }, { type: 'SharedCopy', id: 'X' }]);
+  assert.deepEqual(staleBindingRecord({ omniId: 'X', boundExists: true, boundCarriesId: false, others, copyExists: false }),
+    [{ type: 'Actor', id: 'b' }]);
+  // Nothing to record: the bound document still carries it, is gone, or nobody else carries it.
+  assert.equal(staleBindingRecord({ omniId: 'X', boundExists: true, boundCarriesId: true, others, copyExists: true }), null);
+  assert.equal(staleBindingRecord({ omniId: 'X', boundExists: false, boundCarriesId: false, others, copyExists: true }), null);
+  assert.equal(staleBindingRecord({ omniId: 'X', boundExists: true, boundCarriesId: false, others: [], copyExists: true }), null);
 });
 
 test('pendingDeleteAllowed: refused while the id\'s bound local document still exists', () => {

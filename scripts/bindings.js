@@ -1,7 +1,10 @@
 import { SyncRegistry } from './sync-registry.js';
+// Used only inside methods (pack ids), so the import cycle with these is safe.
+import { SyncEngine } from './sync-engine.js';
+import { JournalSync } from './journal-sync.js';
 import {
   decidePushBinding, buildBindings, resolveDuplicateBindings, pullAllowed, mergeDuplicateRecord, pushRefusalRecord,
-  resolveUpgradeDuplicate
+  markUpgradeDuplicates, duplicateHints, staleBindingRecord
 } from './security-logic.js';
 
 // The sync flags a detached document loses: without its omni id it is an
@@ -179,11 +182,13 @@ export class Bindings {
   }
 
   /**
-   * Bind every omni id carried by exactly one document. Ids carried by two
-   * or more stay unbound (their pushes are refused) and are listed in the
-   * dashboard, because a pre-upgrade forgery looks exactly like this —
-   * except a set Foundry's Duplicate record settles (_resolveUpgradeDuplicates).
-   * Runs once per world: never after `bindingsBuilt`.
+   * Bind every omni id carried by exactly one document. Nothing that shares
+   * an id is bound automatically: the copy's ownerName, document ownership
+   * and `_stats.duplicateSource` can all be forged before the upgrade. Every
+   * shared id is listed for the GM's "Keep this one"; an Actor/JournalEntry
+   * set whose shared copy exists is SharedCopy-marked, so resolveDuplicates
+   * never binds it — not even with one enrolled carrier. Runs once per world:
+   * never after `bindingsBuilt`.
    */
   static async build() {
     if (game.settings.get('omnipresence', this.BUILT)) return;
@@ -191,56 +196,28 @@ export class Bindings {
     const existing = game.settings.get('omnipresence', this.SETTING) ?? {};
     const fresh = Object.fromEntries(Object.entries(bindings).filter(([k]) => !(k in existing)));
     await this._write(fresh);
-    await game.settings.set('omnipresence', this.DUPLICATES, duplicates);
-    const detached = await this._resolveUpgradeDuplicates(Object.keys(duplicates));
+    const withCopy = Object.keys(duplicates).length ? await this._sharedCopyIds() : new Set();
+    await game.settings.set('omnipresence', this.DUPLICATES, markUpgradeDuplicates(duplicates, withCopy));
     await game.settings.set('omnipresence', this.BUILT, true);
-    if (detached.length) {
-      ui.notifications.warn(
-        game.i18n.format('OMNIPRESENCE.notifications.upgradeDetached', { names: detached.map(d => d.name).join(', ') }),
-        { permanent: true }
-      );
+    const n = Object.keys(duplicates).length;
+    if (n) {
+      ui.notifications.warn(game.i18n.format('OMNIPRESENCE.notifications.upgradeDuplicates', { count: n }));
+      console.warn(`Omnipresence | ${n} sync id(s) are carried by more than one document; see the Omnipresence dashboard.`);
     }
-    const n = Object.keys(game.settings.get('omnipresence', this.DUPLICATES) ?? {}).length;
-    if (n) console.warn(`Omnipresence | ${n} sync id(s) are carried by more than one document; see the Omnipresence dashboard.`);
   }
 
-  /**
-   * One-time upgrade only (called from build): an honest world can already
-   * hold several documents with one omni id — a Foundry Duplicate of an
-   * enrolled document copies its flags. Left listed, the login pull marks
-   * them SharedCopy and they never sync again. Settle a set only through
-   * Foundry's own Duplicate record, `_stats.duplicateSource`, plus the
-   * server-set `_stats.createdTime` (resolveUpgradeDuplicate) — ownership and
-   * the shared copy's ownerName can both be forged — and detach the known
-   * copies. Every other set stays listed for "Keep this one". After the
-   * build, new duplicates go through the create hook and ready sweep
-   * (clearInheritedId / sweepInheritedIds) and the dashboard's Keep action.
-   * @param {string[]} omniIds the ids build() found duplicated
-   * @returns {Promise<Array>} the detached documents
-   */
-  static async _resolveUpgradeDuplicates(omniIds) {
-    if (!omniIds.length) return [];
-    const carriers = this._carriers();
-    const detached = [];
-    for (const omniId of omniIds) {
-      try {
-        const docs = carriers.filter(c => c.omniId === omniId);
-        const { keep } = resolveUpgradeDuplicate({
-          carriers: docs.map(c => {
-            const doc = this._lookup(c.type, c.id);
-            return {
-              type: c.type, id: c.id, uuid: doc.uuid,
-              duplicateSource: doc._stats?.duplicateSource ?? null,
-              createdTime: doc._stats?.createdTime ?? null
-            };
-          })
-        });
-        if (keep) detached.push(...await this.keep(omniId, keep));
-      } catch (err) {
-        console.error('Omnipresence | upgrade duplicate resolve failed for', omniId, err);
+  /** Omni ids that have a shared copy in the actor or journal pack. */
+  static async _sharedCopyIds() {
+    const ids = new Set();
+    for (const packId of [SyncEngine.PACK_ID, JournalSync.PACK_ID]) {
+      const pack = game.packs.get(packId);
+      if (!pack) continue;
+      for (const d of await pack.getDocuments()) {
+        const id = d.getFlag('omnipresence', 'id');
+        if (id) ids.add(id);
       }
     }
-    return detached;
+    return ids;
   }
 
   /** The local Actor, JournalEntry or Folder a carrier/binding names, or null. */
@@ -345,6 +322,31 @@ export class Bindings {
     if (detached.length) {
       ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.inheritedCleared', { names: detached.join(', ') }));
     }
+    try {
+      await this._recordStaleBindings();
+    } catch (err) {
+      console.error('Omnipresence | recording stale bindings failed', err);
+    }
+  }
+
+  /**
+   * A binding whose bound document still exists but no longer carries the
+   * id, while other documents do: nobody can push the id, and the sweep
+   * above must not pick a new owner. List it so "Keep this one" settles it.
+   * Nothing is detached.
+   */
+  static async _recordStaleBindings() {
+    const carriers = this._carriers();
+    let withCopy = null;
+    for (const [omniId, bound] of Object.entries(this.getAll())) {
+      const doc = this._lookup(bound.type, bound.id);
+      const others = carriers.filter(c => c.omniId === omniId && !(c.type === bound.type && c.id === bound.id));
+      const boundCarriesId = doc?.getFlag('omnipresence', 'id') === omniId;
+      if (!doc || boundCarriesId || !others.length) continue;
+      withCopy ??= await this._sharedCopyIds();
+      const record = staleBindingRecord({ omniId, boundExists: true, boundCarriesId, others, copyExists: withCopy.has(omniId) });
+      if (record) await this._recordDuplicate(omniId, record);
+    }
   }
 
   /**
@@ -379,21 +381,41 @@ export class Bindings {
 
   /**
    * Dashboard rows for the recorded duplicates, with document names. Each
-   * local Actor/JournalEntry that still carries the id can be kept.
+   * local Actor/JournalEntry that still carries the id can be kept. Every
+   * local document also gets advisory hints (owner by real ownership,
+   * created, enrolled, last synced, "duplicated from"); they help the GM
+   * choose and never act on their own — every one of them can be forged.
    */
   static duplicateRows() {
     const recorded = game.settings.get('omnipresence', this.DUPLICATES) ?? {};
-    return Object.entries(recorded).map(([omniId, docs]) => ({
-      omniId,
-      sharedCopy: docs.some(d => d.type === 'SharedCopy'),
-      docs: docs.map(({ type, id }) => {
-        if (type === 'SharedCopy') {
-          return { type: game.i18n.localize('OMNIPRESENCE.dashboard.sharedCopy'), name: game.i18n.localize('OMNIPRESENCE.dashboard.sharedCopyName') };
-        }
-        const doc = this._lookup(type, id);
-        const keepable = (type === 'Actor' || type === 'JournalEntry') && doc?.getFlag('omnipresence', 'id') === omniId;
-        return { type, id, omniId, name: doc?.name ?? id, keepable };
-      })
-    }));
+    const i18n = k => game.i18n.localize(`OMNIPRESENCE.dashboard.${k}`);
+    const when = v => (v ? new Date(v).toLocaleString() : i18n('never'));
+    return Object.entries(recorded).map(([omniId, docs]) => {
+      const local = docs.filter(d => d.type !== 'SharedCopy').map(d => ({ ...d, doc: this._lookup(d.type, d.id) }));
+      const hints = duplicateHints(local.map(({ doc }) => ({
+        uuid: doc?.uuid ?? null, name: doc?.name ?? null, duplicateSource: doc?._stats?.duplicateSource ?? null
+      })));
+      return {
+        omniId,
+        sharedCopy: docs.some(d => d.type === 'SharedCopy'),
+        docs: docs.map(({ type, id }) => {
+          if (type === 'SharedCopy') return { type: i18n('sharedCopy'), name: i18n('sharedCopyName') };
+          const i = local.findIndex(l => l.type === type && l.id === id);
+          const doc = local[i].doc;
+          const keepable = (type === 'Actor' || type === 'JournalEntry') && doc?.getFlag('omnipresence', 'id') === omniId;
+          const isDoc = !!doc && (type === 'Actor' || type === 'JournalEntry');
+          return {
+            type, id, omniId, name: doc?.name ?? id, keepable,
+            hints: isDoc ? {
+              owner: SyncRegistry.resolveOwnerName(doc) ?? i18n('hintGm'),
+              created: when(doc._stats?.createdTime),
+              enrolled: i18n(SyncRegistry.isEnrolled(doc) ? 'hintYes' : 'hintNo'),
+              synced: when(doc.getFlag('omnipresence', 'syncedAt')),
+              duplicatedFrom: hints[i].duplicatedFrom
+            } : null
+          };
+        })
+      };
+    });
   }
 }

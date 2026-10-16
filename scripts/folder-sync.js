@@ -11,6 +11,7 @@ import {
   resolveTombstoneAction,
   portableFolderFlags,
   mergeFolderFlags,
+  withLocalStats,
   canonicalizeLinks,
   localizeLinks,
   forgetFolderSelection,
@@ -740,7 +741,8 @@ export class FolderSync {
       // node.flags is the resolved result (diffFolderTree): complete, so the
       // update is non-recursive and a scope removed at the source goes here too.
       data.flags = mergeFolderFlags(this._localizeFolderFlags(node.flags, omniToLocal), target._source.flags);
-      await target.update(data, { omnipresenceInternal: true, recursive: false });
+      // Keep this world's _stats: a non-recursive update would replace it.
+      await target.update(withLocalStats(data, target.toObject()), { omnipresenceInternal: true, recursive: false });
     }
     for (const id of toDelete) {
       const target = local.get(id);

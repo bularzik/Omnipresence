@@ -1,5 +1,5 @@
 import { SyncRegistry } from './sync-registry.js';
-import { stripMacroLocalFields } from './sync-logic.js';
+import { stripMacroLocalFields, withLocalStats } from './sync-logic.js';
 import { macroPushDecision, macroCopiesToDelete, decideScriptMacroInstall, sha256Hex } from './security-logic.js';
 import { LinkRewriter } from './link-rewriter.js';
 
@@ -258,7 +258,8 @@ export class MacroSync {
   static async _installPulled(localMacro, macroData, name) {
     try {
       if (localMacro) {
-        await localMacro.update(macroData, { omnipresenceInternal: true, recursive: false });
+        // Keep this world's _stats: a non-recursive update would replace it.
+        await localMacro.update(withLocalStats(macroData, localMacro.toObject()), { omnipresenceInternal: true, recursive: false });
         return localMacro;
       }
       return await Macro.create(macroData);

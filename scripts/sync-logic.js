@@ -140,11 +140,14 @@ export function isEnrolledFrom({ id, enrolledFlag, inRegistry }) {
   return !!inRegistry;
 }
 
-const WORLD_LOCAL_KEYS = ['_id', 'ownership', 'folder'];
+// `_stats` is world-local too: its provenance (duplicateSource, createdTime)
+// describes this world's document. Carried across by a pull it would let a
+// forger in another world make a victim look like a copy of their document.
+const WORLD_LOCAL_KEYS = ['_id', 'ownership', 'folder', '_stats'];
 
 /**
  * Return a deep clone of actor data with world-local fields removed
- * (_id, ownership, folder). These reference IDs meaningless in any other
+ * (_id, ownership, folder, _stats). These are meaningless in any other
  * world, so they must never cross the shared compendium. Input is not mutated.
  */
 export function stripWorldLocalFields(actorData) {
@@ -153,15 +156,34 @@ export function stripWorldLocalFields(actorData) {
   return clone;
 }
 
+/**
+ * Pulled data for a `recursive: false` update of a LOCAL document, carrying
+ * that document's own `_stats`. The pulled data has no `_stats` (world-local,
+ * stripped), and a non-recursive update would otherwise replace the whole
+ * object with the server's partial one, wiping the local duplicateSource,
+ * compendiumSource and exportSource. (Foundry ignores client values for its
+ * managed fields, so createdTime is still reset by such an update; measured
+ * on 14.369.) Neither input is mutated.
+ * @param {object} data pulled, already-stripped data
+ * @param {object} localSource the local document's source (`doc._source` / `toObject()`)
+ */
+export function withLocalStats(data, localSource) {
+  const out = { ...data };
+  delete out._stats;
+  if (localSource?._stats) out._stats = structuredClone(localSource._stats);
+  return out;
+}
+
 // Macros carry an `author` (creating user id) on top of the world-local keys.
 // Both `ownership` and `author` are GM-only in Foundry, so a non-GM update that
 // includes them is rejected by the server; and both are meaningless in another
-// world. Strip all of them before a macro crosses worlds (push or pull).
-const MACRO_LOCAL_KEYS = ['_id', 'ownership', 'folder', 'author'];
+// world. Strip all of them before a macro crosses worlds (push or pull), and
+// `_stats` (world-local provenance) like every other document.
+const MACRO_LOCAL_KEYS = ['_id', 'ownership', 'folder', 'author', '_stats'];
 
 /**
  * Return a deep clone of macro data with world-local / GM-only fields removed
- * (_id, ownership, folder, author). On create Foundry assigns author and
+ * (_id, ownership, folder, author, _stats). On create Foundry assigns author and
  * ownership to the acting user, so dropping them lets a non-GM pull succeed.
  * Input is not mutated.
  */

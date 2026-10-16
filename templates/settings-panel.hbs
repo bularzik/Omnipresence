@@ -5,7 +5,23 @@
   <p class="notes">{{localize "OMNIPRESENCE.dashboard.duplicatesHint"}}</p>
   <ul class="omnipresence-duplicates">
     {{#each duplicates}}
-    <li data-omni-id="{{this.omniId}}"><code>{{this.omniId}}</code>: {{#each this.docs}}{{this.name}} ({{this.type}}){{#if this.keepable}} <a data-action="keepDuplicate" data-omni-id="{{this.omniId}}" data-doc-type="{{this.type}}" data-doc-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.keepThisHint"}}"><i class="fas fa-thumbtack"></i> {{localize "OMNIPRESENCE.dashboard.keepThis"}}</a>{{/if}}{{#unless @last}}, {{/unless}}{{/each}}</li>
+    <li data-omni-id="{{this.omniId}}"><code>{{this.omniId}}</code>
+      <ul>
+        {{#each this.docs}}
+        <li data-doc-id="{{this.id}}">{{this.name}} ({{this.type}}){{#if this.keepable}} <a data-action="keepDuplicate" data-omni-id="{{this.omniId}}" data-doc-type="{{this.type}}" data-doc-id="{{this.id}}" title="{{localize "OMNIPRESENCE.dashboard.keepThisHint"}}"><i class="fas fa-thumbtack"></i> {{localize "OMNIPRESENCE.dashboard.keepThis"}}</a>{{/if}}
+          {{#if this.hints}}
+          <div class="notes omnipresence-duplicate-hints">{{localize "OMNIPRESENCE.dashboard.hintsLabel"}}
+            {{localize "OMNIPRESENCE.dashboard.hintOwner"}}: {{this.hints.owner}} ·
+            {{localize "OMNIPRESENCE.dashboard.hintCreated"}}: {{this.hints.created}} ·
+            {{localize "OMNIPRESENCE.dashboard.hintEnrolled"}}: {{this.hints.enrolled}} ·
+            {{localize "OMNIPRESENCE.dashboard.hintSynced"}}: {{this.hints.synced}}{{#if this.hints.duplicatedFrom}} ·
+            <span class="omnipresence-duplicated-from">{{localize "OMNIPRESENCE.dashboard.hintDuplicatedFrom"}} {{this.hints.duplicatedFrom}}</span>{{/if}}
+          </div>
+          {{/if}}
+        </li>
+        {{/each}}
+      </ul>
+    </li>
     {{/each}}
   </ul>
   {{/if}}

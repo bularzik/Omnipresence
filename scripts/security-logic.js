@@ -58,55 +58,55 @@ export function buildBindings(carriers) {
 }
 
 /**
- * One-time upgrade only (before `bindingsBuilt`): settle an omni id carried
- * by several Actor/JournalEntry documents, so honest duplicates (a Foundry
- * Duplicate of an enrolled document copies its flags) keep syncing.
- *
- * Ownership cannot tell the original from a forgery (a forger's push
- * re-stamped the copy's ownerName, and a player may set `default` and their
- * own entry at create), so the only signal is Foundry's
- * `_stats.duplicateSource`: the sidebar Duplicate sets it to the source's
- * uuid. A carrier is a KNOWN COPY when its duplicateSource names another
- * carrier of the same id. Bind X only when:
- * - X is the one carrier that is not a known copy;
- * - every known copy's duplicateSource chain reaches X through carriers (no
- *   cycle);
- * - X has the strictly oldest `_stats.createdTime` (server-set).
- * The known copies are then detached. Anything else — duplicates from before
- * Foundry recorded duplicateSource included — stays listed for the GM's
- * "Keep this one". A player can set duplicateSource only on their own
- * documents, which can only make their own document lose. Folder carriers
- * are never resolved.
- * @param {{carriers: Array<{type: string, id: string, uuid: string, duplicateSource: string|null, createdTime: number|null}>}} input
- * @returns {{keep: {type: string, id: string}|null, detach: Array<{type: string, id: string}>}}
+ * One-time upgrade only (before `bindingsBuilt`): nothing that shares an id
+ * is bound automatically. Every automatic signal can be forged before the
+ * upgrade: the copy's ownerName (a forger's push re-stamped it), document
+ * ownership (a player sets `default` and their own entry), and
+ * `_stats.duplicateSource` (it crossed worlds through pulls). So each set
+ * stays listed for the GM's "Keep this one", and an Actor/JournalEntry set
+ * whose shared copy exists gets the SharedCopy marker, which
+ * resolveDuplicateBindings never auto-binds, even with a single enrolled
+ * carrier. Sets with Folder carriers are left as buildBindings recorded them.
+ * @param {Object<string, Array<{type: string, id: string}>>} duplicates from buildBindings
+ * @param {Set<string>} idsWithCopy omni ids that have a shared copy
+ * @returns {Object<string, Array<{type: string, id: string}>>}
  */
-export function resolveUpgradeDuplicate({ carriers }) {
-  const none = { keep: null, detach: [] };
-  const list = carriers ?? [];
-  if (list.length < 2) return none;
-  if (list.some(c => c.type !== 'Actor' && c.type !== 'JournalEntry')) return none;
-  const byUuid = new Map(list.map(c => [c.uuid, c]));
-  const sourceOf = c => (c.duplicateSource && c.duplicateSource !== c.uuid ? byUuid.get(c.duplicateSource) ?? null : null);
-  const nonCopies = list.filter(c => !sourceOf(c));
-  if (nonCopies.length !== 1) return none;
-  const [root] = nonCopies;
-  for (const c of list) {
-    if (c === root) continue;
-    const seen = new Set([c]);
-    let at = sourceOf(c);
-    while (at && at !== root && !seen.has(at)) {
-      seen.add(at);
-      at = sourceOf(at);
-    }
-    if (at !== root) return none;
+export function markUpgradeDuplicates(duplicates, idsWithCopy) {
+  const out = {};
+  for (const [omniId, docs] of Object.entries(duplicates ?? {})) {
+    const docsOnly = docs.every(d => d.type === 'Actor' || d.type === 'JournalEntry');
+    out[omniId] = docsOnly && idsWithCopy?.has(omniId)
+      ? mergeDuplicateRecord(docs, [{ type: 'SharedCopy', id: omniId }])
+      : docs.map(({ type, id }) => ({ type, id }));
   }
-  const created = c => (Number.isFinite(c.createdTime) ? c.createdTime : null);
-  if (created(root) === null) return none;
-  if (!list.every(c => c === root || (created(c) !== null && created(c) > created(root)))) return none;
-  return {
-    keep: { type: root.type, id: root.id },
-    detach: list.filter(c => c !== root).map(({ type, id }) => ({ type, id }))
-  };
+  return out;
+}
+
+/**
+ * Advisory hints for a duplicate row: "duplicated from <name>" when a
+ * carrier's `_stats.duplicateSource` names ANOTHER carrier of the same id.
+ * Hints only — they never act on their own (duplicateSource is forgeable).
+ * @param {Array<{uuid: string, name: string, duplicateSource: string|null}>} carriers
+ * @returns {Array<{duplicatedFrom: string|null}>} one per carrier, in order
+ */
+export function duplicateHints(carriers) {
+  const byUuid = new Map((carriers ?? []).map(c => [c.uuid, c]));
+  return (carriers ?? []).map(c => {
+    const src = c.duplicateSource && c.duplicateSource !== c.uuid ? byUuid.get(c.duplicateSource) : null;
+    return { duplicatedFrom: src ? src.name : null };
+  });
+}
+
+/**
+ * A stale binding: the bound document still exists but no longer carries the
+ * id, while other documents do. Nothing is detached; the id is listed (with
+ * the SharedCopy marker when a copy exists) so "Keep this one" can settle it.
+ * @returns {Array<{type: string, id: string}>|null} the record, or null for nothing
+ */
+export function staleBindingRecord({ omniId, boundExists, boundCarriesId, others, copyExists }) {
+  if (!boundExists || boundCarriesId || !(others ?? []).length) return null;
+  const docs = others.map(({ type, id }) => ({ type, id }));
+  return copyExists ? [...docs, { type: 'SharedCopy', id: omniId }] : docs;
 }
 
 /**

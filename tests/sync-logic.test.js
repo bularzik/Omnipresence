@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, forgetFolderSelection, upgradeFolderSelection, sharedFolderRows, isGateUser, portableFolderFlags, mergeFolderFlags, resolveFolderFlags } from '../scripts/sync-logic.js';
+import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, withLocalStats, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, forgetFolderSelection, upgradeFolderSelection, sharedFolderRows, isGateUser, portableFolderFlags, mergeFolderFlags, resolveFolderFlags } from '../scripts/sync-logic.js';
 
 const T0 = '2026-06-14T10:00:00.000Z';
 const T1 = '2026-06-14T11:00:00.000Z';
@@ -41,12 +41,15 @@ test('decideSyncAction: missing localModifiedAt falls back to localSyncedAt → 
   );
 });
 
-test('stripWorldLocalFields removes _id, ownership, and folder', () => {
+test('stripWorldLocalFields removes _id, ownership, folder, and _stats', () => {
   const input = {
     _id: 'abc',
     name: 'Hero',
     ownership: { default: 0, user1: 3 },
     folder: 'folder123',
+    // Provenance (duplicateSource, createdTime) is world-local: carried into
+    // another world by a pull it could make a victim look like a copy.
+    _stats: { createdTime: 1, duplicateSource: 'Actor.other', compendiumSource: null },
     flags: { omnipresence: { id: 'k' } }
   };
   const out = stripWorldLocalFields(input);
@@ -54,18 +57,20 @@ test('stripWorldLocalFields removes _id, ownership, and folder', () => {
 });
 
 test('stripWorldLocalFields does not mutate its input', () => {
-  const input = { _id: 'abc', ownership: { user1: 3 }, folder: 'f1', name: 'Hero' };
+  const input = { _id: 'abc', ownership: { user1: 3 }, folder: 'f1', name: 'Hero', _stats: { createdTime: 1 } };
   stripWorldLocalFields(input);
   assert.equal(input._id, 'abc');
+  assert.deepEqual(input._stats, { createdTime: 1 });
   assert.deepEqual(input.ownership, { user1: 3 });
   assert.equal(input.folder, 'f1');
 });
 
-test('stripMacroLocalFields removes _id, ownership, folder, and author', () => {
+test('stripMacroLocalFields removes _id, ownership, folder, author, and _stats', () => {
   const input = {
     _id: 'abc',
     name: 'Roll',
     author: 'user1',
+    _stats: { createdTime: 1, duplicateSource: 'Macro.other' },
     ownership: { default: 0, user1: 3 },
     folder: 'folder123',
     command: '/roll 1d20',
@@ -73,6 +78,19 @@ test('stripMacroLocalFields removes _id, ownership, folder, and author', () => {
   };
   const out = stripMacroLocalFields(input);
   assert.deepEqual(out, { name: 'Roll', command: '/roll 1d20', flags: { omnipresence: { id: 'k' } } });
+});
+
+test('withLocalStats: a pull carries the local document\'s own _stats (recursive:false would otherwise replace it)', () => {
+  const pulled = { name: 'Hero', _stats: { createdTime: 9, duplicateSource: 'Actor.forged' } };
+  const local = { _id: 'x', name: 'Old', _stats: { createdTime: 1, duplicateSource: null } };
+  const out = withLocalStats(pulled, local);
+  assert.deepEqual(out, { name: 'Hero', _stats: { createdTime: 1, duplicateSource: null } });
+  // A copy, not a reference, and neither input is mutated.
+  out._stats.createdTime = 5;
+  assert.equal(local._stats.createdTime, 1);
+  assert.deepEqual(pulled._stats, { createdTime: 9, duplicateSource: 'Actor.forged' });
+  // No local _stats → the key is simply absent.
+  assert.deepEqual(withLocalStats({ name: 'Hero' }, { _id: 'x' }), { name: 'Hero' });
 });
 
 test('stripMacroLocalFields does not mutate its input', () => {

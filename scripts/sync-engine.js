@@ -4,6 +4,7 @@ import { Bindings } from './bindings.js';
 import {
   decideSyncAction,
   stripWorldLocalFields,
+  withLocalStats,
   resolveOwningActor
 } from './sync-logic.js';
 
@@ -154,7 +155,8 @@ export class SyncEngine {
     // Reset localModifiedAt to match the pulled syncedAt (no local changes outstanding).
     actorData.flags.omnipresence.localModifiedAt = actorData.flags.omnipresence.syncedAt;
     try {
-      await localActor.update(actorData, { omnipresenceInternal: true, recursive: false });
+      // Keep this world's _stats: a non-recursive update would replace it.
+      await localActor.update(withLocalStats(actorData, localActor.toObject()), { omnipresenceInternal: true, recursive: false });
     } catch (err) {
       console.error('Omnipresence | pull failed for', localActor.name, err);
       ui.notifications.warn(
