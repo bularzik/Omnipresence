@@ -316,4 +316,13 @@ export class SyncRegistry {
       userName: game.user.name
     });
   }
+
+  /**
+   * Whether this client is the single pusher (#7): the active GM (Foundry's
+   * designated GM). Every other GM/assistant client would otherwise push
+   * the same edit too and race on the shared copy.
+   */
+  static isPusher() {
+    return game.user.isGM && game.users.activeGM?.id === game.user.id;
+  }
 }

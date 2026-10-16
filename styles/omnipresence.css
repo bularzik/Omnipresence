@@ -117,3 +117,11 @@
   font-size: var(--font-size-11, 11px);
   opacity: 0.75;
 }
+
+/* Script-macro confirmation: keep long commands readable and bounded. */
+.omnipresence-macro-confirm .omnipresence-macro-confirm-item pre {
+  max-height: 12em;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

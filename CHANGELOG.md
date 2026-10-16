@@ -11,6 +11,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Synced content is hidden from players.** The Omnipresence packs no longer
+  show in players' Compendium sidebar, and a GM login hides them again if a
+  world opened them. Reads through the browser console are out of scope; see
+  "What Omnipresence protects" in the README.
+- **A player can no longer overwrite or delete another document's shared
+  copy** by copying its sync id onto something they own. Each world records
+  which document owns each shared copy; pushes, folder deletes and folder
+  move-outs from any other document are refused and logged, and links
+  resolve only to the owning document.
+- **A player can no longer publish a GM-only macro** by putting it on their
+  hotbar: only macros the hotbar's user owns sync.
+- **GMs approve script macros** that are new to a world or were changed in
+  another world before they install.
+- Same-named users in two worlds no longer delete each other's shared macros:
+  a world only removes macro copies it pushed itself.
+- **Sync pulls only into the bound document.** Once a world has recorded its
+  bindings, a document that is not bound to its sync id never pulls from (or,
+  at login, pushes over) an existing shared copy, even if no other document
+  here is bound to that id. This applies to every pull: login sync, the
+  dashboard's Force Pull for actors, journals and folders, and the login
+  map-pin refresh. It closes a cross-world race where a copy created by a
+  forged id overwrote the real owner's document. Refused pulls and pushes are
+  logged and, by the active GM, listed under "Duplicate sync ids" with the
+  shared copy. Removing documents from sync never binds such a row; a GM
+  settles it with "Keep this one", and it goes away once none of its
+  documents is in sync.
+- A "Duplicate sync ids" row whose id already has a shared copy keeps its
+  "shared copy" mark: a push refused for that reason records it, and a later
+  refusal of the same id no longer drops it. Without the mark, removing all
+  but one carrier from sync could bind the survivor to another world's copy.
+- Legacy bare-string `pendingRemove` flags on journals are dropped: they carry
+  no author, so they cannot be told from a forgery.
+- Release note: GM-only macro copies that leaked into the shared macros pack
+  before this upgrade stay there until a GM removes them (the pack is hidden
+  from players; the fix prevents new leaks only).
+- A script macro approved by a GM is now approved by the command that was
+  shown in the dialog, not whatever the shared copy holds when Install is clicked.
+
+### Changed
+- On upgrade, documents that already share a sync id (for example a synced
+  character duplicated earlier) are listed in the dashboard under "Duplicate
+  sync ids". Sets whose id has a shared copy are never bound automatically,
+  even with one enrolled document: every signal that could tell the original
+  apart (the owner recorded on the shared copy, ownership, Foundry's
+  "duplicated from" record) can be forged. A set with no shared copy binds
+  its single enrolled document, as any new id would. When rows remain, the GM
+  gets one notification: "N sync ids are shared by more than one document —
+  open the Omnipresence dashboard to keep one of each." Known limitation: a
+  document stamped before the upgrade with another world's id, and the only
+  carrier of it in its world, is bound like any unique id; it cannot be told
+  apart from an honest cross-world document.
+- "Duplicate sync ids" rows have a GM-only **Keep this one** action per
+  document: it binds that document and takes the others carrying the id out
+  of sync. Each document shows hints to help the choice (owner, enrolled,
+  last synced, "duplicated from"); they never act on their own. A row with
+  the existing shared copy asks for confirmation first,
+  showing the document's owner here and the owner recorded on the copy: the
+  kept document will sync with a copy written elsewhere, and may overwrite it
+  or be overwritten by it. Removing the extra documents from sync still
+  settles a row with no shared copy (at once for the GM dashboard's Remove
+  from Sync, otherwise at the next GM login).
+- Duplicating a synced Actor or Journal (Foundry's Duplicate, or a hand
+  import) no longer creates a second document with the same sync id: the
+  active GM clears the id and enrollment from the new copy while connected;
+  copies made otherwise are cleared at the next GM login, and the GM is told
+  which. Enroll it to share it as its own document. A binding whose document
+  no longer carries its id, while others do, is listed for "Keep this one".
+- A document's `_stats` (creation time, "duplicated from") is now
+  world-local: it is no longer copied into the shared copy on push or into
+  another world's document on pull.
+- Only the active GM pushes edits automatically when several GMs are
+  connected; Force Push and enrolling still work for any GM.
+- A macro the GM shares with everyone, without giving a player ownership, no
+  longer syncs from that player's hotbar.
+
+### Fixed
+- A player who duplicated their own journal inside their synced folder with
+  no GM online, then deleted the copy, no longer deletes the original and its
+  shared copy at the next GM login: a queued folder-member delete is refused
+  while the id's bound journal still exists.
+- Failed background pushes and change markers are logged instead of surfacing
+  as unhandled promise rejections.
+
 ## [0.9.0] - 2026-10-02
 
 ### Changed

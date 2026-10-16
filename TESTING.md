@@ -10,7 +10,7 @@ npm test                              # run all unit tests (Node's built-in runn
 node --test tests/sync-logic.test.js  # run a single test file
 ```
 
-122 tests. Only the **pure** layer (`scripts/sync-logic.js`) is unit-tested —
+149 tests. Only the **pure** layers (`scripts/sync-logic.js`, `scripts/security-logic.js`) and the `module.json` pack declarations are unit-tested —
 everything that touches Foundry globals (`game`, `Hooks`, `ui`, `ApplicationV2`)
 is not unit-testable and is covered by the Playwright suite below instead,
 plus manual verification for the onboarding dialog, which has no automated
@@ -25,11 +25,11 @@ npm run test:e2e                                    # full Playwright suite
 npx playwright test tests/e2e/allow-list.spec.js    # one spec
 ```
 
-53 tests across 16 spec files (`allow-list`, `delete-reimport`,
+63 tests across 19 spec files (`allow-list`, `bindings`, `delete-reimport`,
 `embedded-sync`, `folder-membership`, `folder-module-flags`, `folder-pending`,
-`folder-selection`, `folder-sync`,
+`folder-selection`, `folder-sync`, `hidden-packs`,
 `journal-sync`, `link-rewriting`, `macro-dangling`, `map-pins`,
-`pack-staleness`, `sync-followups`, `sync-followups-2`, `user-config`).
+`pack-staleness`, `security`, `sync-followups`, `sync-followups-2`, `user-config`).
 
 `FOUNDRY_URL` overrides the server URL the e2e suite targets (default
 `http://localhost:30000`) — useful when a v13 test world runs on a
@@ -38,13 +38,16 @@ Check which port a server is actually listening on with
 `curl -s http://localhost:<port>/api/status`.
 
 The suite runs unchanged against **Foundry v13 and v14** (`loginToFoundry`
-handles both join forms). A v14 install lives at `/Users/danbularzik/FoundryVTT-14`
-with its own copy of World B (cloned from the v13 world and migrated on first
-launch) and its own module copy at
-`/Users/danbularzik/FoundryVTT-14/Data/Data/modules/omnipresence`; both servers
-were started by hand with `--world=world-b --port=…`, so check `/api/status`
-for which version answers on which port. Verify a change on both before
-calling it done.
+handles both join forms). The v14 install is `/Users/danbularzik/FoundryVTT-14.369`
+(Foundry 14.369, World B only): it serves `http://localhost:30001`, its module
+copy is `/Users/danbularzik/FoundryVTT-14.369/Data/Data/modules/omnipresence`,
+and `start-foundry.command --world=world-b` / `stop-foundry.command` in that
+folder start and stop it. Check `/api/status` for which version answers on
+which port. The v13 run is optional per change (time-boxed runs are the rule).
+
+**Changing `module.json` needs a server restart**, not just a reload: Foundry reads packs and their ownership at startup. After copying a changed `module.json`, stop and start the server, then poll `/api/status` until `"active":true`.
+
+The Omnipresence packs are hidden from players (`PLAYER: NONE`). A spec must never look packs up by `pack.visible` or through the Compendium sidebar on a player page: use `game.packs.get(<id>)`, which works for players because Foundry does not enforce pack ownership on reads.
 
 Assertions on pack state poll for the expected outcome (`waitForPackState`,
 `expect.poll`) rather than sleeping a fixed budget — pushes are debounced and a
@@ -99,6 +102,25 @@ takes every later spec down with it.
 `folder-pending.spec.js` logs in as `User 1` and closes/reopens the GM session
 mid-test to exercise the no-GM pending path; it needs both accounts and no
 other GM client connected.
+
+`security.spec.js` pins the 2026-10-11 security review: each test fails on
+`origin/main` @ 90bc79d and passes on the fixed build. It logs in
+`Gamemaster` and `User 1`, needs no other GM client, and its browser side uses
+only APIs both builds have, so it can be run against either install. To see it
+fail, clear any per-world ownership overrides on the Omnipresence packs, copy
+main's runtime files into the install (`git archive 90bc79d scripts
+omnipresence.js templates styles lang module.json | tar -x -C <module dir>`)
+and restart the server. Its first test reopens the GM session. Each negative
+assertion first waits until the GM client has observed the attack, then one
+8 s push window; the macro test also checks that an owned macro does publish.
+Shared scaffolding (`newGmSession`, `sweepProbes`) is in `helpers.js`.
+
+`hidden-packs.spec.js` closes and reopens the GM session (like
+`folder-pending`) and runs its first test with no GM connected at all; it
+needs `Gamemaster` and `User 1` and no other GM client. Its first test creates
+a pack folder so the player-side folder check is not vacuous. Its duplicate-id
+test resets `omnipresence.bindingsBuilt` and replays `Bindings.init()`, which
+sets it back.
 
 Folders sync into a world only once listed in the gating user's folder
 allow-list (`flags.omnipresence.selection.folderIds`); a spec that simulates

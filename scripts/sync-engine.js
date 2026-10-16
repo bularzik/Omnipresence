@@ -1,8 +1,10 @@
 import { LinkRewriter } from './link-rewriter.js';
 import { SyncRegistry } from './sync-registry.js';
+import { Bindings } from './bindings.js';
 import {
   decideSyncAction,
   stripWorldLocalFields,
+  withLocalStats,
   resolveOwningActor
 } from './sync-logic.js';
 
@@ -57,6 +59,9 @@ export class SyncEngine {
 
     try {
       const existing = await this._getCompendiumActor(omnipresenceId);
+      // Only the document bound to this omni id may write its shared copy
+      // (#1): a player can stamp any id on an actor they own.
+      if (!(await Bindings.authorizePush(actor, !!existing))) return;
       if (existing) {
         // recursive:false — the payload is a complete snapshot, so replace
         // subtrees wholesale; merge would resurrect deleted keys forever.
@@ -88,7 +93,7 @@ export class SyncEngine {
     if (this._timers.has(id)) clearTimeout(this._timers.get(id));
     const timer = setTimeout(() => {
       this._timers.delete(id);
-      this.push(actor);
+      this.push(actor).catch(err => console.error('Omnipresence | push failed for', actor.name, err));
     }, DEBOUNCE_MS);
     this._timers.set(id, timer);
   }
@@ -103,11 +108,19 @@ export class SyncEngine {
     this._timers.clear();
   }
 
+  /**
+   * Mark an actor dirty. Every caller is a hook that does not await it, so
+   * log failures here instead of leaving an unhandled rejection.
+   */
   static async trackLocalModification(actor) {
-    await actor.update(
-      { 'flags.omnipresence.localModifiedAt': new Date().toISOString() },
-      { omnipresenceInternal: true }
-    );
+    try {
+      await actor.update(
+        { 'flags.omnipresence.localModifiedAt': new Date().toISOString() },
+        { omnipresenceInternal: true }
+      );
+    } catch (err) {
+      console.error('Omnipresence | dirty-mark failed for', actor.name, err);
+    }
   }
 
   /**
@@ -123,10 +136,17 @@ export class SyncEngine {
     if (!actor) return;
     if (!SyncRegistry.isEnrolled(actor)) return;
     if (userId === game.user.id) this.trackLocalModification(actor);
-    if (game.user.isGM) this.debouncedPush(actor);
+    if (SyncRegistry.isPusher()) this.debouncedPush(actor);
   }
 
+  /**
+   * Overwrite `localActor` from its shared copy. Every pull path (login,
+   * dashboard force-pull) goes through here, so the pull rule lives here:
+   * once bindings are built only the bound document is written (I-1).
+   * @returns {Promise<boolean>} false when the pull was refused.
+   */
   static async pull(localActor, compActor) {
+    if (!(await Bindings.mayPull(localActor))) return false;
     // Strip world-local fields so local ownership and folder are preserved,
     // and localize canonical omnipresence ids to this world's ids.
     const actorData = LinkRewriter.localize(stripWorldLocalFields(compActor.toObject()));
@@ -135,13 +155,15 @@ export class SyncEngine {
     // Reset localModifiedAt to match the pulled syncedAt (no local changes outstanding).
     actorData.flags.omnipresence.localModifiedAt = actorData.flags.omnipresence.syncedAt;
     try {
-      await localActor.update(actorData, { omnipresenceInternal: true, recursive: false });
+      // Keep this world's _stats: a non-recursive update would replace it.
+      await localActor.update(withLocalStats(actorData, localActor.toObject()), { omnipresenceInternal: true, recursive: false });
     } catch (err) {
       console.error('Omnipresence | pull failed for', localActor.name, err);
       ui.notifications.warn(
         game.i18n.format('OMNIPRESENCE.notifications.syncFailed', { name: localActor.name })
       );
     }
+    return true;
   }
 
   static async onLogin() {
@@ -166,6 +188,18 @@ export class SyncEngine {
       const omnipresenceId = actor.getFlag('omnipresence', 'id');
       const compActor = compActors.find(d => d.getFlag('omnipresence', 'id') === omnipresenceId);
 
+      // A local actor whose id is bound to a different document must never be
+      // overwritten from (or pushed over) that document's shared copy (#1).
+      const bound = Bindings.get(omnipresenceId);
+      if (bound && !Bindings.isBoundTo(actor)) {
+        console.warn(`Omnipresence | skipping login sync of "${actor.name}" (${actor.id}): its sync id is bound to another document.`);
+        continue;
+      }
+      // Once bindings exist, an unbound carrier of an id whose shared copy
+      // exists never syncs: the copy may have been made by a forgery in
+      // another world's first-push race.
+      if (compActor && !(await Bindings.mayPull(actor))) continue;
+
       // Gate on the OWNER's preference and allow-list (the user named by
       // ownerName, or this GM for a GM-owned actor) — never on the acting
       // GM's list, which would let a GM's picker silently stop a player's
@@ -176,8 +210,8 @@ export class SyncEngine {
       if (!SyncRegistry.isDocSelected(gateUser.id, 'actor', omnipresenceId)) continue;
 
       if (!compActor) {
-        // No compendium entry — push local copy as master (GM only; no-op for players).
-        await this.push(actor);
+        // No compendium entry — push local copy as master (the active GM only, #7).
+        if (SyncRegistry.isPusher()) await this.push(actor);
         continue;
       }
 
@@ -192,7 +226,7 @@ export class SyncEngine {
       } else if (action === 'pull') {
         await this.pull(actor, compActor);
       } else if (action === 'push') {
-        await this.push(actor);
+        if (SyncRegistry.isPusher()) await this.push(actor);
       }
       // 'none': in sync
     }
@@ -240,8 +274,11 @@ export class SyncEngine {
           ? { default: 0, [matchingUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER }
           : { default: 0 };
 
-        const created = await Actor.create(actorData, { keepId: true });
+        // Internal: the createActor hook must not clear the id this import sets.
+        const created = await Actor.create(actorData, { keepId: true, omnipresenceInternal: true });
         await SyncRegistry.enroll(created);
+        // A GM import comes from the pack: this local actor now owns the copy here.
+        await Bindings.bind(created);
       } catch (err) {
         console.error('Omnipresence | actor auto-import failed for', compActor.name, err);
       }

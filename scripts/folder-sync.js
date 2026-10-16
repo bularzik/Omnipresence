@@ -1,6 +1,8 @@
 import { SyncRegistry } from './sync-registry.js';
 import { JournalSync } from './journal-sync.js';
 import { LinkRewriter } from './link-rewriter.js';
+import { Bindings } from './bindings.js';
+import { validateFolderRemoval, judgePendingRemoveClaim, pendingDeleteAllowed } from './security-logic.js';
 import {
   collectFolderTree,
   diffFolderTree,
@@ -9,6 +11,7 @@ import {
   resolveTombstoneAction,
   portableFolderFlags,
   mergeFolderFlags,
+  withLocalStats,
   canonicalizeLinks,
   localizeLinks,
   forgetFolderSelection,
@@ -36,6 +39,30 @@ export class FolderSync {
 
   static _getPack() {
     return game.packs.get(this.PACK_ID);
+  }
+
+  /**
+   * Shared validation for every path that drops a member's pack copy on the
+   * strength of journal or User flags, which players can write (#2):
+   * `journal` (when given) must be the document bound to the omni id; a copy
+   * that is already gone is a silent no-op success (the caller's
+   * `_removeFromPack` still writes the idempotent tombstone and registry
+   * drop); otherwise the copy must sit in root `rootId`'s pack tree and a
+   * non-GM actor must own the copy or the root. `docs` are the pack's
+   * documents. See validateFolderRemoval.
+   */
+  static _mayRemove({ rootId, omniId, docs, journal = null, actingUser = null }) {
+    const comp = docs.find(d => d.getFlag('omnipresence', 'id') === omniId) ?? null;
+    const treeIds = new Set(this._packTreeNodes(rootId).map(n => n.id));
+    return validateFolderRemoval({
+      copyExists: !!comp,
+      copyInTree: !!comp && treeIds.has(comp._source.folder),
+      bound: journal ? Bindings.isBoundTo(journal) : true,
+      copyOwnerName: comp?.getFlag('omnipresence', 'ownerName') ?? null,
+      rootOwnerName: this._getPack()?.folders.get(rootId)?.getFlag('omnipresence', 'ownerName') ?? null,
+      actingUserName: actingUser?.name ?? null,
+      actingIsGM: !!actingUser?.isGM
+    });
   }
 
   static get _FolderClass() {
@@ -370,7 +397,7 @@ export class FolderSync {
 
   /** The one GM client that drains pending records and imports pack roots (op-nbs). */
   static _isResponsibleGM() {
-    return game.user.isGM && game.users.activeGM?.id === game.user.id;
+    return SyncRegistry.isPusher();
   }
 
   // --- pending records (player marks/unmarks; GM drains them) -------------
@@ -444,6 +471,7 @@ export class FolderSync {
         await this._materializeDeletes(user);
       }
       await this._materializeRemoves();
+      await this._drainPackRemovals();
     })();
     try {
       await this._materializing;
@@ -455,7 +483,8 @@ export class FolderSync {
   /**
    * Deletes a player made with no GM connected. Untrusted input: honour an
    * entry only if its pack copy exists, sits under the named root's pack
-   * tree, and its ownerName matches the queuing user — otherwise it is
+   * tree, its ownerName matches the queuing user, and the id's bound local
+   * journal (if any) no longer exists — otherwise it is
    * invalid (not merely failed) and is dropped, never retried. Entries that
    * fail to materialize (e.g. a transient pack error) are kept for the next run.
    */
@@ -466,14 +495,18 @@ export class FolderSync {
     const kept = [];
     for (const entry of deletes) {
       const { omniId, rootId } = entry;
-      const comp = docs.find(d => d.getFlag('omnipresence', 'id') === omniId);
-      const treeIds = new Set(this._packTreeNodes(rootId).map(n => n.id));
-      // A co-owned or default-OWNER member carries another user's name (or none):
-      // the root's owner may delete any member of their own root.
-      const rootOwner = this._getPack().folders.get(rootId)?.getFlag('omnipresence', 'ownerName') ?? null;
-      const ownsIt = comp?.getFlag('omnipresence', 'ownerName') === user.name || rootOwner === user.name;
-      const valid = !!comp && treeIds.has(comp._source.folder) && ownsIt;
-      if (!valid) {
+      // The id's bound journal still exists here, so the deleted one was an
+      // unbound carrier (e.g. a Duplicate made with no GM online), not the
+      // origin: acting would delete the origin's copy and then the origin.
+      const binding = Bindings.get(omniId);
+      if (!pendingDeleteAllowed({ binding, boundDocExists: !!(binding && Bindings._lookup(binding.type, binding.id)) })) {
+        console.warn('Omnipresence | refusing pending folder delete from', user.name, '— its sync id is bound to a document that still exists:', omniId);
+        continue;
+      }
+      // A pending entry has no journal to bind-check, so unlike the hook
+      // paths it still needs a live copy to act on (as before this change).
+      const hasCopy = docs.some(d => d.getFlag('omnipresence', 'id') === omniId);
+      if (!hasCopy || !this._mayRemove({ rootId, omniId, docs, actingUser: user })) {
         console.warn('Omnipresence | refusing pending folder delete from', user.name, '— invalid entry for', omniId);
         continue;
       }
@@ -490,18 +523,62 @@ export class FolderSync {
 
   /** Move-outs a player made with no GM connected. */
   static async _materializeRemoves() {
-    const pending = game.journal.filter(j => typeof j.getFlag('omnipresence', 'pendingRemove') === 'string');
+    // Current shape: { rootId, userId } (the user who moved the journal out).
+    // Legacy shape: a bare rootId string with no author; it cannot be attributed, so it is refused.
+    const hasPending = j => {
+      const v = j.getFlag('omnipresence', 'pendingRemove');
+      return typeof v === 'string' || (!!v && typeof v === 'object' && typeof v.rootId === 'string');
+    };
+    const pending = game.journal.filter(hasPending);
     if (!pending.length) return;
     const docs = await this._getPack().getDocuments();
     for (const journal of pending) {
       try {
-        const rootId = journal.getFlag('omnipresence', 'pendingRemove');
-        await this._removeFromPack(rootId, journal.getFlag('omnipresence', 'id'), 'removed', docs);
+        const flag = journal.getFlag('omnipresence', 'pendingRemove');
+        const rootId = typeof flag === 'string' ? flag : flag.rootId;
+        const omniId = journal.getFlag('omnipresence', 'id');
+        // The flag is player-writable, so its claimed user is checked, never trusted.
+        const claimed = typeof flag === 'string' ? null : game.users.get(flag.userId) ?? null;
+        const accepted = judgePendingRemoveClaim({
+          flag, user: claimed, isOwner: !!claimed && journal.testUserPermission(claimed, 'OWNER')
+        }) === 'accept';
+        if (accepted && this._mayRemove({ rootId, omniId, docs, journal, actingUser: claimed })) {
+          await this._removeFromPack(rootId, omniId, 'removed', docs);
+        } else {
+          console.warn('Omnipresence | refusing pending folder remove for', journal.name, '— invalid for', omniId);
+        }
         await journal.update({ 'flags.omnipresence.-=pendingRemove': null }, { omnipresenceInternal: true });
       } catch (err) {
         console.error('Omnipresence | pending folder remove failed for', journal.name, err);
       }
     }
+  }
+
+  /**
+   * GM retries of pack removals that failed in _leave. The queue is a GM-only
+   * world setting, so (unlike a journal flag) it cannot be forged; entries are
+   * still validated with the GM as the acting user, and kept on failure.
+   */
+  static async _drainPackRemovals() {
+    const queue = game.settings.get('omnipresence', Bindings.PACK_REMOVALS) ?? [];
+    if (!queue.length) return;
+    const docs = await this._getPack().getDocuments();
+    const kept = [];
+    for (const entry of queue) {
+      const { omniId, rootId } = entry ?? {};
+      if (!omniId || !rootId) continue;
+      try {
+        if (this._mayRemove({ rootId, omniId, docs, actingUser: game.user })) {
+          await this._removeFromPack(rootId, omniId, 'removed', docs);
+        } else {
+          console.warn('Omnipresence | dropping invalid queued pack removal for', omniId);
+        }
+      } catch (err) {
+        console.error('Omnipresence | queued pack removal failed for', omniId, err);
+        kept.push(entry);
+      }
+    }
+    await game.settings.set('omnipresence', Bindings.PACK_REMOVALS, kept);
   }
 
   // --- login reconcile (target-world side) ----------------------------------
@@ -611,6 +688,7 @@ export class FolderSync {
         flags
       }, { omnipresenceInternal: true });
       localByOmni.set(node.id, created.id);
+      await Bindings.bind(created);
     }
     await this._setRegistry(rootId, true);
     return game.folders.get(localByOmni.get(rootId));
@@ -650,7 +728,10 @@ export class FolderSync {
         folder: (local.get(node.parentId) ?? root).id,
         flags: { ...this._localizeFolderFlags(node.flags, omniToLocal), omnipresence: { id: node.id, rootId } }
       }, { omnipresenceInternal: true });
-      if (created) local.set(node.id, created);
+      if (created) {
+        local.set(node.id, created);
+        await Bindings.bind(created);
+      }
     }
     for (const node of toUpdate) {
       const target = local.get(node.id);
@@ -660,7 +741,8 @@ export class FolderSync {
       // node.flags is the resolved result (diffFolderTree): complete, so the
       // update is non-recursive and a scope removed at the source goes here too.
       data.flags = mergeFolderFlags(this._localizeFolderFlags(node.flags, omniToLocal), target._source.flags);
-      await target.update(data, { omnipresenceInternal: true, recursive: false });
+      // Keep this world's _stats: a non-recursive update would replace it.
+      await target.update(withLocalStats(data, target.toObject()), { omnipresenceInternal: true, recursive: false });
     }
     for (const id of toDelete) {
       const target = local.get(id);
@@ -750,6 +832,7 @@ export class FolderSync {
     journalData.ownership = ownership;
     const created = await JournalEntry.create(journalData, { keepId: true, omnipresenceInternal: true });
     await SyncRegistry.enroll(created, { viaFolder: rootId });
+    await Bindings.bind(created);
     if (pins !== undefined) await JournalSync._applyPins(created, pins);
     return created;
   }
@@ -791,6 +874,8 @@ export class FolderSync {
     for (const journal of this.members(root)) {
       const omniId = journal.getFlag('omnipresence', 'id');
       const comp = compDocs.find(d => d.getFlag('omnipresence', 'id') === omniId);
+      // JournalSync.pull applies the pull rule per member (Bindings.mayPull):
+      // an unbound member is skipped and listed, the rest are still pulled.
       if (comp) await JournalSync.pull(journal, comp);
     }
   }
@@ -828,10 +913,10 @@ export class FolderSync {
         await this._enter(journal, rootId);
         break;
       case 'leave':
-        await this._leave(journal, viaFolder);
+        await this._leave(journal, viaFolder, userId);
         break;
       case 'switch':
-        await this._leave(journal, viaFolder);
+        await this._leave(journal, viaFolder, userId);
         await this._enter(journal, rootId);
         break;
       // 'stay': moved between subfolders of the same root. The generic
@@ -849,16 +934,28 @@ export class FolderSync {
     if (!this._isResponsible(userId)) return;
     JournalSync.cancelFor(journal.id);
     const omniId = journal.getFlag('omnipresence', 'id');
-    if (game.user.isGM) await this._removeFromPack(rootId, omniId, 'deleted');
-    else await SyncRegistry.addPendingDelete(game.user.id, { omniId, rootId });
+    if (game.user.isGM) {
+      // viaFolder and id are flags the deleting player could have forged (#2).
+      const pack = this._getPack();
+      if (!pack) return;
+      const docs = await pack.getDocuments();
+      const actingUser = game.users.get(userId) ?? null;
+      if (!this._mayRemove({ rootId, omniId, docs, journal, actingUser })) {
+        console.warn('Omnipresence | refusing folder member delete by', actingUser?.name, '— invalid for', omniId);
+        return;
+      }
+      await this._removeFromPack(rootId, omniId, 'deleted', docs);
+    } else {
+      await SyncRegistry.addPendingDelete(game.user.id, { omniId, rootId });
+    }
   }
 
   static async _enter(journal, rootId) {
     await SyncRegistry.enroll(journal, { viaFolder: rootId });
-    if (game.user.isGM) {
+    if (SyncRegistry.isPusher()) {
       JournalSync.debouncedPush(journal);
     } else {
-      // No GM connected: record the re-entry so the GM's next login pushes
+      // Not the active GM (none connected, or this is a second GM): record the re-entry so the GM's next login pushes
       // this journal even if a stale `removed` tombstone still names it
       // (it may have left and come back before the GM ever saw the leave).
       await journal.update({ 'flags.omnipresence.pendingEnter': rootId }, { omnipresenceInternal: true });
@@ -867,24 +964,43 @@ export class FolderSync {
 
   /**
    * Leave: unenroll locally; the GM also drops the pack copy and tombstones
-   * it as `removed`. A player (no GM connected) records `pendingRemove` so
-   * the GM's login can tell this from a detached mirror copy elsewhere.
+   * it as `removed` — only after the same validation as a delete (#2), since
+   * viaFolder is a flag the mover could have forged. A player (no GM
+   * connected) records `pendingRemove` so the GM's login can tell this from
+   * a detached mirror copy elsewhere.
    */
-  static async _leave(journal, rootId) {
+  static async _leave(journal, rootId, userId = game.user.id) {
     JournalSync.cancelFor(journal.id);
     await SyncRegistry.unenrollMember(journal);
     if (game.user.isGM) {
+      const omniId = journal.getFlag('omnipresence', 'id');
+      let validated = false;
       try {
-        await this._removeFromPack(rootId, journal.getFlag('omnipresence', 'id'), 'removed');
+        const docs = await this._getPack().getDocuments();
+        const actingUser = game.users.get(userId) ?? game.user;
+        if (!this._mayRemove({ rootId, omniId, docs, journal, actingUser })) {
+          console.warn('Omnipresence | refusing folder member remove for', journal.name, '— invalid for', omniId);
+          return;
+        }
+        validated = true;
+        await this._removeFromPack(rootId, omniId, 'removed', docs);
       } catch (err) {
-        // A pack failure must never leave a member unenrolled locally with a live
-        // pack copy and no tombstone — other worlds would push it back. Record
-        // pendingRemove so _materializeRemoves retries at the next GM login.
+        // A pack failure after validation must never leave a member unenrolled
+        // locally with a live pack copy and no tombstone — other worlds would
+        // push it back — so a validated removal is queued in a GM-only setting
+        // for _drainPackRemovals to retry at the next GM login. A failure before
+        // validation (e.g. the pack read threw) proves nothing about the
+        // forged-flag attack, so it is logged and not queued.
         console.error('Omnipresence | folder member leave failed for', journal.name, err);
-        await journal.update({ 'flags.omnipresence.pendingRemove': rootId }, { omnipresenceInternal: true });
+        if (!validated) {
+          console.warn('Omnipresence | folder member leave not queued (failed before validation) for', omniId);
+          return;
+        }
+        const queue = game.settings.get('omnipresence', Bindings.PACK_REMOVALS) ?? [];
+        await game.settings.set('omnipresence', Bindings.PACK_REMOVALS, [...queue, { omniId, rootId }]);
       }
     } else {
-      await journal.update({ 'flags.omnipresence.pendingRemove': rootId }, { omnipresenceInternal: true });
+      await journal.update({ 'flags.omnipresence.pendingRemove': { rootId, userId: game.user.id } }, { omnipresenceInternal: true });
     }
   }
 
@@ -1194,7 +1310,7 @@ export class FolderSync {
 
     if ('folder' in changes && stampedRootId !== currentRootId) {
       if (stampedRootId) {
-        await this._subtreeLeft(folder, stampedRootId);
+        await this._subtreeLeft(folder, stampedRootId, userId);
         const oldRoot = this.findRootById(stampedRootId);
         if (oldRoot) this.debouncedPushFolder(oldRoot);
       }
@@ -1205,11 +1321,11 @@ export class FolderSync {
   }
 
   /** A subtree was dragged out of its root: members leave, subfolder stamps clear. */
-  static async _subtreeLeft(folder, rootId) {
+  static async _subtreeLeft(folder, rootId, userId = game.user.id) {
     const { folders, journalIds } = collectFolderTree(folder.id, this._folderRecords(), this._journalRecords());
     for (const id of journalIds) {
       const j = game.journal.get(id);
-      if (j?.getFlag('omnipresence', 'viaFolder') === rootId) await this._leave(j, rootId);
+      if (j?.getFlag('omnipresence', 'viaFolder') === rootId) await this._leave(j, rootId, userId);
     }
     for (const r of folders) {
       await game.folders.get(r._id)?.update(
@@ -1286,9 +1402,16 @@ export class FolderSync {
         // capture makes this independent of hook order (idempotent). Keep the
         // root pack folder, emptied and flagged, so mirrors delete themselves.
         const packOpts = { pack: this.PACK_ID, omnipresenceInternal: true };
-        const omniIds = members.map(m => m.omniId).filter(Boolean);
+        // Captured member flags are player-writable too (#2): only copies
+        // bound to the member that carried the id, inside this root's tree, go.
+        const omniIds = members
+          .filter(m => m.omniId && Bindings.get(m.omniId)?.type === 'JournalEntry' && Bindings.get(m.omniId)?.id === m.id)
+          .map(m => m.omniId);
+        const treeIds = new Set(this._packTreeNodes(rootId).map(n => n.id));
         const docs = await pack.getDocuments();
-        const copyIds = docs.filter(d => omniIds.includes(d.getFlag('omnipresence', 'id'))).map(d => d.id);
+        const copyIds = docs
+          .filter(d => omniIds.includes(d.getFlag('omnipresence', 'id')) && treeIds.has(d._source.folder))
+          .map(d => d.id);
         try {
           if (copyIds.length) await JournalEntry.deleteDocuments(copyIds, packOpts);
         } catch (err) {

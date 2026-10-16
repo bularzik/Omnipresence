@@ -1,8 +1,10 @@
 import { LinkRewriter } from './link-rewriter.js';
 import { SyncRegistry } from './sync-registry.js';
+import { Bindings } from './bindings.js';
 import {
   decideSyncAction,
   stripWorldLocalFields,
+  withLocalStats,
   diffEmbedded,
   resolveOwningJournal,
   requiredModulesForJournal,
@@ -104,6 +106,8 @@ export class JournalSync {
 
     try {
       const existing = await this._getCompendiumJournal(omnipresenceId);
+      // Only the document bound to this omni id may write its shared copy (#1).
+      if (!(await Bindings.authorizePush(journal, !!existing))) return;
       if (existing) {
         // recursive:false — the payload is a complete snapshot, so replace
         // subtrees wholesale; merge would resurrect deleted keys forever.
@@ -159,7 +163,7 @@ export class JournalSync {
     if (this._timers.has(id)) clearTimeout(this._timers.get(id));
     const timer = setTimeout(() => {
       this._timers.delete(id);
-      this.push(journal);
+      this.push(journal).catch(err => console.error('Omnipresence | journal push failed for', journal.name, err));
     }, DEBOUNCE_MS);
     this._timers.set(id, timer);
   }
@@ -174,11 +178,19 @@ export class JournalSync {
     this._timers.clear();
   }
 
+  /**
+   * Mark a journal dirty. Every caller is a hook that does not await it, so
+   * log failures here instead of leaving an unhandled rejection.
+   */
   static async trackLocalModification(journal) {
-    await journal.update(
-      { 'flags.omnipresence.localModifiedAt': new Date().toISOString() },
-      { omnipresenceInternal: true }
-    );
+    try {
+      await journal.update(
+        { 'flags.omnipresence.localModifiedAt': new Date().toISOString() },
+        { omnipresenceInternal: true }
+      );
+    } catch (err) {
+      console.error('Omnipresence | dirty-mark failed for', journal.name, err);
+    }
   }
 
   /**
@@ -195,7 +207,7 @@ export class JournalSync {
     if (!SyncRegistry.isEnrolled(journal)) return;
     if (!SyncRegistry.isJournalSyncEnabled(userId)) return;
     if (userId === game.user.id) this.trackLocalModification(journal);
-    if (game.user.isGM) this.debouncedPush(journal);
+    if (SyncRegistry.isPusher()) this.debouncedPush(journal);
   }
 
   /**
@@ -210,7 +222,7 @@ export class JournalSync {
     if (!SyncRegistry.isEnrolled(journal)) return;
     if (!SyncRegistry.isJournalSyncEnabled(userId)) return;
     if (userId === game.user.id) this.trackLocalModification(journal);
-    if (game.user.isGM) this.debouncedPush(journal);
+    if (SyncRegistry.isPusher()) this.debouncedPush(journal);
   }
 
   /**
@@ -283,6 +295,8 @@ export class JournalSync {
       const comp = compDocs.find(d => d.getFlag('omnipresence', 'id') === omniId);
       const pins = comp?.getFlag('omnipresence', 'pins');
       if (pins === undefined) continue;
+      // Pins are shared-copy content too: same pull rule as JournalSync.pull.
+      if (!(await Bindings.mayPull(journal))) continue;
 
       // Never mirror pins onto a journal whose sync is in unresolved conflict —
       // that would apply part of the remote state (and delete local pin
@@ -321,13 +335,22 @@ export class JournalSync {
     return { journalData, pins };
   }
 
+  /**
+   * Overwrite `localJournal` from its shared copy. Every pull path (login,
+   * dashboard force-pull, folder force-pull) goes through here, so the pull
+   * rule lives here: once bindings are built only the bound document is
+   * written (I-1).
+   * @returns {Promise<boolean>} false when the pull was refused.
+   */
   static async pull(localJournal, compJournal) {
+    if (!(await Bindings.mayPull(localJournal))) return false;
     // Same shaping as an import: world-local fields stripped (local ownership
     // and folder preserved), links localized, localModifiedAt reset to the
     // pulled syncedAt, pins split off for _applyPins.
     const { journalData, pins } = this.prepareImportData(compJournal);
     try {
-      await localJournal.update(journalData, { omnipresenceInternal: true, recursive: false });
+      // Keep this world's _stats: a non-recursive update would replace it.
+      await localJournal.update(withLocalStats(journalData, localJournal.toObject()), { omnipresenceInternal: true, recursive: false });
       if (pins !== undefined) await this._applyPins(localJournal, pins);
     } catch (err) {
       console.error('Omnipresence | journal pull failed for', localJournal.name, err);
@@ -335,6 +358,7 @@ export class JournalSync {
         game.i18n.format('OMNIPRESENCE.notifications.syncFailed', { name: localJournal.name })
       );
     }
+    return true;
   }
 
   static async onLogin() {
@@ -354,6 +378,16 @@ export class JournalSync {
       const omnipresenceId = journal.getFlag('omnipresence', 'id');
       const compJournal = compJournals.find(d => d.getFlag('omnipresence', 'id') === omnipresenceId);
 
+      // A local journal whose id is bound to a different document must never
+      // be overwritten from (or pushed over) that document's shared copy (#1).
+      if (Bindings.get(omnipresenceId) && !Bindings.isBoundTo(journal)) {
+        console.warn(`Omnipresence | skipping login sync of "${journal.name}" (${journal.id}): its sync id is bound to another document.`);
+        continue;
+      }
+      // Once bindings exist, an unbound carrier of an id whose shared copy
+      // exists never syncs (cross-world first-push race).
+      if (compJournal && !(await Bindings.mayPull(journal))) continue;
+
       // Allow-list gate on the OWNER (the user named by ownerName, or this GM
       // for a GM-owned journal) — never the acting GM's own list. A folder
       // member is gated by its root's owner and folderIds, never by journalIds.
@@ -370,7 +404,7 @@ export class JournalSync {
       }
 
       if (!compJournal) {
-        await this.push(journal);
+        if (SyncRegistry.isPusher()) await this.push(journal);
         touched.push(journal);
         continue;
       }
@@ -386,7 +420,7 @@ export class JournalSync {
       } else if (action === 'pull') {
         await this.pull(journal, compJournal);
       } else if (action === 'push') {
-        await this.push(journal);
+        if (SyncRegistry.isPusher()) await this.push(journal);
       }
       touched.push(journal);
     }
@@ -432,6 +466,7 @@ export class JournalSync {
 
           const created = await JournalEntry.create(journalData, { keepId: true, omnipresenceInternal: true });
           await SyncRegistry.enroll(created);
+          await Bindings.bind(created);
           if (pins !== undefined) await this._applyPins(created, pins);
           touched.push(created);
         } catch (err) {

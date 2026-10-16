@@ -42,6 +42,13 @@ test('a dangling hotbar slot keeps the pack copy and the login pull restores the
     // Delete the macro locally; the slot keeps pointing at the dead id.
     await macro.delete({ omnipresenceInternal: true });
     const dangling = game.user.hotbar[SLOT] === macro.id && !game.macros.get(macro.id);
+    // A GM script macro that is new locally needs the GM's approval (#5);
+    // record this command as approved, as an earlier Install would have.
+    const { sha256Hex } = await import('/modules/omnipresence/scripts/security-logic.js');
+    pack.clear();
+    const copy = (await pack.getDocuments()).find(d => d.getFlag('omnipresence', 'id') === ompId);
+    await game.settings.set('omnipresence', 'approvedMacroHashes',
+      [...game.settings.get('omnipresence', 'approvedMacroHashes'), sha256Hex(copy._source.command ?? '')]);
     await MacroSync.onLogin();
     const survived = await inPack();
     const restored = game.macros.find(m => m.getFlag('omnipresence', 'id') === ompId);

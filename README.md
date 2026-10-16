@@ -40,9 +40,11 @@ To stop syncing, right-click and choose **Remove from Omnipresence Sync**. The a
 
 ### Hotbar macro sync
 
-All macros on your hotbar — both Chat and Script types — are kept in sync across worlds. When you log into a new world, your macros are automatically created there and placed in the correct hotbar slots. Removing a macro from your hotbar removes it from the shared store; adding one pushes it within 2 seconds.
+The macros on your hotbar that you own — both Chat and Script types — are kept in sync across worlds. A macro the GM shares with everyone without giving you ownership stays in its world. When you log into a new world, your macros are automatically created there and placed in the correct hotbar slots. Removing a macro from your hotbar removes it from the shared store; adding one pushes it within 2 seconds.
 
 Each user's macros are stored independently, so two players can have completely different hotbars without interfering with each other.
+
+**GMs approve script macros.** When a GM logs in and one of their script macros is new to this world, or its code was changed in another world, Omnipresence does not install it silently. A dialog lists each one — name, owner, the world it came from, and its code — with **Install** and **Skip**. The choice is all-or-nothing: Install installs every listed macro and remembers that exact code in this browser, so it is not asked about again; Skip skips them all and you are asked again at your next login. Chat macros, and macros pulled by players (which run with the player's own permissions), install as before.
 
 ### Journal sync
 
@@ -70,7 +72,21 @@ Open **Configure Settings → Module Settings → Manage Sync** to view and mana
 - Remove from sync
 - Force sync all enrolled documents at once
 
-**Players** see only their own documents, with controls to force pull (overwrite the local copy with the shared version) or remove from sync. Players cannot force push — only a GM can write to the shared compendium.
+**Players** see only their own documents, with controls to force pull (overwrite the local copy with the shared version) or remove from sync. Players cannot force push — only a GM can write to the shared compendium. When several GMs are connected, only the active GM (Foundry's designated GM) pushes edits automatically; any GM can still Force Push or enroll.
+
+Each sync id is bound to one document per world, and only that document syncs with the shared copy.
+
+- **Duplicating a synced document.** Foundry's Duplicate (and a hand import) copies every flag, sync id included. While the active GM is connected, the new copy loses the sync id and enrollment straight away, so it is an ordinary document; enroll it to share it as its own document under a fresh id. A copy made inside a synced journal folder joins that folder under a fresh id. A copy made while no GM is connected is cleared the same way at the next active-GM login; until then its pushes are refused, and deleting it never deletes the original or its shared copy.
+- **Upgrading a world.** On the first active-GM login after the upgrade, each document carrying a unique sync id is bound to it. Sets whose id has a shared copy are never bound automatically. Everything that could tell the original apart can be forged before the upgrade: the owner recorded on the shared copy, a document's ownership, and Foundry's "duplicated from" record. Those sets are listed under **Duplicate sync ids**, even when only one of their documents is enrolled, and their documents don't sync until the GM keeps one. A set with no shared copy binds its single enrolled document, as any new id would; with no copy there is nothing to overwrite. If the GM still has rows to settle, they get one notification giving how many.
+  - **Known limitation:** a document that was stamped before the upgrade with another world's sync id, and is the only document carrying that id in its world, is bound at the upgrade like any unique id. It cannot be told apart from an honest document shared from another world. Once bound, it can overwrite that world's shared copy.
+- **The id is bound** and another document still carries it: the bound document keeps syncing, and the other one is refused, with a warning in the browser console, until the next active-GM login clears its sync id. The GM is told which documents were cleared.
+- **The bound document no longer carries its id** while other documents do: at the next active-GM login the id is listed under **Duplicate sync ids**, so the GM can keep one. Nothing is cleared automatically.
+- **The id is unbound and its shared copy already exists** (made in this world or in another one): the document is never pulled into or pushed over that copy. When the active GM's login refuses to pull it, or the GM's client refuses to push it, the document is listed under **Duplicate sync ids** together with the shared copy, along with any other document here carrying the same id. Removing documents from sync never binds such a row; it goes away once none of its documents is in sync.
+- **Several documents carry an unbound id and there is no shared copy yet**, for example when two documents race to push a new id for the first time: none of them syncs, and they are listed under **Duplicate sync ids**. Once exactly one of them is still in sync, it is bound and syncs again.
+
+Under each document, the row shows hints to help the choice: its owner here, whether it is enrolled, when it last synced, and "duplicated from" when Foundry recorded it as a copy of another document in the row. These are hints only. They can be wrong and never act on their own. Foundry's "duplicated from" record and the document's other creation details stay in the world they belong to, and never travel through the shared copy.
+
+To settle a **Duplicate sync ids** row, click **Keep this one** next to the document that should sync. It is bound to the id and put back on its owner's sync list, and every other Actor or Journal carrying the id loses it and leaves sync. When the row includes the existing shared copy, a confirmation comes first. It shows who owns the document here and the owner recorded on the shared copy: that copy may have been written elsewhere, possibly by another world, and the kept document will sync with it, so it may overwrite the copy or be overwritten by it. You can also remove the extra documents from sync instead. The GM dashboard's **Remove from Sync** updates the list straight away. A removal made anywhere else (by a player, or from the sidebar context menu) shows at the next GM login.
 
 ## Per-User Sync Preferences
 
@@ -95,6 +111,18 @@ The dialog closes automatically once every conflict is resolved. Characters you 
 
 Because only a GM can write to the shared compendium, players resolve conflicts by pulling the shared version. A GM additionally has a **force push** option to make a local copy the new master.
 
+## What Omnipresence protects
+
+**Synced content is hidden from players in Foundry's interface.** The Omnipresence packs hold GM content from every world on the server, so they are hidden from players and trusted players. If a GM in any world opens one to players in the Compendium sidebar, Omnipresence hides it again at that GM's next login and says why. This matches how Foundry treats GM-only world documents: present on every client, hidden in the UI.
+
+**Reads through the browser console are out of scope.** Foundry does not enforce compendium permissions when a client reads a pack through its API, just as it sends GM-only world documents to every client. A player who uses the browser console can still read pack contents. Keeping GM content secret from such a player would need encryption with a passphrase shared by every GM, which Omnipresence does not do.
+
+**Players sync their own content because of that same behaviour.** A player's client reads its own characters, journals and macros from the hidden packs at login, with no GM online. If a future Foundry version starts enforcing pack permissions on reads, players would stop receiving updates until a GM logs in. The fallback design for that case is to split each pack into a GM-only pack and a player pack.
+
+**No player can change or delete someone else's synced document.** Each world records which of its documents each shared copy belongs to. Only that document can update or delete the copy, and links resolve only to it. A sync id copied onto another document — by hand, by a macro, or by duplicating an enrolled document — is ignored, with a warning in the console. When upgrading, the active GM's first login records this from the world's documents. If two documents already carried the same id, neither syncs until the GM keeps one (see [Settings Dashboard](#settings-dashboard)).
+
+**Macros:** only macros you own sync from your hotbar, a world only removes the shared macro copies it pushed itself, and a GM approves any script macro that is new to a world or was changed elsewhere (see [Hotbar macro sync](#hotbar-macro-sync)).
+
 ## Notes
 
 - Same-server only. Cross-server sync is not supported in this version.
@@ -109,6 +137,8 @@ Because only a GM can write to the shared compendium, players resolve conflicts 
 - Documents with no player owner (GM-owned NPCs, GM journals) sync for the GM: they cross into another world once the GM checks them in *Manage synced documents* there. Player-owned documents are gated by their owner's selection, never the GM's.
 - Macro sync is all-or-nothing per user — there is no per-macro opt-in. If you want a macro local-only, keep it off your hotbar.
 - Sync preferences are world-scoped. A preference set in World A does not carry to World B automatically, since user IDs differ between worlds.
+- A document dragged out of an Omnipresence pack by hand is not linked to the shared copy (it carries the id but is not the document that copy belongs to here). Let Omnipresence import it instead, through *Manage synced documents*.
+- Deleting or moving out a member of a synced folder when you own neither that member's shared copy nor the folder (for example a journal the GM shares with everyone) removes it only from your world; it comes back at the next login there.
 
 ## Development
 
