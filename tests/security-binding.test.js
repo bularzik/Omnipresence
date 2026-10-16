@@ -163,6 +163,17 @@ test('markUpgradeDuplicates: an Actor/JournalEntry set with a shared copy is Sha
   });
 });
 
+test('markUpgradeDuplicates: fail closed — an unknown copy set (null) marks every Actor/JournalEntry set', () => {
+  const duplicates = {
+    A: [{ type: 'Actor', id: 'a1' }, { type: 'Actor', id: 'a2' }],
+    F: [{ type: 'Folder', id: 'f1' }, { type: 'JournalEntry', id: 'j1' }]
+  };
+  assert.deepEqual(markUpgradeDuplicates(duplicates, null), {
+    A: [{ type: 'Actor', id: 'a1' }, { type: 'Actor', id: 'a2' }, { type: 'SharedCopy', id: 'A' }],
+    F: [{ type: 'Folder', id: 'f1' }, { type: 'JournalEntry', id: 'j1' }]
+  });
+});
+
 test('markUpgradeDuplicates: a marked set with one enrolled carrier is never bound by resolveDuplicateBindings', () => {
   const marked = markUpgradeDuplicates({ X: [{ type: 'Actor', id: 'orig' }, { type: 'Actor', id: 'copy' }] }, new Set(['X']));
   const out = resolveDuplicateBindings(marked, [

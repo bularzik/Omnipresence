@@ -176,34 +176,52 @@ export class Bindings {
    */
   static async init() {
     if (!SyncRegistry.isPusher()) return;
-    if (!game.settings.get('omnipresence', this.BUILT)) await this.build();
+    const built = !game.settings.get('omnipresence', this.BUILT) && await this.build();
     await this.resolveDuplicates();
+    // Counted after resolveDuplicates, so the number matches the rows the
+    // dashboard shows (a no-copy set with one enrolled carrier is bound).
+    if (built) {
+      const n = Object.keys(game.settings.get('omnipresence', this.DUPLICATES) ?? {}).length;
+      if (n) {
+        ui.notifications.warn(game.i18n.format('OMNIPRESENCE.notifications.upgradeDuplicates', { count: n }));
+        console.warn(`Omnipresence | ${n} sync id(s) are carried by more than one document; see the Omnipresence dashboard.`);
+      }
+    }
     await this.sweepInheritedIds();
   }
 
   /**
-   * Bind every omni id carried by exactly one document. Nothing that shares
-   * an id is bound automatically: the copy's ownerName, document ownership
-   * and `_stats.duplicateSource` can all be forged before the upgrade. Every
+   * Bind every omni id carried by exactly one document. Nothing whose id has
+   * a shared copy and is carried by several documents is bound
+   * automatically: the copy's ownerName, document ownership and
+   * `_stats.duplicateSource` can all be forged before the upgrade. Every
    * shared id is listed for the GM's "Keep this one"; an Actor/JournalEntry
    * set whose shared copy exists is SharedCopy-marked, so resolveDuplicates
-   * never binds it — not even with one enrolled carrier. Runs once per world:
-   * never after `bindingsBuilt`.
+   * never binds it — not even with one enrolled carrier. A set with no
+   * shared copy follows the normal rule. Runs once per world: never after
+   * `bindingsBuilt`.
+   * @returns {Promise<boolean>} true when it ran
    */
   static async build() {
-    if (game.settings.get('omnipresence', this.BUILT)) return;
+    if (game.settings.get('omnipresence', this.BUILT)) return false;
     const { bindings, duplicates } = buildBindings(this._carriers());
     const existing = game.settings.get('omnipresence', this.SETTING) ?? {};
     const fresh = Object.fromEntries(Object.entries(bindings).filter(([k]) => !(k in existing)));
     await this._write(fresh);
-    const withCopy = Object.keys(duplicates).length ? await this._sharedCopyIds() : new Set();
+    let withCopy = new Set();
+    if (Object.keys(duplicates).length) {
+      try {
+        withCopy = await this._sharedCopyIds();
+      } catch (err) {
+        // Fail closed: with the scan unknown, treat every set as having a
+        // copy, so nothing sharing an id is bound and the build still finishes.
+        console.error('Omnipresence | shared-copy scan failed during the bindings build; no shared id is bound', err);
+        withCopy = null;
+      }
+    }
     await game.settings.set('omnipresence', this.DUPLICATES, markUpgradeDuplicates(duplicates, withCopy));
     await game.settings.set('omnipresence', this.BUILT, true);
-    const n = Object.keys(duplicates).length;
-    if (n) {
-      ui.notifications.warn(game.i18n.format('OMNIPRESENCE.notifications.upgradeDuplicates', { count: n }));
-      console.warn(`Omnipresence | ${n} sync id(s) are carried by more than one document; see the Omnipresence dashboard.`);
-    }
+    return true;
   }
 
   /** Omni ids that have a shared copy in the actor or journal pack. */
@@ -238,8 +256,9 @@ export class Bindings {
    * GM: make `target` ({type, id}) the document bound to `omniId`, take
    * every other local Actor/JournalEntry carrier of the id out of sync, drop
    * the id's duplicates record and put the kept document back on its gate
-   * user's allow-list. The dashboard's "Keep this one" and the one-time
-   * upgrade both settle a duplicate through here.
+   * user's allow-list (re-stamping its ownerName from real ownership, see
+   * _readmit). Called by the dashboard's "Keep this one", the only way a
+   * set whose id has a shared copy is ever settled.
    * @returns {Promise<Array>} the detached documents
    */
   static async keep(omniId, target) {
@@ -383,8 +402,9 @@ export class Bindings {
    * Dashboard rows for the recorded duplicates, with document names. Each
    * local Actor/JournalEntry that still carries the id can be kept. Every
    * local document also gets advisory hints (owner by real ownership,
-   * created, enrolled, last synced, "duplicated from"); they help the GM
-   * choose and never act on their own — every one of them can be forged.
+   * enrolled, last synced, "duplicated from"); they help the GM choose and
+   * never act on their own — every one of them can be forged. No creation
+   * date: a pull resets the server-managed createdTime, so it would mislead.
    */
   static duplicateRows() {
     const recorded = game.settings.get('omnipresence', this.DUPLICATES) ?? {};
@@ -408,7 +428,6 @@ export class Bindings {
             type, id, omniId, name: doc?.name ?? id, keepable,
             hints: isDoc ? {
               owner: SyncRegistry.resolveOwnerName(doc) ?? i18n('hintGm'),
-              created: when(doc._stats?.createdTime),
               enrolled: i18n(SyncRegistry.isEnrolled(doc) ? 'hintYes' : 'hintNo'),
               synced: when(doc.getFlag('omnipresence', 'syncedAt')),
               duplicatedFrom: hints[i].duplicatedFrom

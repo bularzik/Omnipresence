@@ -52,17 +52,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - On upgrade, documents that already share a sync id (for example a synced
-  character duplicated earlier) are never bound automatically. Every signal
-  that could tell the original apart (the owner recorded on the shared copy,
-  ownership, Foundry's "duplicated from" record) can be forged. All such
-  sets are listed in the dashboard under "Duplicate sync ids", and a set
-  with a shared copy stays listed even with one enrolled document. The GM
+  character duplicated earlier) are listed in the dashboard under "Duplicate
+  sync ids". Sets whose id has a shared copy are never bound automatically,
+  even with one enrolled document: every signal that could tell the original
+  apart (the owner recorded on the shared copy, ownership, Foundry's
+  "duplicated from" record) can be forged. A set with no shared copy binds
+  its single enrolled document, as any new id would. When rows remain, the GM
   gets one notification: "N sync ids are shared by more than one document —
-  open the Omnipresence dashboard to keep one of each."
+  open the Omnipresence dashboard to keep one of each." Known limitation: a
+  document stamped before the upgrade with another world's id, and the only
+  carrier of it in its world, is bound like any unique id; it cannot be told
+  apart from an honest cross-world document.
 - "Duplicate sync ids" rows have a GM-only **Keep this one** action per
   document: it binds that document and takes the others carrying the id out
-  of sync. Each document shows hints to help the choice (owner, created,
-  enrolled, last synced, "duplicated from"); they never act on their own. A row with the existing shared copy asks for confirmation first,
+  of sync. Each document shows hints to help the choice (owner, enrolled,
+  last synced, "duplicated from"); they never act on their own. A row with
+  the existing shared copy asks for confirmation first,
   showing the document's owner here and the owner recorded on the copy: the
   kept document will sync with a copy written elsewhere, and may overwrite it
   or be overwritten by it. Removing the extra documents from sync still

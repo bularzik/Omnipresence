@@ -66,16 +66,20 @@ export function buildBindings(carriers) {
  * stays listed for the GM's "Keep this one", and an Actor/JournalEntry set
  * whose shared copy exists gets the SharedCopy marker, which
  * resolveDuplicateBindings never auto-binds, even with a single enrolled
- * carrier. Sets with Folder carriers are left as buildBindings recorded them.
+ * carrier. A set with no shared copy keeps the normal rule (its single
+ * enrolled carrier is bound, as any new id's first push would be). Sets with
+ * Folder carriers are left as buildBindings recorded them.
  * @param {Object<string, Array<{type: string, id: string}>>} duplicates from buildBindings
- * @param {Set<string>} idsWithCopy omni ids that have a shared copy
+ * @param {Set<string>|null} idsWithCopy omni ids that have a shared copy, or
+ *   null when the shared-copy scan failed: fail closed, every set has one
  * @returns {Object<string, Array<{type: string, id: string}>>}
  */
 export function markUpgradeDuplicates(duplicates, idsWithCopy) {
   const out = {};
   for (const [omniId, docs] of Object.entries(duplicates ?? {})) {
     const docsOnly = docs.every(d => d.type === 'Actor' || d.type === 'JournalEntry');
-    out[omniId] = docsOnly && idsWithCopy?.has(omniId)
+    const hasCopy = idsWithCopy === null || !!idsWithCopy?.has(omniId);
+    out[omniId] = docsOnly && hasCopy
       ? mergeDuplicateRecord(docs, [{ type: 'SharedCopy', id: omniId }])
       : docs.map(({ type, id }) => ({ type, id }));
   }
