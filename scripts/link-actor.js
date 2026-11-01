@@ -1,7 +1,7 @@
 import { SyncRegistry } from './sync-registry.js';
 import { SyncEngine } from './sync-engine.js';
-import { LinkRewriter } from './link-rewriter.js';
-import { stripWorldLocalFields, mergeForeignFlags, keepLocalLinkFlags } from './sync-logic.js';
+import { FolderSync } from './folder-sync.js';
+import { keepLocalLinkFlags } from './sync-logic.js';
 
 /**
  * Link a local actor to a shared compendium character so they sync as one
@@ -17,6 +17,11 @@ import { stripWorldLocalFields, mergeForeignFlags, keepLocalLinkFlags } from './
  * A different local actor already carrying the compendium id (an earlier
  * auto-import) is removed first, so the world never holds two copies.
  *
+ * If the local actor was already synced under another id (a DDB re-import the
+ * player had added to sync, which pushed a second shared copy Y), this is a
+ * MERGE: the owner's selection swaps Y for the chosen id, and shared copy Y
+ * becomes a redirect stub so other worlds follow it instead of re-pushing it.
+ *
  * @param {Actor} localActor
  * @param {Actor} compActor the pack document
  * @param {'local'|'shared'} winner
@@ -28,16 +33,25 @@ export async function linkActor(localActor, compActor, winner) {
   const ownerName = compData.flags.omnipresence.ownerName ?? null;
   const compSyncedAt = compData.flags.omnipresence.syncedAt;
 
+  const previousId = SyncRegistry.isEnrolled(localActor) ? localActor.getFlag('omnipresence', 'id') : null;
+  if (previousId === omniId) return; // already linked to this character
+
   await removeStaleCopies(localActor, omniId);
 
+  // Merge: retire Y BEFORE re-keying. Once this actor carries the new id, Y
+  // looks "selected but missing" to any live import already in flight, which
+  // would re-import it as a duplicate — so drop it from the selection and make
+  // its shared copy a stub first.
+  if (previousId) {
+    const gateUser = SyncRegistry.gateUser(ownerName);
+    if (gateUser && (gateUser.id === game.user.id || game.user.isGM)) {
+      await SyncRegistry.removeFromSelection(gateUser.id, 'actor', previousId);
+    }
+    await writeMergeStub(previousId, omniId);
+  }
+
   if (winner === 'shared') {
-    const data = LinkRewriter.localize(stripWorldLocalFields(compData));
-    data.flags = mergeForeignFlags(localActor.toObject().flags, data.flags);
-    data.flags.omnipresence = { ...data.flags.omnipresence, enrolled: true };
-    // No local changes outstanding after taking the shared copy.
-    data.flags.omnipresence.localModifiedAt = data.flags.omnipresence.syncedAt;
-    // recursive:false — a complete snapshot (items/effects included), as in pull.
-    await localActor.update(data, { omnipresenceInternal: true, recursive: false });
+    await SyncEngine.pull(localActor, compActor, { keepForeignFlags: true });
     await SyncRegistry.enroll(localActor);
   } else {
     const flags = keepLocalLinkFlags({ omniId, ownerName, compSyncedAt, now: new Date().toISOString() });
@@ -56,6 +70,63 @@ export async function linkActor(localActor, compActor, winner) {
   }
 
   ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.linked', { name: localActor.name }));
+}
+
+/**
+ * Turn shared copy `fromId` into a redirect stub pointing at `toId`: same
+ * entry, no data (items/effects emptied), `flags.omnipresence.mergedInto`.
+ * Kept rather than deleted so a world still holding `fromId` follows the
+ * redirect at login instead of pushing its copy back. Players cannot write
+ * the pack: they queue the request for a GM (drainPendingMerges).
+ */
+export async function writeMergeStub(fromId, toId) {
+  if (!game.user.isGM) {
+    await SyncRegistry.addPendingMerge(game.user.id, { from: fromId, to: toId });
+    return;
+  }
+  const pack = SyncEngine._getPack();
+  if (!pack) return;
+  const doc = (await pack.getDocuments()).find(d => d.getFlag('omnipresence', 'id') === fromId);
+  if (!doc) return;
+  await doc.update({
+    name: doc.name,
+    items: [],
+    effects: [],
+    flags: {
+      omnipresence: {
+        id: fromId,
+        mergedInto: toId,
+        ownerName: doc.getFlag('omnipresence', 'ownerName') ?? null,
+        syncedAt: new Date().toISOString()
+      }
+    }
+  }, { omnipresenceInternal: true, recursive: false });
+}
+
+let draining = null;
+
+/**
+ * Responsible GM only: write every user's queued merge stubs, then clear
+ * them. Non-reentrant (the ready hook and the updateUser hook can overlap).
+ */
+export async function drainPendingMerges() {
+  if (!FolderSync._isResponsibleGM()) return;
+  if (draining) return draining;
+  draining = (async () => {
+    for (const user of game.users) {
+      const entries = SyncRegistry.getPendingMerges(user.id);
+      if (!entries.length) continue;
+      for (const { from, to } of entries) {
+        try {
+          await writeMergeStub(from, to);
+        } catch (err) {
+          console.error('Omnipresence | merge stub write failed', from, '→', to, err);
+        }
+      }
+      await SyncRegistry.clearPendingMerges(user.id);
+    }
+  })();
+  try { await draining; } finally { draining = null; }
 }
 
 /**

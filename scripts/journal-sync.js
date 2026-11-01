@@ -463,6 +463,7 @@ export class JournalSync {
           : { default: 0 };
 
         if (hasLocal(omnipresenceId) || this._importing.has(omnipresenceId)) continue;
+        if (!SyncRegistry.isDocSelected(gateUser.id, 'journal', omnipresenceId)) continue;
         this._importing.add(omnipresenceId);
         try {
           const journal = await JournalEntry.create(journalData, { keepId: true, omnipresenceInternal: true });

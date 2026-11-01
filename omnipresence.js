@@ -10,6 +10,7 @@ import { LinkRewriter } from './scripts/link-rewriter.js';
 import { Onboarding } from './scripts/onboarding.js';
 import { runLoginReconcile } from './scripts/reconcile.js';
 import { FolderDirectory } from './scripts/folder-directory.js';
+import { drainPendingMerges } from './scripts/link-actor.js';
 
 Hooks.once('init', () => {
   SyncRegistry.register();
@@ -48,6 +49,14 @@ Hooks.once('ready', async () => {
   // all sync/import until they choose what to sync (opt-in). Existing worlds
   // are detected and back-filled silently, returning true. A dismissed prompt
   // returns false — skip sync this session and re-ask next login.
+  // Merge stubs players queued while no GM was online: write them before the
+  // reconcile, so this login already follows the redirects.
+  try {
+    await drainPendingMerges();
+  } catch (err) {
+    console.error('Omnipresence | pending merge drain failed', err);
+  }
+
   const proceed = await Onboarding.ensureOnboarded();
   if (proceed) {
     await runLoginReconcile();
@@ -171,6 +180,15 @@ Hooks.on('updateUser', (user, changes, _options, _userId) => {
     if (isDesignatedGM && 'folderIds' in selection) await FolderSync.reconcileFolders().catch(log('folder'));
     FolderDirectory.refresh();
   })();
+});
+
+// A player queued a merge stub (they linked an already-synced duplicate to
+// its original): the connected GM writes it now. The GM's own clear is an
+// empty array, which does not match.
+Hooks.on('updateUser', (_user, changes, _options, _userId) => {
+  const pending = changes.flags?.omnipresence?.pendingMerges;
+  if (!Array.isArray(pending) || pending.length === 0) return;
+  drainPendingMerges().catch(err => console.error('Omnipresence | pending merge drain failed', err));
 });
 
 Hooks.on('updateJournalEntry', (journal, changes, options, userId) => {

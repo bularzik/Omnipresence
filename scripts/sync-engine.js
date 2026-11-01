@@ -5,7 +5,9 @@ import {
   stripWorldLocalFields,
   resolveOwningActor,
   shouldImportFor,
-  findUnsyncedLookalike
+  findUnsyncedLookalike,
+  mergeForeignFlags,
+  resolveMerge
 } from './sync-logic.js';
 
 const DEBOUNCE_MS = 2000;
@@ -128,10 +130,18 @@ export class SyncEngine {
     if (game.user.isGM) this.debouncedPush(actor);
   }
 
-  static async pull(localActor, compActor) {
+  /**
+   * @param {Actor} localActor
+   * @param {Actor} compActor
+   * @param {object} [opts]
+   * @param {boolean} [opts.keepForeignFlags] keep the local actor's other
+   *   modules' flags (e.g. ddbimporter) — used by linking and merge re-keys
+   */
+  static async pull(localActor, compActor, { keepForeignFlags = false } = {}) {
     // Strip world-local fields so local ownership and folder are preserved,
     // and localize canonical omnipresence ids to this world's ids.
     const actorData = LinkRewriter.localize(stripWorldLocalFields(compActor.toObject()));
+    if (keepForeignFlags) actorData.flags = mergeForeignFlags(localActor.toObject().flags, actorData.flags);
     actorData.flags ??= {};
     actorData.flags.omnipresence ??= {};
     // Reset localModifiedAt to match the pulled syncedAt (no local changes outstanding).
@@ -176,6 +186,13 @@ export class SyncEngine {
       if (!gateUser) continue;
       if (!SyncRegistry.isActorSyncEnabled(gateUser.id)) continue;
       if (!SyncRegistry.isDocSelected(gateUser.id, 'actor', omnipresenceId)) continue;
+
+      // A merged-away shared copy is a redirect, never data: follow it and
+      // never pull (it is empty) or push (that would resurrect the duplicate).
+      if (compActor?.getFlag('omnipresence', 'mergedInto')) {
+        await this._followMerge(actor, compActors, gateUser);
+        continue;
+      }
 
       if (!compActor) {
         // No compendium entry — push local copy as master (GM only; no-op for players).
@@ -295,6 +312,8 @@ export class SyncEngine {
         // Re-check synchronously right before the write: an overlapping run
         // may have finished this id since the loop started.
         if (this._hasLocal(omnipresenceId) || this._importing.has(omnipresenceId)) continue;
+        // ...and the selection: a merge may have retired this id meanwhile.
+        if (!SyncRegistry.isDocSelected(gateUser.id, 'actor', omnipresenceId)) continue;
         this._importing.add(omnipresenceId);
         try {
           const actor = await Actor.create(actorData, { keepId: true });
@@ -312,5 +331,54 @@ export class SyncEngine {
 
   static _hasLocal(omnipresenceId) {
     return game.actors.some(a => SyncRegistry.isEnrolled(a) && a.getFlag('omnipresence', 'id') === omnipresenceId);
+  }
+
+  /**
+   * This world still holds a copy of a duplicate (Y) that was merged into
+   * another shared character (X) elsewhere. Swap the owner's selection to X,
+   * then: no local X → re-key this actor to X and take X's data (keeping
+   * other modules' flags); a local X exists → this actor is a duplicate:
+   * delete it when it has no unpushed changes, else take it out of sync and
+   * tell the owner, so nothing they edited here is lost.
+   */
+  static async _followMerge(actor, compActors, gateUser) {
+    const fromId = actor.getFlag('omnipresence', 'id');
+    const mergedIntoById = {};
+    for (const d of compActors) {
+      const to = d.getFlag('omnipresence', 'mergedInto');
+      if (to) mergedIntoById[d.getFlag('omnipresence', 'id')] = to;
+    }
+    const target = resolveMerge(fromId, mergedIntoById);
+    const targetComp = target && compActors.find(d => d.getFlag('omnipresence', 'id') === target);
+    if (!targetComp) {
+      console.warn('Omnipresence | cannot follow merge of', actor.name, '(cycle or missing target)', fromId);
+      return;
+    }
+    try {
+      if (gateUser.id === game.user.id || game.user.isGM) {
+        await SyncRegistry.removeFromSelection(gateUser.id, 'actor', fromId);
+        await SyncRegistry.addToSelection(gateUser.id, 'actor', target);
+      }
+      const localTarget = game.actors.find(a => a.id !== actor.id && a.getFlag('omnipresence', 'id') === target);
+      if (!localTarget) {
+        await actor.update({ 'flags.omnipresence.id': target }, { omnipresenceInternal: true });
+        await this.pull(actor, targetComp, { keepForeignFlags: true });
+        await SyncRegistry.enroll(actor);
+        return;
+      }
+      const dirty = Date.parse(actor.getFlag('omnipresence', 'localModifiedAt') ?? 0) >
+                    Date.parse(actor.getFlag('omnipresence', 'syncedAt') ?? 0);
+      if (!dirty && actor.canUserModify(game.user, 'delete')) {
+        await actor.delete({ omnipresenceInternal: true });
+        return;
+      }
+      await actor.update(
+        { 'flags.omnipresence.id': null, 'flags.omnipresence.enrolled': false },
+        { omnipresenceInternal: true }
+      );
+      ui.notifications.warn(game.i18n.format('OMNIPRESENCE.notifications.mergeDuplicateKept', { name: actor.name }));
+    } catch (err) {
+      console.error('Omnipresence | following merge failed for', actor.name, err);
+    }
   }
 }
