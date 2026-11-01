@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Characters picked in the first-sync dialog now arrive right away.** On a
+  player's first login to a world, the characters and journals they picked
+  were only imported the next time a GM reloaded the world, even with a GM
+  connected. Now a player with the "Create New Actors" permission imports
+  them from their own client, and otherwise the connected GM does within a
+  few seconds (shared journal folders always go through the GM). The same
+  applies to documents added later in **Manage synced documents**.
+
+### Added
+- **"Link to synced character…"** in the Actors Directory right-click menu.
+  Connects an actor to a character already in the shared compendium, such as a
+  character re-imported from D&D Beyond after it failed to sync. Pick the
+  character (a same-name match is pre-selected), then choose which version
+  wins: **Keep this** overwrites the shared copy, **Use this** takes the shared
+  copy but keeps other modules' data, such as the D&D Beyond Importer link.
+  Linking an actor that was already synced under its own id merges the two:
+  the extra shared copy is retired and other worlds switch over at login.
+- **No duplicate imports.** A character isn't imported into a world that
+  already has an unsynced character with the same name and owner; you're
+  pointed to "Link to synced character…" instead.
+
 ## [0.9.0] - 2026-10-02
 
 ### Changed

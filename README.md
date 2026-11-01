@@ -60,6 +60,27 @@ Links to documents that aren't enrolled (a world's scenes, unsynced actors) are 
 
 When you log into a world where one of your characters or journals doesn't exist yet, Omnipresence creates it automatically from the compendium, assigns you ownership, and enrolls it in sync. Hotbar macros are created the same way — you don't need to set up your action bar again.
 
+Characters and journals you pick in the first-sync dialog (or later in **Manage synced documents**) are imported right away:
+
+- **You have the "Create New Actors" permission** (or "Create New Journal Entries", for journals): your own client imports them immediately.
+- **You don't, but a GM is connected:** the GM's client imports them within a few seconds. Shared journal folders always go this way, since players can't create folders.
+- **You don't, and no GM is connected:** they're imported at the next GM login.
+
+If this world already has an **unsynced** character with the same name and owner (say, one re-imported from D&D Beyond), Omnipresence won't create a second copy. It tells you to link the two instead (see below).
+
+### Linking a character to its synced copy
+
+Right-click an actor in the **Actors Directory** and choose **Link to synced character…** to tell Omnipresence that this actor *is* a character already in the shared compendium. It's for the actor's owner and the GM.
+
+1. **Pick the synced character.** One with the same name is pre-selected; you can filter the list.
+2. **Choose which version wins.** The two copies are shown side by side, with when each was last updated and how many items and effects it has.
+   - **Keep this** overwrites the shared copy (in every world) with this world's actor. A player's choice is uploaded by a connected GM, or at the next GM login.
+   - **Use this** replaces this actor with the shared copy, but keeps other modules' data on the actor, such as the D&D Beyond Importer link, so "update from D&D Beyond" still works here. The next such update will then sync out to every world.
+
+If the world already holds a synced copy of that character, it's deleted when you link (a player without permission to delete actors is told to ask the GM instead).
+
+Linking an actor that was **already synced** under its own id merges it: the extra shared copy is retired, and other worlds that hold it switch their copy over to the chosen character at their next login. A copy there with unsynced edits is taken out of sync for you to review rather than deleted.
+
 ## Settings Dashboard
 
 Open **Configure Settings → Module Settings → Manage Sync** to view and manage synced documents. Enrolled actors and journals appear in separate tables with the same controls.
