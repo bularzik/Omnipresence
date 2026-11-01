@@ -77,5 +77,6 @@
   "OMNIPRESENCE.sharedFolders.heading": "Shared from other worlds",
   "OMNIPRESENCE.sharedFolders.syncHere": "Sync here",
   "OMNIPRESENCE.sharedFolders.waiting": "Waiting for a GM",
-  "OMNIPRESENCE.notifications.unsyncedLookalike": "{name} already exists in this world but isn't synced. Right-click it → Link to synced character… to connect it."
+  "OMNIPRESENCE.notifications.unsyncedLookalike": "{name} already exists in this world but isn't synced. Right-click it → Link to synced character… to connect it.",
+  "OMNIPRESENCE.notifications.manageSavedGmImporting": "Synced documents updated. A connected GM is importing the newly added documents."
 }

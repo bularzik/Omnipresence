@@ -73,14 +73,18 @@ test('duplicate guard: unsynced same-name local actor blocks import and notifies
 
 test('concurrent importMissing creates one copy', async () => {
   const id = await seedPack(gmPage, { name: `${PREFIX} Concurrent` });
-  const count = await gmPage.evaluate(async (id) => {
+  // The selection change itself starts a live import (updateUser hook), so
+  // three runs overlap here; a run that finds the id in flight returns early.
+  await gmPage.evaluate(async (id) => {
     const { SyncEngine } = await import('/modules/omnipresence/scripts/sync-engine.js');
     const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
     await SyncRegistry.addToSelection(game.user.id, 'actor', id);
     await Promise.all([SyncEngine.importMissing(), SyncEngine.importMissing()]);
-    return game.actors.filter(a => a.getFlag('omnipresence', 'id') === id).length;
   }, id);
-  expect(count).toBe(1);
+  const count = () => gmPage.evaluate(id => game.actors.filter(a => a.getFlag('omnipresence', 'id') === id).length, id);
+  await expect.poll(count, { timeout: 5_000 }).toBe(1);
+  await gmPage.waitForTimeout(1_500);
+  expect(await count()).toBe(1);
 });
 
 test('mergedInto stub is never imported or listed', async () => {
@@ -96,4 +100,86 @@ test('mergedInto stub is never imported or listed', async () => {
   }, id);
   expect(out.imported).toBe(false);
   expect(out.listed).toBe(false);
+});
+
+// --- Task 4: live reaction while both GM and player are connected ----------
+
+test.describe('live import with a connected player', () => {
+  let playerContext, playerPage;
+
+  /** GM page: grant or revoke "Create New Actors" for the PLAYER role. */
+  async function setPlayerCanCreate(on) {
+    await gmPage.evaluate(async (on) => {
+      const perms = foundry.utils.deepClone(game.settings.get('core', 'permissions'));
+      const roles = new Set(perms.ACTOR_CREATE ?? []);
+      for (const r of [1, 2]) on ? roles.add(r) : roles.delete(r);
+      perms.ACTOR_CREATE = [...roles].sort();
+      await game.settings.set('core', 'permissions', perms);
+    }, on);
+  }
+
+  test.beforeAll(async () => {
+    playerContext = await browser.newContext();
+    playerPage = await playerContext.newPage();
+    await loginToFoundry(playerPage, playerName);
+  });
+
+  test.afterAll(async () => {
+    await setPlayerCanCreate(false).catch(() => {});
+    await playerContext?.close();
+  });
+
+  const findById = (page, id) => page.evaluate(id =>
+    game.actors.filter(a => a.getFlag('omnipresence', 'id') === id).map(a => ({
+      ownedByPlayer: a.testUserPermission(game.users.find(u => !u.isGM), 'OWNER')
+    })), id);
+
+  test('player with Create Actors: picked actor appears with no reload', async () => {
+    await setPlayerCanCreate(true);
+    const id = await seedPack(gmPage, { name: `${PREFIX} Self`, ownerName: playerName });
+    await playerPage.evaluate(async (id) => {
+      const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+      const { runLoginReconcile } = await import('/modules/omnipresence/scripts/reconcile.js');
+      await SyncRegistry.addToSelection(game.user.id, 'actor', id);
+      await runLoginReconcile();
+    }, id);
+    await expect.poll(() => findById(gmPage, id), { timeout: 5_000 }).toHaveLength(1);
+    const onPlayer = await findById(playerPage, id);
+    expect(onPlayer).toHaveLength(1);
+    expect(onPlayer[0].ownedByPlayer).toBe(true);
+  });
+
+  test('player without permission + GM connected: GM imports exactly one copy', async () => {
+    await setPlayerCanCreate(false);
+    const id = await seedPack(gmPage, { name: `${PREFIX} ViaGM`, ownerName: playerName });
+    await playerPage.evaluate(async (id) => {
+      const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+      await SyncRegistry.addToSelection(game.user.id, 'actor', id);
+    }, id);
+    await expect.poll(() => findById(gmPage, id), { timeout: 5_000 }).toHaveLength(1);
+    await gmPage.waitForTimeout(1_500);
+    const after = await findById(gmPage, id);
+    expect(after).toHaveLength(1);
+    expect(after[0].ownedByPlayer).toBe(true);
+  });
+
+  test('unchecking a document never deletes it', async () => {
+    const id = await seedPack(gmPage, { name: `${PREFIX} Uncheck`, ownerName: playerName });
+    await playerPage.evaluate(async (id) => {
+      const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+      await SyncRegistry.addToSelection(game.user.id, 'actor', id);
+    }, id);
+    await expect.poll(() => findById(gmPage, id), { timeout: 5_000 }).toHaveLength(1);
+    await playerPage.evaluate(async (id) => {
+      const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+      await SyncRegistry.removeFromSelection(game.user.id, 'actor', id);
+    }, id);
+    await gmPage.waitForTimeout(2_000);
+    const still = await gmPage.evaluate(async (id) => {
+      const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+      const a = game.actors.find(a => a.getFlag('omnipresence', 'id') === id);
+      return { exists: !!a, enrolled: a ? SyncRegistry.isEnrolled(a) : false };
+    }, id);
+    expect(still).toEqual({ exists: true, enrolled: true });
+  });
 });

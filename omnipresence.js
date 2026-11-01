@@ -153,6 +153,26 @@ Hooks.on('updateUser', (_user, changes, _options, _userId) => {
   if (hasPendingRoot || hasPendingDelete) FolderSync.materializePending().catch(err => console.error('Omnipresence | pending folder materialize failed', err));
 });
 
+// A user's synced-document selection changed (onboarding picker, Manage
+// dialog): import their newly picked documents now, not at the next GM login.
+// The owner's own client imports what it may create (shouldImportFor); the
+// designated GM imports the rest, plus folder picks (players can't create
+// folders). Import only — unchecking never deletes or unenrolls here.
+Hooks.on('updateUser', (user, changes, _options, _userId) => {
+  const selection = changes.flags?.omnipresence?.selection;
+  if (!selection) return;
+  const isSelf = user.id === game.user.id;
+  const isDesignatedGM = FolderSync._isResponsibleGM();
+  if (!isSelf && !isDesignatedGM) return;
+  const log = what => err => console.error(`Omnipresence | live ${what} import failed`, err);
+  (async () => {
+    await SyncEngine.importMissing({ forUserId: user.id }).catch(log('actor'));
+    await JournalSync.importMissing({ forUserId: user.id }).catch(log('journal'));
+    if (isDesignatedGM && 'folderIds' in selection) await FolderSync.reconcileFolders().catch(log('folder'));
+    FolderDirectory.refresh();
+  })();
+});
+
 Hooks.on('updateJournalEntry', (journal, changes, options, userId) => {
   if (options?.omnipresenceInternal) return;
   if (journal.pack) return;
