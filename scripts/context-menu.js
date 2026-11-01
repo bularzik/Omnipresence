@@ -2,6 +2,7 @@ import { SyncRegistry } from './sync-registry.js';
 import { SyncEngine } from './sync-engine.js';
 import { JournalSync } from './journal-sync.js';
 import { FolderSync } from './folder-sync.js';
+import { LinkDialog } from './link-dialog.js';
 
 /**
  * Resolve the actor document id from a context-menu target that may be a
@@ -85,6 +86,22 @@ export function registerContextMenu(entryOptions) {
         if (!actor) return;
         await SyncRegistry.unenroll(actor);
         ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.unenrolled', { name: actor.name }));
+      }
+    }),
+    // Link (or merge) this actor into a character already in the shared
+    // compendium — e.g. a D&D Beyond re-import (op-87b). Enrolled or not.
+    menuEntry({
+      name: 'OMNIPRESENCE.contextMenu.link',
+      icon: '<i class="fas fa-people-arrows"></i>',
+      condition: (li) => {
+        if (!syncAvailable()) return false;
+        if (!SyncRegistry.isActorSyncEnabled(game.user.id)) return false;
+        const actor = game.actors.get(getDocumentId(li));
+        return !!actor?.isOwner;
+      },
+      callback: async (li) => {
+        const actor = game.actors.get(getDocumentId(li));
+        if (actor) await LinkDialog.open(actor);
       }
     })
   );

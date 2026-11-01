@@ -81,5 +81,22 @@
   "OMNIPRESENCE.notifications.manageSavedGmImporting": "Synced documents updated. A connected GM is importing the newly added documents.",
   "OMNIPRESENCE.notifications.linked": "{name} is now linked to its synced character.",
   "OMNIPRESENCE.notifications.staleCopyDetached": "{name} was an extra copy of this character. It was removed from sync; ask your GM to delete it.",
-  "OMNIPRESENCE.notifications.mergeDuplicateKept": "{name} was merged into another synced character, but has unsynced changes here. It was removed from sync for you to review."
+  "OMNIPRESENCE.notifications.mergeDuplicateKept": "{name} was merged into another synced character, but has unsynced changes here. It was removed from sync for you to review.",
+  "OMNIPRESENCE.contextMenu.link": "Link to synced character…",
+  "OMNIPRESENCE.link.title": "Link to synced character",
+  "OMNIPRESENCE.link.step1": "Pick the synced character that {name} is.",
+  "OMNIPRESENCE.link.step2": "Which version should win?",
+  "OMNIPRESENCE.link.rowMeta": "owner: {owner} · last synced {date}",
+  "OMNIPRESENCE.link.gm": "GM",
+  "OMNIPRESENCE.link.thisWorld": "This world",
+  "OMNIPRESENCE.link.sharedCopy": "Shared copy",
+  "OMNIPRESENCE.link.updated": "Last updated {date}",
+  "OMNIPRESENCE.link.items": "Items: {n}",
+  "OMNIPRESENCE.link.effects": "Effects: {n}",
+  "OMNIPRESENCE.link.keep": "Keep this",
+  "OMNIPRESENCE.link.use": "Use this",
+  "OMNIPRESENCE.link.next": "Next",
+  "OMNIPRESENCE.link.back": "Back",
+  "OMNIPRESENCE.link.none": "No synced characters to link to.",
+  "OMNIPRESENCE.link.staleCopyWarning": "This world already has a synced copy, {name}. It will be deleted when you link."
 }

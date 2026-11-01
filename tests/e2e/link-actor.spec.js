@@ -353,3 +353,61 @@ test.describe('player merge', () => {
     }
   });
 });
+
+// --- Task 8: the dialog, driven through the Actors sidebar ------------------
+
+test('link dialog: pick, choose "Use this", actor linked', async () => {
+  const name = `${PREFIX} Dialog`;
+  const xId = await seedPack(gmPage, { name, bio: 'SHARED' });
+  await seedPack(gmPage, { name: `${PREFIX} Other`, bio: 'OTHER' });
+  const localId = await seedLocal(gmPage, { name: ` ${name.toLowerCase()}`, bio: 'LOCAL' });
+  await gmPage.setViewportSize({ width: 1400, height: 900 });
+  await gmPage.evaluate(async () => {
+    ui.sidebar.toggleExpanded(true);
+    ui.sidebar.changeTab('actors', 'primary');
+    await ui.actors.render();
+  });
+  await gmPage.locator(`#actors [data-entry-id="${localId}"]`).click({ button: 'right' });
+  await gmPage.getByText('Link to synced character…', { exact: true }).click();
+
+  // Step 1: the name match is pre-selected; the other character is listed.
+  const step1 = gmPage.locator('.omnipresence-link-step1');
+  await expect(step1).toBeVisible();
+  await expect(step1.locator(`input[type="radio"][value="${xId}"]`)).toBeChecked();
+  await expect(step1).toContainText(`${PREFIX} Other`);
+  await step1.locator('button[data-action="next"]').click();
+
+  // Step 2: side-by-side cards, then "Use this".
+  const step2 = gmPage.locator('.omnipresence-link-step2');
+  await expect(step2).toContainText('This world');
+  await expect(step2).toContainText('Shared copy');
+  await step2.locator('button[data-action="shared"]').click();
+
+  await expect.poll(() => gmPage.evaluate(async (localId) => {
+    const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+    const a = game.actors.get(localId);
+    return { id: a.getFlag('omnipresence', 'id'), enrolled: SyncRegistry.isEnrolled(a), bio: a.system.details.biography.value };
+  }, localId), { timeout: 5_000 }).toEqual({ id: xId, enrolled: true, bio: 'SHARED' });
+});
+
+test('link dialog: Back returns to step 1, Cancel leaves the actor untouched', async () => {
+  const name = `${PREFIX} DialogBack`;
+  await seedPack(gmPage, { name, bio: 'SHARED' });
+  const localId = await seedLocal(gmPage, { name, bio: 'LOCAL' });
+  await gmPage.evaluate(async (localId) => {
+    const { LinkDialog } = await import('/modules/omnipresence/scripts/link-dialog.js');
+    window.__omniLinkDone = LinkDialog.open(game.actors.get(localId)).then(() => true);
+  }, localId);
+  await gmPage.locator('.omnipresence-link-step1 button[data-action="next"]').click();
+  await gmPage.locator('.omnipresence-link-step2 button[data-action="back"]').click();
+  // The first step-1 window may still be animating closed: wait until one remains.
+  await expect(gmPage.locator('.omnipresence-link-step1')).toHaveCount(1);
+  await gmPage.locator('.omnipresence-link-step1 button[data-action="cancel"]').click();
+  expect(await gmPage.evaluate(() => window.__omniLinkDone)).toBe(true);
+  const out = await gmPage.evaluate(async (localId) => {
+    const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+    const a = game.actors.get(localId);
+    return { enrolled: SyncRegistry.isEnrolled(a), bio: a.system.details.biography.value };
+  }, localId);
+  expect(out).toEqual({ enrolled: false, bio: 'LOCAL' });
+});
