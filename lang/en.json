@@ -78,5 +78,7 @@
   "OMNIPRESENCE.sharedFolders.syncHere": "Sync here",
   "OMNIPRESENCE.sharedFolders.waiting": "Waiting for a GM",
   "OMNIPRESENCE.notifications.unsyncedLookalike": "{name} already exists in this world but isn't synced. Right-click it → Link to synced character… to connect it.",
-  "OMNIPRESENCE.notifications.manageSavedGmImporting": "Synced documents updated. A connected GM is importing the newly added documents."
+  "OMNIPRESENCE.notifications.manageSavedGmImporting": "Synced documents updated. A connected GM is importing the newly added documents.",
+  "OMNIPRESENCE.notifications.linked": "{name} is now linked to its synced character.",
+  "OMNIPRESENCE.notifications.staleCopyDetached": "{name} was an extra copy of this character. It was removed from sync; ask your GM to delete it."
 }
