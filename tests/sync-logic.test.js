@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, forgetFolderSelection, upgradeFolderSelection, sharedFolderRows, isGateUser, portableFolderFlags, mergeFolderFlags, resolveFolderFlags } from '../scripts/sync-logic.js';
+import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, forgetFolderSelection, upgradeFolderSelection, sharedFolderRows, isGateUser, portableFolderFlags, mergeFolderFlags, resolveFolderFlags, shouldImportFor, findUnsyncedLookalike } from '../scripts/sync-logic.js';
 
 const T0 = '2026-06-14T10:00:00.000Z';
 const T1 = '2026-06-14T11:00:00.000Z';
@@ -1004,4 +1004,42 @@ test('diffFolderTree: partial pack flags never strip local scopes on pull, and f
   const push = diffFolderTree([local], [pack]).toUpdate;
   assert.deepEqual(push.map(n => n.flags), [local.flags]);
   assert.deepEqual(diffFolderTree([{ ...base, flags: {} }], [pack]).toUpdate, [], 'a world with nothing to add writes nothing');
+});
+
+// --- live import: who imports, duplicate guard (op-87b) ---------------------
+
+test('shouldImportFor: player with create permission imports own picks', () => {
+  assert.equal(shouldImportFor({ isGM: false, isSelf: true, ownerIsGM: false, ownerActive: true, ownerCanCreate: true }), true);
+});
+test('shouldImportFor: player without permission never imports', () => {
+  assert.equal(shouldImportFor({ isGM: false, isSelf: true, ownerIsGM: false, ownerActive: true, ownerCanCreate: false }), false);
+});
+test('shouldImportFor: player never imports for someone else', () => {
+  assert.equal(shouldImportFor({ isGM: false, isSelf: false, ownerIsGM: false, ownerActive: true, ownerCanCreate: true }), false);
+});
+test('shouldImportFor: GM defers to an active owner who can create', () => {
+  assert.equal(shouldImportFor({ isGM: true, isSelf: false, ownerIsGM: false, ownerActive: true, ownerCanCreate: true }), false);
+});
+test('shouldImportFor: GM imports for an offline or permissionless owner', () => {
+  assert.equal(shouldImportFor({ isGM: true, isSelf: false, ownerIsGM: false, ownerActive: false, ownerCanCreate: true }), true);
+  assert.equal(shouldImportFor({ isGM: true, isSelf: false, ownerIsGM: false, ownerActive: true, ownerCanCreate: false }), true);
+});
+test('shouldImportFor: GM imports GM-owned copies', () => {
+  assert.equal(shouldImportFor({ isGM: true, isSelf: true, ownerIsGM: true, ownerActive: true, ownerCanCreate: true }), true);
+});
+
+test('findUnsyncedLookalike: matches trimmed, case-insensitive, unenrolled, same owner', () => {
+  const locals = [{ id: 'a1', name: 'thorin  ', enrolled: false, ownedByGateUser: true }];
+  assert.equal(findUnsyncedLookalike({ name: 'Thorin', ownerName: 'Dan' }, locals), 'a1');
+});
+test('findUnsyncedLookalike: ignores enrolled and other-owner actors', () => {
+  const locals = [
+    { id: 'a1', name: 'Thorin', enrolled: true, ownedByGateUser: true },
+    { id: 'a2', name: 'Thorin', enrolled: false, ownedByGateUser: false }
+  ];
+  assert.equal(findUnsyncedLookalike({ name: 'Thorin', ownerName: 'Dan' }, locals), null);
+});
+test('findUnsyncedLookalike: GM-owned copy (no ownerName) never matches', () => {
+  const locals = [{ id: 'n1', name: 'Goblin Boss', enrolled: false, ownedByGateUser: true }];
+  assert.equal(findUnsyncedLookalike({ name: 'Goblin Boss', ownerName: null }, locals), null);
 });

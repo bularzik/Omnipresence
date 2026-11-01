@@ -717,3 +717,34 @@ export function sharedFolderRows(packRoots, { isGM, userName }, allowList, local
 export function isGateUser({ ownerName, isGM, userName }) {
   return ownerName ? ownerName === userName : !!isGM;
 }
+
+/**
+ * Should THIS client import a compendium document picked by its gate user?
+ * A player imports only their own picks, and only with the create permission.
+ * A GM imports GM-owned copies, and a player's picks unless that player is
+ * online and can create the document themselves (their own client does it,
+ * so the GM stepping in would race it into a duplicate).
+ * @returns {boolean}
+ */
+export function shouldImportFor({ isGM, isSelf, ownerIsGM, ownerActive, ownerCanCreate }) {
+  if (!isGM) return isSelf && ownerCanCreate;
+  return ownerIsGM || !(ownerActive && ownerCanCreate);
+}
+
+const normName = name => String(name ?? '').trim().toLowerCase();
+
+/**
+ * Duplicate guard: a local, NOT yet synced actor that looks like the
+ * compendium copy about to be imported (same normalized name, owned by the
+ * same gate user). Player-owned copies only — a GM owns every local actor, so
+ * a same-name NPC would otherwise block a legitimate GM-owned import.
+ * @param {{name: string, ownerName: string|null}} comp
+ * @param {Array<{id: string, name: string, enrolled: boolean, ownedByGateUser: boolean}>} locals
+ * @returns {string|null} the local actor id, or null
+ */
+export function findUnsyncedLookalike(comp, locals) {
+  if (!comp?.ownerName) return null;
+  const target = normName(comp.name);
+  const hit = locals.find(l => !l.enrolled && l.ownedByGateUser && normName(l.name) === target);
+  return hit?.id ?? null;
+}
