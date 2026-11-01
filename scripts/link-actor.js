@@ -41,9 +41,18 @@ export async function linkActor(localActor, compActor, winner) {
     await SyncRegistry.enroll(localActor);
   } else {
     const flags = keepLocalLinkFlags({ omniId, ownerName, compSyncedAt, now: new Date().toISOString() });
-    await localActor.update({ 'flags.omnipresence': flags }, { omnipresenceInternal: true });
-    await SyncRegistry.enroll(localActor);
-    if (game.user.isGM) await SyncEngine.push(localActor);
+    if (game.user.isGM) {
+      await localActor.update({ 'flags.omnipresence': flags }, { omnipresenceInternal: true });
+      await SyncRegistry.enroll(localActor);
+      await SyncEngine.push(localActor);
+    } else {
+      // Players cannot write the pack. Deliberately NOT omnipresenceInternal:
+      // the connected GM's updateActor hook sees an enrolled actor change and
+      // debounces the push. With no GM online, the GM's next login reconcile
+      // pushes it (keepLocalLinkFlags makes decideSyncAction say `push`).
+      await localActor.update({ 'flags.omnipresence': flags });
+      await SyncRegistry.enroll(localActor);
+    }
   }
 
   ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.linked', { name: localActor.name }));

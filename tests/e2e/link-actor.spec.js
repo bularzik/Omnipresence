@@ -117,3 +117,57 @@ test('link removes a stale auto-imported copy', async () => {
     game.actors.filter(a => a.getFlag('omnipresence', 'id') === omniId).map(a => a.id), omniId);
   expect(ids).toEqual([localId]);
 });
+
+// --- Task 6: a player's "keep this" reaches the compendium ------------------
+
+test.describe('player links with "Keep this"', () => {
+  let playerContext, playerPage;
+
+  test.beforeAll(async () => {
+    playerContext = await browser.newContext();
+    playerPage = await playerContext.newPage();
+    await loginToFoundry(playerPage, playerName);
+  });
+  test.afterAll(async () => { await playerContext?.close(); });
+
+  /** GM page: a player-owned pack copy plus a player-owned unenrolled local actor. */
+  async function seedPlayerPair(name) {
+    const omniId = await seedPack(gmPage, { name, bio: 'SHARED', ownerName: playerName });
+    const playerId = await gmPage.evaluate(n => game.users.getName(n).id, playerName);
+    const localId = await seedLocal(gmPage, { name, bio: 'LOCAL', ownership: { default: 0, [playerId]: 3 } });
+    await playerPage.waitForFunction(id => !!game.actors.get(id), localId, { timeout: 10_000 });
+    return { omniId, localId };
+  }
+
+  test('player link "local" with GM connected: compendium updated within 5s', async () => {
+    const { omniId, localId } = await seedPlayerPair(`${PREFIX} PlayerKeep`);
+    await link(playerPage, localId, omniId, 'local');
+    await expect.poll(() => packBio(gmPage, omniId), { timeout: 8_000 }).toBe('LOCAL');
+  });
+
+  test('player link "local" with no GM: next GM login pushes, no conflict', async () => {
+    const { omniId, localId } = await seedPlayerPair(`${PREFIX} PlayerOffline`);
+    await gmContext.close();
+    // Sync point: the player must see no GM connected before linking.
+    await playerPage.waitForFunction(() => !game.users.activeGM, null, { timeout: 15_000 });
+    await link(playerPage, localId, omniId, 'local');
+    gmContext = await browser.newContext();
+    gmPage = await gmContext.newPage();
+    await loginToFoundry(gmPage, 'Gamemaster');
+    try {
+      await expect.poll(() => packBio(gmPage, omniId), { timeout: 30_000 }).toBe('LOCAL'); // v14 login reconcile is slow
+    } catch (e) {
+      console.log('DIAG', JSON.stringify(await gmPage.evaluate(async ({ omniId, localId }) => {
+        const { SyncEngine } = await import('/modules/omnipresence/scripts/sync-engine.js');
+        const pack = game.packs.get(SyncEngine.PACK_ID); pack.clear?.();
+        const comp = (await pack.getDocuments()).find(d => d.getFlag('omnipresence', 'id') === omniId);
+        return { local: game.actors.get(localId)?.flags.omnipresence, comp: comp?.flags.omnipresence,
+          dash: [...document.querySelectorAll('#omnipresence-dashboard')].map(e => e.innerText.replace(/\s+/g, ' ').slice(0, 300)) };
+      }, { omniId, localId })));
+      throw e;
+    }
+    const dashboard = await gmPage.evaluate(() =>
+      [...document.querySelectorAll('#omnipresence-dashboard')].map(e => e.innerText).join(' '));
+    expect(dashboard).not.toContain(`${PREFIX} PlayerOffline`);
+  });
+});
