@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, forgetFolderSelection, upgradeFolderSelection, sharedFolderRows, isGateUser, portableFolderFlags, mergeFolderFlags, resolveFolderFlags, shouldImportFor, findUnsyncedLookalike } from '../scripts/sync-logic.js';
+import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, forgetFolderSelection, upgradeFolderSelection, sharedFolderRows, isGateUser, portableFolderFlags, mergeFolderFlags, resolveFolderFlags, shouldImportFor, findUnsyncedLookalike, mergeForeignFlags, keepLocalLinkFlags, resolveMerge } from '../scripts/sync-logic.js';
 
 const T0 = '2026-06-14T10:00:00.000Z';
 const T1 = '2026-06-14T11:00:00.000Z';
@@ -1042,4 +1042,31 @@ test('findUnsyncedLookalike: ignores enrolled and other-owner actors', () => {
 test('findUnsyncedLookalike: GM-owned copy (no ownerName) never matches', () => {
   const locals = [{ id: 'n1', name: 'Goblin Boss', enrolled: false, ownedByGateUser: true }];
   assert.equal(findUnsyncedLookalike({ name: 'Goblin Boss', ownerName: null }, locals), null);
+});
+
+// --- link / merge helpers (op-87b) -------------------------------------------
+
+test('mergeForeignFlags keeps local module flags, compendium omnipresence', () => {
+  const out = mergeForeignFlags(
+    { ddbimporter: { id: 9 }, omnipresence: { id: 'Y' } },
+    { omnipresence: { id: 'X' }, dnd5e: { a: 1 } }
+  );
+  assert.deepEqual(out, { omnipresence: { id: 'X' }, dnd5e: { a: 1 }, ddbimporter: { id: 9 } });
+});
+test('mergeForeignFlags tolerates missing inputs', () => {
+  assert.deepEqual(mergeForeignFlags(undefined, { omnipresence: { id: 'X' } }), { omnipresence: { id: 'X' } });
+});
+test('keepLocalLinkFlags → decideSyncAction gives push, not conflict', () => {
+  const f = keepLocalLinkFlags({ omniId: 'X', ownerName: 'Dan', compSyncedAt: T1, now: T2 });
+  assert.equal(f.syncedAt, T1);
+  assert.equal(f.id, 'X');
+  assert.equal(f.enrolled, true);
+  assert.equal(decideSyncAction({ localSyncedAt: f.syncedAt, compSyncedAt: T1, localModifiedAt: f.localModifiedAt }), 'push');
+});
+test('resolveMerge follows chains', () => {
+  assert.equal(resolveMerge('Y', { Y: 'X', X: 'W' }), 'W');
+  assert.equal(resolveMerge('Z', { Y: 'X' }), 'Z');
+});
+test('resolveMerge returns null on a cycle', () => {
+  assert.equal(resolveMerge('Y', { Y: 'X', X: 'Y' }), null);
 });

@@ -748,3 +748,46 @@ export function findUnsyncedLookalike(comp, locals) {
   const hit = locals.find(l => !l.enrolled && l.ownedByGateUser && normName(l.name) === target);
   return hit?.id ?? null;
 }
+
+/**
+ * Flags for a link that takes the compendium copy ("Use this"): the
+ * compendium's flags, with every local scope except `omnipresence` laid over
+ * them — so other modules' data (e.g. `ddbimporter`) survives in this world.
+ * Scope-level (shallow) merge: a local scope replaces the compendium's whole.
+ * @returns {object}
+ */
+export function mergeForeignFlags(localFlags, compFlags) {
+  const out = { ...(compFlags ?? {}) };
+  for (const [scope, value] of Object.entries(localFlags ?? {})) {
+    if (scope === 'omnipresence') continue;
+    out[scope] = value;
+  }
+  return out;
+}
+
+/**
+ * `flags.omnipresence` for a link that keeps this world's copy ("Keep this").
+ * syncedAt EQUALS the compendium's and localModifiedAt is now, so
+ * decideSyncAction returns `push` — an older syncedAt would read as a conflict.
+ * @returns {{id: string, ownerName: string|null, syncedAt: string, localModifiedAt: string, enrolled: true}}
+ */
+export function keepLocalLinkFlags({ omniId, ownerName, compSyncedAt, now }) {
+  return { id: omniId, ownerName, syncedAt: compSyncedAt, localModifiedAt: now, enrolled: true };
+}
+
+/**
+ * Follow merge redirects (`mergedInto`) from `id` to the surviving id.
+ * @param {string} id
+ * @param {Record<string, string>} mergedIntoById
+ * @returns {string|null} the final id, or null on a cycle
+ */
+export function resolveMerge(id, mergedIntoById) {
+  const seen = new Set();
+  let current = id;
+  while (mergedIntoById[current]) {
+    if (seen.has(current)) return null;
+    seen.add(current);
+    current = mergedIntoById[current];
+  }
+  return current;
+}
