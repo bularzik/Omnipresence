@@ -69,6 +69,8 @@ export class DocPicker {
       for (const doc of docs) {
         const id = doc.getFlag('omnipresence', 'id');
         if (!id) continue;
+        // Merged-away stubs are redirects, not documents a user can pick.
+        if (doc.getFlag('omnipresence', 'mergedInto')) continue;
         if (!SyncRegistry.isGateUserFor(doc)) continue;
         if (!byId.has(id)) byId.set(id, doc.name);
       }

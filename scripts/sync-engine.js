@@ -3,7 +3,9 @@ import { SyncRegistry } from './sync-registry.js';
 import {
   decideSyncAction,
   stripWorldLocalFields,
-  resolveOwningActor
+  resolveOwningActor,
+  shouldImportFor,
+  findUnsyncedLookalike
 } from './sync-logic.js';
 
 const DEBOUNCE_MS = 2000;
@@ -201,18 +203,40 @@ export class SyncEngine {
     // dashboard shared with journal conflicts — return them instead of opening
     // a second window here.
 
-    // 2. Auto-import: compendium actors not present in this world (GM only).
-    if (!game.user.isGM) return conflicts;
-    const localOmnipresenceIds = new Set(
-      game.actors
-        .filter(a => SyncRegistry.isEnrolled(a))
-        .map(a => a.getFlag('omnipresence', 'id'))
-    );
+    // 2. Auto-import: compendium actors not present in this world. Who
+    // imports a given pick is decided per gate user (shouldImportFor): the
+    // player themselves with "Create New Actors", otherwise a GM.
+    await this.importMissing({ compActors });
+
+    return conflicts;
+  }
+
+  // Omnipresence ids with an import in flight on this client. Two overlapping
+  // runs (ready-hook reconcile + an updateUser-triggered import) would
+  // otherwise both create the same actor.
+  static _importing = new Set();
+
+  /**
+   * Import compendium actors that are selected by their gate user but absent
+   * from this world, when THIS client is the one that should import them.
+   * Skips merged-away stubs and never creates a second copy of a PC that
+   * already exists here unsynced (duplicate guard: notifies instead).
+   * @param {object} [opts]
+   * @param {string|null} [opts.forUserId] only that gate user's picks
+   * @param {Actor[]} [opts.compActors] pack documents already loaded
+   * @returns {Promise<Actor[]>} the actors created
+   */
+  static async importMissing({ forUserId = null, compActors = null } = {}) {
+    const pack = this._getPack();
+    if (!pack) return [];
+    compActors ??= await pack.getDocuments();
+    const created = [];
 
     for (const compActor of compActors) {
       const omnipresenceId = compActor.getFlag('omnipresence', 'id');
       if (!omnipresenceId) continue;
-      if (localOmnipresenceIds.has(omnipresenceId)) continue;
+      if (compActor.getFlag('omnipresence', 'mergedInto')) continue;
+      if (this._hasLocal(omnipresenceId) || this._importing.has(omnipresenceId)) continue;
 
       // One malformed pack copy must not abort the remaining imports — or,
       // via ready's serial awaits, macro/journal sync and login healing.
@@ -222,31 +246,71 @@ export class SyncEngine {
         // through the GM's own allow-list, which is also what makes the
         // documented delete-then-re-import contract hold for them (op-74f).
         const ownerName = compActor.getFlag('omnipresence', 'ownerName') ?? null;
-        const matchingUser = SyncRegistry.gateUser(ownerName);
-        if (!matchingUser) {
-          console.warn('Omnipresence | no user named', ownerName, '— skipping auto-import of', compActor.name);
+        const gateUser = SyncRegistry.gateUser(ownerName);
+        if (!gateUser) {
+          if (game.user.isGM) console.warn('Omnipresence | no user named', ownerName, '— skipping auto-import of', compActor.name);
+          continue;
+        }
+        if (forUserId && gateUser.id !== forUserId) continue;
+
+        // Import only what the owning user enabled and opted into for this world.
+        if (!SyncRegistry.isActorSyncEnabled(gateUser.id)) continue;
+        if (!SyncRegistry.isDocSelected(gateUser.id, 'actor', omnipresenceId)) continue;
+
+        const isSelf = gateUser.id === game.user.id;
+        const lookalike = findUnsyncedLookalike(
+          { name: compActor.name, ownerName },
+          game.actors.map(a => ({
+            id: a.id,
+            name: a.name,
+            enrolled: SyncRegistry.isEnrolled(a),
+            ownedByGateUser: a.testUserPermission(gateUser, 'OWNER')
+          }))
+        );
+        if (lookalike) {
+          // Tell the owner on their own client; the GM only when the owner
+          // is offline (otherwise both would see it for one actor).
+          if (isSelf || (game.user.isGM && !gateUser.active)) {
+            ui.notifications.warn(game.i18n.format('OMNIPRESENCE.notifications.unsyncedLookalike', { name: compActor.name }));
+          }
           continue;
         }
 
-        // Import only what the owning user enabled and opted into for this world.
-        if (!SyncRegistry.isActorSyncEnabled(matchingUser.id)) continue;
-        if (!SyncRegistry.isDocSelected(matchingUser.id, 'actor', omnipresenceId)) continue;
+        if (!shouldImportFor({
+          isGM: game.user.isGM,
+          isSelf,
+          ownerIsGM: !ownerName,
+          ownerActive: !!gateUser.active,
+          ownerCanCreate: !!gateUser.can?.('ACTOR_CREATE')
+        })) continue;
 
         const actorData = LinkRewriter.localize(stripWorldLocalFields(compActor.toObject()));
         actorData.flags ??= {};
         actorData.flags.omnipresence ??= {};
         actorData.flags.omnipresence.localModifiedAt = actorData.flags.omnipresence.syncedAt;
         actorData.ownership = ownerName
-          ? { default: 0, [matchingUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER }
+          ? { default: 0, [gateUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER }
           : { default: 0 };
 
-        const created = await Actor.create(actorData, { keepId: true });
-        await SyncRegistry.enroll(created);
+        // Re-check synchronously right before the write: an overlapping run
+        // may have finished this id since the loop started.
+        if (this._hasLocal(omnipresenceId) || this._importing.has(omnipresenceId)) continue;
+        this._importing.add(omnipresenceId);
+        try {
+          const actor = await Actor.create(actorData, { keepId: true });
+          await SyncRegistry.enroll(actor);
+          created.push(actor);
+        } finally {
+          this._importing.delete(omnipresenceId);
+        }
       } catch (err) {
         console.error('Omnipresence | actor auto-import failed for', compActor.name, err);
       }
     }
+    return created;
+  }
 
-    return conflicts;
+  static _hasLocal(omnipresenceId) {
+    return game.actors.some(a => SyncRegistry.isEnrolled(a) && a.getFlag('omnipresence', 'id') === omnipresenceId);
   }
 }

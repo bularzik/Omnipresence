@@ -8,7 +8,8 @@ import {
   requiredModulesForJournal,
   worldLocalMediaPaths,
   capturePinPayload,
-  localizePins
+  localizePins,
+  shouldImportFor
 } from './sync-logic.js';
 
 const DEBOUNCE_MS = 2000;
@@ -391,58 +392,93 @@ export class JournalSync {
       touched.push(journal);
     }
 
-    // 2. Auto-import: compendium journals not present in this world (GM only).
-    if (game.user.isGM) {
-      const localOmnipresenceIds = new Set(
-        game.journal
-          .filter(j => SyncRegistry.isEnrolled(j))
-          .map(j => j.getFlag('omnipresence', 'id'))
-      );
-
-      for (const compJournal of compJournals) {
-        const omnipresenceId = compJournal.getFlag('omnipresence', 'id');
-        if (!omnipresenceId) continue;
-        if (localOmnipresenceIds.has(omnipresenceId)) continue;
-
-        // Pack journals inside a synced folder are imported by
-        // FolderSync.reconcileFolders (placement + folder gate), not here.
-        if (compJournal._source.folder) continue;
-
-        // One malformed pack copy (e.g. tampered flags) must not abort the
-        // remaining imports — or, via ready's serial awaits, link/pin healing
-        // and the beforeunload guard.
-        try {
-          // Gate user: the named owner, or this GM for a GM-owned copy (no
-          // ownerName), which imports GM-only via the GM's own allow-list.
-          const ownerName = compJournal.getFlag('omnipresence', 'ownerName') ?? null;
-          const matchingUser = SyncRegistry.gateUser(ownerName);
-          if (!matchingUser) {
-            console.warn('Omnipresence | no user named', ownerName, '— skipping auto-import of', compJournal.name);
-            continue;
-          }
-
-          // Import only what the owning user enabled and opted into for this world.
-          if (!SyncRegistry.isJournalSyncEnabled(matchingUser.id)) continue;
-          if (!SyncRegistry.isDocSelected(matchingUser.id, 'journal', omnipresenceId)) continue;
-
-          const { journalData, pins } = this.prepareImportData(compJournal);
-          journalData.ownership = ownerName
-            ? { default: 0, [matchingUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER }
-            : { default: 0 };
-
-          const created = await JournalEntry.create(journalData, { keepId: true, omnipresenceInternal: true });
-          await SyncRegistry.enroll(created);
-          if (pins !== undefined) await this._applyPins(created, pins);
-          touched.push(created);
-        } catch (err) {
-          console.error('Omnipresence | journal auto-import failed for', compJournal.name, err);
-        }
-      }
-    }
+    // 2. Auto-import: compendium journals not present in this world, by the
+    // client shouldImportFor picks (the owner with JOURNAL_CREATE, else a GM).
+    touched.push(...await this.importMissing({ compJournals }));
 
     this._warnMissingFidelity(touched);
 
     return conflicts;
+  }
+
+  // Omnipresence ids with an import in flight on this client (see
+  // SyncEngine._importing): overlapping runs must not double-create.
+  static _importing = new Set();
+
+  /**
+   * Import compendium journals selected by their gate user but absent here,
+   * when THIS client should import them (shouldImportFor). Folder members are
+   * left to FolderSync.reconcileFolders. Merged-away stubs are skipped.
+   * @param {object} [opts]
+   * @param {string|null} [opts.forUserId] only that gate user's picks
+   * @param {JournalEntry[]} [opts.compJournals] pack documents already loaded
+   * @returns {Promise<JournalEntry[]>} the journals created
+   */
+  static async importMissing({ forUserId = null, compJournals = null } = {}) {
+    const pack = this._getPack();
+    if (!pack) return [];
+    compJournals ??= await pack.getDocuments();
+    const created = [];
+    const hasLocal = id => game.journal.some(j => SyncRegistry.isEnrolled(j) && j.getFlag('omnipresence', 'id') === id);
+
+    for (const compJournal of compJournals) {
+      const omnipresenceId = compJournal.getFlag('omnipresence', 'id');
+      if (!omnipresenceId) continue;
+      if (compJournal.getFlag('omnipresence', 'mergedInto')) continue;
+      if (hasLocal(omnipresenceId) || this._importing.has(omnipresenceId)) continue;
+
+      // Pack journals inside a synced folder are imported by
+      // FolderSync.reconcileFolders (placement + folder gate), not here.
+      if (compJournal._source.folder) continue;
+
+      // One malformed pack copy (e.g. tampered flags) must not abort the
+      // remaining imports — or, via ready's serial awaits, link/pin healing
+      // and the beforeunload guard.
+      try {
+        // Gate user: the named owner, or this GM for a GM-owned copy (no
+        // ownerName), which imports GM-only via the GM's own allow-list.
+        const ownerName = compJournal.getFlag('omnipresence', 'ownerName') ?? null;
+        const gateUser = SyncRegistry.gateUser(ownerName);
+        if (!gateUser) {
+          if (game.user.isGM) console.warn('Omnipresence | no user named', ownerName, '— skipping auto-import of', compJournal.name);
+          continue;
+        }
+        if (forUserId && gateUser.id !== forUserId) continue;
+
+        // Import only what the owning user enabled and opted into for this world.
+        if (!SyncRegistry.isJournalSyncEnabled(gateUser.id)) continue;
+        if (!SyncRegistry.isDocSelected(gateUser.id, 'journal', omnipresenceId)) continue;
+
+        if (!shouldImportFor({
+          isGM: game.user.isGM,
+          isSelf: gateUser.id === game.user.id,
+          ownerIsGM: !ownerName,
+          ownerActive: !!gateUser.active,
+          ownerCanCreate: !!gateUser.can?.('JOURNAL_CREATE')
+        })) continue;
+
+        const { journalData, pins } = this.prepareImportData(compJournal);
+        journalData.ownership = ownerName
+          ? { default: 0, [gateUser.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER }
+          : { default: 0 };
+
+        if (hasLocal(omnipresenceId) || this._importing.has(omnipresenceId)) continue;
+        this._importing.add(omnipresenceId);
+        try {
+          const journal = await JournalEntry.create(journalData, { keepId: true, omnipresenceInternal: true });
+          await SyncRegistry.enroll(journal);
+          // Map pins write scene Notes, which players generally cannot; a
+          // player-side import leaves them to the GM's applyAllPins pass.
+          if (pins !== undefined && game.user.isGM) await this._applyPins(journal, pins);
+          created.push(journal);
+        } finally {
+          this._importing.delete(omnipresenceId);
+        }
+      } catch (err) {
+        console.error('Omnipresence | journal auto-import failed for', compJournal.name, err);
+      }
+    }
+    return created;
   }
 
   /**
