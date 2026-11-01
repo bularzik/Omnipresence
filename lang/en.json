@@ -80,7 +80,7 @@
   "OMNIPRESENCE.notifications.unsyncedLookalike": "{name} already exists in this world but isn't synced. Right-click it → Link to synced character… to connect it.",
   "OMNIPRESENCE.notifications.manageSavedGmImporting": "Synced documents updated. A connected GM is importing the newly added documents.",
   "OMNIPRESENCE.notifications.linked": "{name} is now linked to its synced character.",
-  "OMNIPRESENCE.notifications.staleCopyDetached": "{name} was an extra copy of this character. It was removed from sync; ask your GM to delete it.",
+  "OMNIPRESENCE.notifications.staleCopyDetached": "{name} was an extra copy of this character. It was removed from sync (any unsynced changes are kept on it); ask your GM to delete it.",
   "OMNIPRESENCE.notifications.mergeDuplicateKept": "{name} was merged into another synced character, but has unsynced changes here. It was removed from sync for you to review.",
   "OMNIPRESENCE.contextMenu.link": "Link to synced character…",
   "OMNIPRESENCE.link.title": "Link to synced character",
@@ -98,5 +98,7 @@
   "OMNIPRESENCE.link.next": "Next",
   "OMNIPRESENCE.link.back": "Back",
   "OMNIPRESENCE.link.none": "No synced characters to link to.",
-  "OMNIPRESENCE.link.staleCopyWarning": "This world already has a synced copy, {name}. It will be deleted when you link."
+  "OMNIPRESENCE.link.staleCopyWarning": "This world already has a synced copy, {name}. It will be deleted when you link.",
+  "OMNIPRESENCE.link.staleCopyDirtyWarning": "This world already has a synced copy, {name}, with changes that haven't synced yet. It will be removed from sync (not deleted) when you link.",
+  "OMNIPRESENCE.notifications.mergeDuplicateDetached": "{name} was merged into another synced character that's already here. It was removed from sync; ask your GM to delete it."
 }

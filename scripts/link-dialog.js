@@ -1,6 +1,6 @@
 import { SyncRegistry } from './sync-registry.js';
 import { SyncEngine } from './sync-engine.js';
-import { linkActor } from './link-actor.js';
+import { linkActor, hasUnpushedChanges } from './link-actor.js';
 import { filterCandidates } from './sync-logic.js';
 
 const L = (key, data) => data
@@ -131,7 +131,8 @@ export class LinkDialog {
           ${card(L('sharedCopy'), comp.name, fmtDate(comp.getFlag('omnipresence', 'syncedAt')),
                  comp.items.size, comp.effects.size)}
         </div>
-        ${stale ? `<p class="notification warning">${esc(L('staleCopyWarning', { name: stale.name }))}</p>` : ''}`,
+        ${stale ? `<p class="notification warning">${esc(L(
+          hasUnpushedChanges(stale) ? 'staleCopyDirtyWarning' : 'staleCopyWarning', { name: stale.name }))}</p>` : ''}`,
       buttons: [
         { action: 'local', label: L('keep'), callback: () => 'local' },
         { action: 'shared', label: L('use'), callback: () => 'shared' },

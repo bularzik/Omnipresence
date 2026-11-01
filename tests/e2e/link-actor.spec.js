@@ -265,6 +265,10 @@ test('other world: a stub re-keys a lone Y copy to X', async () => {
   });
   const s = await mergeState(gmPage, { localId, xId, yId });
   expect(s).toMatchObject({ mergedInto: xId, localExists: true, localOmniId: xId, bio: 'ORIGINAL', hasX: true, hasY: false });
+  // Following the redirect writes the selection, which starts a live import:
+  // it must not create a second X next to the re-keyed actor.
+  await gmPage.waitForTimeout(2_000);
+  expect(await gmPage.evaluate(xId => game.actors.filter(a => a.getFlag('omnipresence', 'id') === xId).length, xId)).toBe(1);
 });
 
 test('other world: Y is deleted when X also exists and Y is clean', async () => {
@@ -410,4 +414,37 @@ test('link dialog: Back returns to step 1, Cancel leaves the actor untouched', a
     return { enrolled: SyncRegistry.isEnrolled(a), bio: a.system.details.biography.value };
   }, localId);
   expect(out).toEqual({ enrolled: false, bio: 'LOCAL' });
+});
+
+// --- final-review fixes ------------------------------------------------------
+
+test('other world: a lone Y with unpushed changes is re-keyed but kept as a conflict', async () => {
+  const name = `${PREFIX} DirtyRekey`;
+  const xId = await seedPack(gmPage, { name, bio: 'ORIGINAL', ownerName: playerName });
+  const yId = await seedPack(gmPage, { name, bio: 'DUP', ownerName: playerName });
+  await gmPage.evaluate(async ({ yId, xId }) => {
+    const { writeMergeStub } = await import('/modules/omnipresence/scripts/link-actor.js');
+    await writeMergeStub(yId, xId);
+  }, { yId, xId });
+  const localId = await seedEnrolledLocal(gmPage, { name, bio: 'MY EDITS', omniId: yId, ownerName: playerName, dirty: true });
+  const conflicts = await gmPage.evaluate(async () => {
+    const { SyncEngine } = await import('/modules/omnipresence/scripts/sync-engine.js');
+    return SyncEngine.onLogin();
+  });
+  const s = await mergeState(gmPage, { localId, xId, yId });
+  expect(s).toMatchObject({ localOmniId: xId, bio: 'MY EDITS', hasX: true, hasY: false });
+  expect(conflicts).toContain(localId);
+});
+
+test('link detaches (never deletes) a stale copy that has unpushed changes', async () => {
+  const name = `${PREFIX} StaleDirty`;
+  const xId = await seedPack(gmPage, { name, bio: 'SHARED', ownerName: playerName });
+  const staleId = await seedEnrolledLocal(gmPage, { name, bio: 'SESSION EDITS', omniId: xId, ownerName: playerName, dirty: true });
+  const localId = await seedLocal(gmPage, { name: `${name} (ddb)`, bio: 'LOCAL' });
+  await link(gmPage, localId, xId, 'shared');
+  const out = await gmPage.evaluate(staleId => {
+    const a = game.actors.get(staleId);
+    return a ? { bio: a.system.details.biography.value, id: a.flags.omnipresence?.id ?? null } : null;
+  }, staleId);
+  expect(out).toEqual({ bio: 'SESSION EDITS', id: null });
 });

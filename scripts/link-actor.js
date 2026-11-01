@@ -144,8 +144,15 @@ export async function drainPendingMerges() {
   try { await draining; } finally { draining = null; }
 }
 
+/** Edited here since its last sync (localModifiedAt newer than syncedAt). */
+export function hasUnpushedChanges(actor) {
+  return Date.parse(actor.getFlag('omnipresence', 'localModifiedAt') ?? 0) >
+         Date.parse(actor.getFlag('omnipresence', 'syncedAt') ?? 0);
+}
+
 /**
- * Remove every OTHER local actor carrying `omniId`. Players usually lack
+ * Remove every OTHER local actor carrying `omniId`. One with unpushed changes
+ * is never deleted: it is detached from sync instead, keeping those edits. Players usually lack
  * permission to delete actors; such a copy is detached from sync instead
  * (left as an ordinary actor for the GM to clean up), which is enough to
  * keep one synced copy per id.
@@ -153,7 +160,7 @@ export async function drainPendingMerges() {
 async function removeStaleCopies(localActor, omniId) {
   const stale = game.actors.filter(a => a.id !== localActor.id && a.getFlag('omnipresence', 'id') === omniId);
   for (const actor of stale) {
-    if (actor.canUserModify(game.user, 'delete')) {
+    if (!hasUnpushedChanges(actor) && actor.canUserModify(game.user, 'delete')) {
       await actor.delete({ omnipresenceInternal: true });
     } else {
       await actor.update(
