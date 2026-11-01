@@ -167,17 +167,30 @@ Hooks.on('updateUser', (_user, changes, _options, _userId) => {
 // The owner's own client imports what it may create (shouldImportFor); the
 // designated GM imports the rest, plus folder picks (players can't create
 // folders). Import only — unchecking never deletes or unenrolls here.
+//
+// Every selection write carries the whole selection (folderIds included), so
+// the folder reconcile — a full tree pass — runs only when another user's
+// folder list ACTUALLY changed (a GM's own picks reconcile via the Manage
+// save path). lastFolderIds is seeded at ready.
+const lastFolderIds = new Map(); // userId → JSON of folderIds
+const folderKey = ids => JSON.stringify(Array.isArray(ids) ? [...ids].sort() : ids ?? null);
+Hooks.once('ready', () => {
+  for (const u of game.users) lastFolderIds.set(u.id, folderKey(SyncRegistry.getSelection(u.id).folderIds));
+});
 Hooks.on('updateUser', (user, changes, _options, _userId) => {
   const selection = changes.flags?.omnipresence?.selection;
   if (!selection) return;
   const isSelf = user.id === game.user.id;
   const isDesignatedGM = FolderSync._isResponsibleGM();
+  const key = folderKey(SyncRegistry.getSelection(user.id).folderIds);
+  const foldersChanged = lastFolderIds.has(user.id) && lastFolderIds.get(user.id) !== key;
+  lastFolderIds.set(user.id, key);
   if (!isSelf && !isDesignatedGM) return;
   const log = what => err => console.error(`Omnipresence | live ${what} import failed`, err);
   (async () => {
     await SyncEngine.importMissing({ forUserId: user.id }).catch(log('actor'));
     await JournalSync.importMissing({ forUserId: user.id }).catch(log('journal'));
-    if (isDesignatedGM && 'folderIds' in selection) await FolderSync.reconcileFolders().catch(log('folder'));
+    if (isDesignatedGM && !isSelf && foldersChanged) await FolderSync.reconcileFolders().catch(log('folder'));
     FolderDirectory.refresh();
   })();
 });
