@@ -791,3 +791,25 @@ export function resolveMerge(id, mergedIntoById) {
   }
   return current;
 }
+
+/**
+ * Authorize a player-queued merge before a GM writes it (the queue lives on
+ * the player's own User flags, so its contents are untrusted). A requester
+ * may only retire their OWN shared copy (`from`), into another of their own
+ * (`to`); neither may already be a stub, and they must differ. GM-owned
+ * copies (no ownerName) can never be stubbed through the queue.
+ * @param {{from: string, to: string}|null} entry
+ * @param {string|null} requesterName the queuing user's name
+ * @param {Record<string, {ownerName: string|null, mergedInto: string|null}>} packIndex by omnipresence id
+ * @returns {boolean}
+ */
+export function isValidMergeRequest(entry, requesterName, packIndex) {
+  if (!entry || !requesterName) return false;
+  const { from, to } = entry;
+  if (typeof from !== 'string' || typeof to !== 'string' || from === to) return false;
+  const src = packIndex[from];
+  const dst = packIndex[to];
+  if (!src || !dst) return false;
+  if (src.mergedInto || dst.mergedInto) return false;
+  return src.ownerName === requesterName && dst.ownerName === requesterName;
+}

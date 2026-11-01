@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, forgetFolderSelection, upgradeFolderSelection, sharedFolderRows, isGateUser, portableFolderFlags, mergeFolderFlags, resolveFolderFlags, shouldImportFor, findUnsyncedLookalike, mergeForeignFlags, keepLocalLinkFlags, resolveMerge } from '../scripts/sync-logic.js';
+import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, forgetFolderSelection, upgradeFolderSelection, sharedFolderRows, isGateUser, portableFolderFlags, mergeFolderFlags, resolveFolderFlags, shouldImportFor, findUnsyncedLookalike, mergeForeignFlags, keepLocalLinkFlags, resolveMerge, isValidMergeRequest } from '../scripts/sync-logic.js';
 
 const T0 = '2026-06-14T10:00:00.000Z';
 const T1 = '2026-06-14T11:00:00.000Z';
@@ -1069,4 +1069,33 @@ test('resolveMerge follows chains', () => {
 });
 test('resolveMerge returns null on a cycle', () => {
   assert.equal(resolveMerge('Y', { Y: 'X', X: 'Y' }), null);
+});
+
+// --- merge-request validation: a player may only merge their OWN copies ----
+
+const PACK = {
+  Y: { ownerName: 'Dan', mergedInto: null },
+  X: { ownerName: 'Dan', mergedInto: null },
+  S: { ownerName: 'Sam', mergedInto: null },
+  G: { ownerName: null, mergedInto: null },
+  Z: { ownerName: 'Dan', mergedInto: 'X' }
+};
+test('isValidMergeRequest: own Y into own X is valid', () => {
+  assert.equal(isValidMergeRequest({ from: 'Y', to: 'X' }, 'Dan', PACK), true);
+});
+test('isValidMergeRequest: cannot stub another player\'s or a GM-owned copy', () => {
+  assert.equal(isValidMergeRequest({ from: 'S', to: 'X' }, 'Dan', PACK), false);
+  assert.equal(isValidMergeRequest({ from: 'G', to: 'X' }, 'Dan', PACK), false);
+});
+test('isValidMergeRequest: target must be the same owner\'s', () => {
+  assert.equal(isValidMergeRequest({ from: 'Y', to: 'S' }, 'Dan', PACK), false);
+});
+test('isValidMergeRequest: rejects missing, self, stubbed, and malformed entries', () => {
+  assert.equal(isValidMergeRequest({ from: 'Q', to: 'X' }, 'Dan', PACK), false);
+  assert.equal(isValidMergeRequest({ from: 'Y', to: 'Q' }, 'Dan', PACK), false);
+  assert.equal(isValidMergeRequest({ from: 'Y', to: 'Y' }, 'Dan', PACK), false);
+  assert.equal(isValidMergeRequest({ from: 'Z', to: 'X' }, 'Dan', PACK), false);
+  assert.equal(isValidMergeRequest({ from: 'Y', to: 'Z' }, 'Dan', PACK), false);
+  assert.equal(isValidMergeRequest(null, 'Dan', PACK), false);
+  assert.equal(isValidMergeRequest({ from: 'Y', to: 'X' }, null, PACK), false);
 });

@@ -1,7 +1,7 @@
 import { SyncRegistry } from './sync-registry.js';
 import { SyncEngine } from './sync-engine.js';
 import { FolderSync } from './folder-sync.js';
-import { keepLocalLinkFlags } from './sync-logic.js';
+import { keepLocalLinkFlags, isValidMergeRequest } from './sync-logic.js';
 
 /**
  * Link a local actor to a shared compendium character so they sync as one
@@ -107,20 +107,35 @@ let draining = null;
 
 /**
  * Responsible GM only: write every user's queued merge stubs, then clear
- * them. Non-reentrant (the ready hook and the updateUser hook can overlap).
+ * them. The queue sits on the player's own User flags, so every entry is
+ * authorized first (isValidMergeRequest: only the requester's own copies);
+ * anything else is dropped and logged, never written. Non-reentrant (the
+ * ready hook and the updateUser hook can overlap).
  */
 export async function drainPendingMerges() {
   if (!FolderSync._isResponsibleGM()) return;
   if (draining) return draining;
   draining = (async () => {
+    const pack = SyncEngine._getPack();
+    if (!pack) return;
+    let packIndex = null;
     for (const user of game.users) {
       const entries = SyncRegistry.getPendingMerges(user.id);
       if (!entries.length) continue;
-      for (const { from, to } of entries) {
+      packIndex ??= Object.fromEntries((await pack.getDocuments()).map(d => [
+        d.getFlag('omnipresence', 'id'),
+        { ownerName: d.getFlag('omnipresence', 'ownerName') ?? null, mergedInto: d.getFlag('omnipresence', 'mergedInto') ?? null }
+      ]));
+      for (const entry of entries) {
+        if (!isValidMergeRequest(entry, user.name, packIndex)) {
+          console.warn('Omnipresence | rejected merge request from', user.name, entry);
+          continue;
+        }
         try {
-          await writeMergeStub(from, to);
+          await writeMergeStub(entry.from, entry.to);
+          packIndex[entry.from] = { ...packIndex[entry.from], mergedInto: entry.to };
         } catch (err) {
-          console.error('Omnipresence | merge stub write failed', from, '→', to, err);
+          console.error('Omnipresence | merge stub write failed', entry.from, '→', entry.to, err);
         }
       }
       await SyncRegistry.clearPendingMerges(user.id);
