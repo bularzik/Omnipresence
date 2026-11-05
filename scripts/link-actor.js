@@ -25,6 +25,7 @@ import { keepLocalLinkFlags, isValidMergeRequest } from './sync-logic.js';
  * @param {Actor} localActor
  * @param {Actor} compActor the pack document
  * @param {'local'|'shared'} winner
+ * @returns {Promise<boolean>} false when the shared data could not be taken
  */
 export async function linkActor(localActor, compActor, winner) {
   const compData = compActor.toObject();
@@ -34,16 +35,26 @@ export async function linkActor(localActor, compActor, winner) {
   const compSyncedAt = compData.flags.omnipresence.syncedAt;
 
   const previousId = SyncRegistry.isEnrolled(localActor) ? localActor.getFlag('omnipresence', 'id') : null;
-  if (previousId === omniId) return; // already linked to this character
+  if (previousId === omniId) return true; // already linked to this character
 
   await removeStaleCopies(localActor, omniId);
+
+  // A GM linking on a player's behalf: the actor becomes that player's here.
+  // Every push re-stamps ownerName from local ownership, so without this a
+  // GM-owned actor would turn the player's shared character into the GM's.
+  const owner = ownerName ? SyncRegistry.gateUser(ownerName) : null;
+  if (game.user.isGM && owner && localActor.ownership?.[owner.id] !== CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER) {
+    await localActor.update({ [`ownership.${owner.id}`]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER }, { omnipresenceInternal: true });
+  }
 
   // Merge: retire Y BEFORE re-keying. Once this actor carries the new id, Y
   // looks "selected but missing" to any live import already in flight, which
   // would re-import it as a duplicate — so drop it from the selection and make
   // its shared copy a stub first.
   if (previousId) {
-    const gateUser = SyncRegistry.gateUser(ownerName);
+    // Y sits on ITS owner's list, which differs from X's when a GM merges a
+    // player's copy into a character someone else owns.
+    const gateUser = SyncRegistry.gateUser(localActor.getFlag('omnipresence', 'ownerName') ?? null);
     if (gateUser && (gateUser.id === game.user.id || game.user.isGM)) {
       await SyncRegistry.removeFromSelection(gateUser.id, 'actor', previousId);
     }
@@ -51,7 +62,9 @@ export async function linkActor(localActor, compActor, winner) {
   }
 
   if (winner === 'shared') {
-    await SyncEngine.pull(localActor, compActor, { keepForeignFlags: true });
+    // A failed pull already warned; enrolling would sync the actor's old data
+    // as this character.
+    if (!await SyncEngine.pull(localActor, compActor, { keepForeignFlags: true })) return false;
     await SyncRegistry.enroll(localActor);
   } else {
     const flags = keepLocalLinkFlags({ omniId, ownerName, compSyncedAt, now: new Date().toISOString() });
@@ -70,6 +83,7 @@ export async function linkActor(localActor, compActor, winner) {
   }
 
   ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.linked', { name: localActor.name }));
+  return true;
 }
 
 /**
@@ -104,44 +118,56 @@ export async function writeMergeStub(fromId, toId) {
 }
 
 let draining = null;
+let drainAgain = false;
 
 /**
- * Responsible GM only: write every user's queued merge stubs, then clear
- * them. The queue sits on the player's own User flags, so every entry is
- * authorized first (isValidMergeRequest: only the requester's own copies);
- * anything else is dropped and logged, never written. Non-reentrant (the
- * ready hook and the updateUser hook can overlap).
+ * Responsible GM only: write every user's queued merge stubs, then remove
+ * them from the queue. The queue sits on the player's own User flags, so every
+ * entry is authorized first (isValidMergeRequest: only the requester's own
+ * copies); anything else is dropped and logged, never written. Calls that
+ * arrive mid-drain (the ready hook and the updateUser hook overlap, and a
+ * player may queue again while a stub is written) run one more pass, and only
+ * the entries a pass handled are removed, so a request queued meanwhile stays.
  */
 export async function drainPendingMerges() {
   if (!FolderSync._isResponsibleGM()) return;
-  if (draining) return draining;
+  if (draining) { drainAgain = true; return draining; }
   draining = (async () => {
-    const pack = SyncEngine._getPack();
-    if (!pack) return;
-    let packIndex = null;
-    for (const user of game.users) {
-      const entries = SyncRegistry.getPendingMerges(user.id);
-      if (!entries.length) continue;
-      packIndex ??= Object.fromEntries((await pack.getDocuments()).map(d => [
-        d.getFlag('omnipresence', 'id'),
-        { ownerName: d.getFlag('omnipresence', 'ownerName') ?? null, mergedInto: d.getFlag('omnipresence', 'mergedInto') ?? null }
-      ]));
-      for (const entry of entries) {
-        if (!isValidMergeRequest(entry, user.name, packIndex)) {
-          console.warn('Omnipresence | rejected merge request from', user.name, entry);
-          continue;
-        }
-        try {
-          await writeMergeStub(entry.from, entry.to);
-          packIndex[entry.from] = { ...packIndex[entry.from], mergedInto: entry.to };
-        } catch (err) {
-          console.error('Omnipresence | merge stub write failed', entry.from, '→', entry.to, err);
-        }
-      }
-      await SyncRegistry.clearPendingMerges(user.id);
-    }
+    try {
+      do { drainAgain = false; await drainOnce(); } while (drainAgain);
+    } finally { draining = null; }
   })();
-  try { await draining; } finally { draining = null; }
+  return draining;
+}
+
+async function drainOnce() {
+  const pack = SyncEngine._getPack();
+  if (!pack) return;
+  let packIndex = null;
+  for (const user of game.users) {
+    const entries = SyncRegistry.getPendingMerges(user.id);
+    if (!entries.length) continue;
+    packIndex ??= Object.fromEntries((await pack.getDocuments()).map(d => [
+      d.getFlag('omnipresence', 'id'),
+      { ownerName: d.getFlag('omnipresence', 'ownerName') ?? null, mergedInto: d.getFlag('omnipresence', 'mergedInto') ?? null }
+    ]));
+    for (const entry of entries) {
+      if (!isValidMergeRequest(entry, user.name, packIndex)) {
+        console.warn('Omnipresence | rejected merge request from', user.name, entry);
+        continue;
+      }
+      try {
+        await writeMergeStub(entry.from, entry.to);
+        packIndex[entry.from] = { ...packIndex[entry.from], mergedInto: entry.to };
+      } catch (err) {
+        console.error('Omnipresence | merge stub write failed', entry.from, '→', entry.to, err);
+      }
+    }
+    // Re-read: entries queued while this pass ran are kept for the next one.
+    const handled = new Set(entries.map(e => JSON.stringify(e)));
+    await SyncRegistry.setPendingMerges(user.id,
+      SyncRegistry.getPendingMerges(user.id).filter(e => !handled.has(JSON.stringify(e))));
+  }
 }
 
 /** Edited here since its last sync (localModifiedAt newer than syncedAt). */

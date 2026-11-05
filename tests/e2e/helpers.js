@@ -17,8 +17,9 @@ export const FOUNDRY_URL = process.env.FOUNDRY_URL ?? 'http://localhost:30000';
  * before submitting. Selecting via `selectOption` would fail on a disabled
  * option, hence the manual value set plus change event.
  *
- * v14 replaced the dropdown with an `<input name="username">` text field, so
- * the name is typed instead.
+ * v14.368 replaced the dropdown with an `<input name="username">` text field, so
+ * the name is typed instead. v14.369 is back to a dropdown, now
+ * `<select name="userId">` — hence the case-insensitive `[name="userid" i]`.
  *
  * `waitForFunction(fn, arg, options)`: the timeout must be the THIRD argument.
  * Passing it second makes it the predicate's `arg` and silently leaves the
@@ -28,22 +29,22 @@ export const FOUNDRY_URL = process.env.FOUNDRY_URL ?? 'http://localhost:30000';
 export async function loginToFoundry(page, userName) {
   await page.goto(`${FOUNDRY_URL}/join`);
   await page.waitForFunction(
-    () => !!document.querySelector('select[name="userid"], input[name="username"]'),
+    () => !!document.querySelector('select[name="userid" i], input[name="username"]'),
     null,
     { timeout: 15_000 }
   );
-  const hasSelect = await page.evaluate(() => !!document.querySelector('select[name="userid"]'));
+  const hasSelect = await page.evaluate(() => !!document.querySelector('select[name="userid" i]'));
   if (hasSelect) {
     await page.waitForFunction(
       (name) => {
-        const sel = document.querySelector('select[name="userid"]');
+        const sel = document.querySelector('select[name="userid" i]');
         return [...(sel?.options ?? [])].some(o => o.text === name);
       },
       userName,
       { timeout: 15_000 }
     );
     await page.evaluate((name) => {
-      const sel = document.querySelector('select[name="userid"]');
+      const sel = document.querySelector('select[name="userid" i]');
       const opt = [...sel.options].find(o => o.text === name);
       opt.disabled = false;
       sel.value = opt.value;

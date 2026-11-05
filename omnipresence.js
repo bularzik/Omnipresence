@@ -197,7 +197,8 @@ Hooks.on('updateUser', (user, changes, _options, _userId) => {
 
 // A player queued a merge stub (they linked an already-synced duplicate to
 // its original): the connected GM writes it now. The GM's own clear is an
-// empty array, which does not match.
+// empty array, which does not match; a non-empty remainder (queued mid-drain)
+// does, and the drain coalesces it into one more pass.
 Hooks.on('updateUser', (_user, changes, _options, _userId) => {
   const pending = changes.flags?.omnipresence?.pendingMerges;
   if (!Array.isArray(pending) || pending.length === 0) return;

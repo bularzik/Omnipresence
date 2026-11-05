@@ -448,3 +448,190 @@ test('link detaches (never deletes) a stale copy that has unpushed changes', asy
   }, staleId);
   expect(out).toEqual({ bio: 'SESSION EDITS', id: null });
 });
+
+// --- deferred minors (op-213) -----------------------------------------------
+
+/** GM page: write stub yId → xId. */
+const stub = (page, yId, xId) => page.evaluate(async ({ yId, xId }) => {
+  const { writeMergeStub } = await import('/modules/omnipresence/scripts/link-actor.js');
+  await writeMergeStub(yId, xId);
+}, { yId, xId });
+
+test('push and pull never touch a merged-away stub', async () => {
+  const name = `${PREFIX} StubGuard`;
+  const xId = await seedPack(gmPage, { name, bio: 'ORIGINAL', ownerName: playerName });
+  const yId = await seedPack(gmPage, { name, bio: 'DUP', ownerName: playerName });
+  await stub(gmPage, yId, xId);
+  const localId = await seedEnrolledLocal(gmPage, { name, bio: 'MINE', omniId: yId, ownerName: playerName });
+  const out = await gmPage.evaluate(async ({ localId, yId }) => {
+    const { SyncEngine } = await import('/modules/omnipresence/scripts/sync-engine.js');
+    const pack = game.packs.get(SyncEngine.PACK_ID);
+    const find = async () => (await pack.getDocuments()).find(d => d.getFlag('omnipresence', 'id') === yId);
+    const actor = game.actors.get(localId);
+    const pulled = await SyncEngine.pull(actor, await find());
+    await SyncEngine.push(actor);
+    const y = await find();
+    return { pulled, bio: actor.system.details.biography.value, mergedInto: y.getFlag('omnipresence', 'mergedInto') ?? null };
+  }, { localId, yId });
+  expect(out).toEqual({ pulled: false, bio: 'MINE', mergedInto: xId });
+});
+
+test('a merge request queued while the GM drains is not lost', async () => {
+  const name = `${PREFIX} DrainRace`;
+  const xId = await seedPack(gmPage, { name, bio: 'ORIGINAL', ownerName: playerName });
+  const y1 = await seedPack(gmPage, { name: `${name} 1`, bio: 'DUP1', ownerName: playerName });
+  const y1b = await seedPack(gmPage, { name: `${name} 1b`, bio: 'DUP1B', ownerName: playerName });
+  const y2 = await seedPack(gmPage, { name: `${name} 2`, bio: 'DUP2', ownerName: playerName });
+  await gmPage.evaluate(async ({ xId, y1, y1b, y2 }) => {
+    const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+    const { drainPendingMerges } = await import('/modules/omnipresence/scripts/link-actor.js');
+    const player = game.users.find(u => !u.isGM);
+    // A new request is queued while the drain is still writing the stubs it
+    // read (it lands during the second stub write).
+    Hooks.once('updateActor', doc => {
+      if (doc.pack) SyncRegistry.addPendingMerge(player.id, { from: y2, to: xId });
+    });
+    await player.update({ 'flags.omnipresence.pendingMerges': [{ from: y1, to: xId }, { from: y1b, to: xId }] }, { omnipresenceInternal: true });
+    await drainPendingMerges();
+  }, { xId, y1, y1b, y2 });
+  await expect.poll(async () => (await mergeState(gmPage, { localId: null, xId, yId: y2 })).mergedInto, { timeout: 8_000 }).toBe(xId);
+  expect((await mergeState(gmPage, { localId: null, xId, yId: y1b })).mergedInto).toBe(xId);
+});
+
+test('a failed pull during link leaves the actor unlinked and says nothing about success', async () => {
+  const name = `${PREFIX} PullFail`;
+  const omniId = await seedPack(gmPage, { name, bio: 'SHARED' });
+  const localId = await seedLocal(gmPage, { name, bio: 'LOCAL' });
+  const out = await gmPage.evaluate(async ({ localId, omniId }) => {
+    const { SyncEngine } = await import('/modules/omnipresence/scripts/sync-engine.js');
+    const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+    const { linkActor } = await import('/modules/omnipresence/scripts/link-actor.js');
+    const actor = game.actors.get(localId);
+    const realUpdate = actor.update.bind(actor);
+    // Fail only the pull's data write (recursive:false); flag writes still work.
+    actor.update = (data, opts = {}) => opts.recursive === false ? Promise.reject(new Error('probe')) : realUpdate(data, opts);
+    const infos = [];
+    const realInfo = ui.notifications.info.bind(ui.notifications);
+    ui.notifications.info = (msg, o) => { infos.push(String(msg)); return realInfo(msg, o); };
+    try {
+      const comp = (await game.packs.get(SyncEngine.PACK_ID).getDocuments()).find(d => d.getFlag('omnipresence', 'id') === omniId);
+      await linkActor(actor, comp, 'shared');
+    } finally {
+      ui.notifications.info = realInfo;
+      delete actor.update;
+    }
+    const linkedMsg = game.i18n.format('OMNIPRESENCE.notifications.linked', { name: actor.name });
+    return { enrolled: SyncRegistry.isEnrolled(actor), saidLinked: infos.includes(linkedMsg) };
+  }, { localId, omniId });
+  expect(out).toEqual({ enrolled: false, saidLinked: false });
+});
+
+test('GM merging a player\'s copy into a GM-owned character clears the player\'s list', async () => {
+  const name = `${PREFIX} CrossOwner`;
+  const xId = await seedPack(gmPage, { name, bio: 'ORIGINAL' }); // GM-owned
+  const yId = await seedPack(gmPage, { name, bio: 'DUP', ownerName: playerName });
+  const localId = await seedEnrolledLocal(gmPage, { name, bio: 'DUP', omniId: yId, ownerName: playerName });
+  await link(gmPage, localId, xId, 'shared');
+  const s = await mergeState(gmPage, { localId, xId, yId });
+  expect(s).toMatchObject({ mergedInto: xId, hasY: false });
+});
+
+test('an NPC that all players own does not block a same-name PC import', async () => {
+  const name = `${PREFIX} OpenNpc`;
+  await seedLocal(gmPage, { name, bio: 'NPC', ownership: { default: 3 } });
+  const omniId = await seedPack(gmPage, { name, bio: 'PC', ownerName: playerName });
+  await gmPage.evaluate(async (omniId) => {
+    const { SyncEngine } = await import('/modules/omnipresence/scripts/sync-engine.js');
+    const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+    const player = game.users.find(u => !u.isGM);
+    await SyncRegistry.addToSelection(player.id, 'actor', omniId);
+    // The selection write also starts a live import; either may create it.
+    await SyncEngine.importMissing({ forUserId: player.id });
+  }, omniId);
+  await expect.poll(() => gmPage.evaluate(omniId =>
+    game.actors.filter(a => a.getFlag('omnipresence', 'id') === omniId).length, omniId), { timeout: 5_000 }).toBe(1);
+});
+
+test('the unsynced-lookalike warning shows once per character per session', async () => {
+  const name = `${PREFIX} WarnOnce`;
+  const playerId = await gmPage.evaluate(n => game.users.getName(n).id, playerName);
+  await seedLocal(gmPage, { name, bio: 'DDB', ownership: { default: 0, [playerId]: 3 } });
+  const omniId = await seedPack(gmPage, { name, bio: 'PC', ownerName: playerName });
+  const count = await gmPage.evaluate(async ({ omniId, name }) => {
+    const { SyncEngine } = await import('/modules/omnipresence/scripts/sync-engine.js');
+    const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+    const player = game.users.find(u => !u.isGM);
+    const msg = game.i18n.format('OMNIPRESENCE.notifications.unsyncedLookalike', { name });
+    let n = 0;
+    const realWarn = ui.notifications.warn.bind(ui.notifications);
+    ui.notifications.warn = (m, o) => { if (m === msg) n++; return realWarn(m, o); };
+    try {
+      await SyncRegistry.addToSelection(player.id, 'actor', omniId);
+      await SyncEngine.importMissing({ forUserId: player.id });
+      await SyncEngine.importMissing({ forUserId: player.id });
+    } finally { ui.notifications.warn = realWarn; }
+    return n;
+  }, { omniId, name });
+  expect(count).toBe(1);
+});
+
+test('GM link dialog lists a player\'s shared characters', async () => {
+  const name = `${PREFIX} GmForPlayer`;
+  const xId = await seedPack(gmPage, { name, bio: 'SHARED', ownerName: playerName });
+  const playerId = await gmPage.evaluate(n => game.users.getName(n).id, playerName);
+  const localId = await seedLocal(gmPage, { name, bio: 'DDB', ownership: { default: 0, [playerId]: 3 } });
+  await gmPage.evaluate(async (localId) => {
+    const { LinkDialog } = await import('/modules/omnipresence/scripts/link-dialog.js');
+    LinkDialog.open(game.actors.get(localId));
+  }, localId);
+  const step1 = gmPage.locator('.omnipresence-link-step1');
+  await expect(step1.locator(`input[type="radio"][value="${xId}"]`)).toBeChecked();
+  await step1.locator('button[data-action="next"]').click();
+  await gmPage.locator('.omnipresence-link-step2 button[data-action="shared"]').click();
+  await expect.poll(() => gmPage.evaluate(async ({ localId, xId }) => {
+    const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+    const a = game.actors.get(localId);
+    const player = game.users.find(u => !u.isGM);
+    return { id: a.getFlag('omnipresence', 'id'), bio: a.system.details.biography.value, onPlayersList: SyncRegistry.isDocSelected(player.id, 'actor', xId) };
+  }, { localId, xId }), { timeout: 5_000 }).toEqual({ id: xId, bio: 'SHARED', onPlayersList: true });
+});
+
+test('other world: an out-of-sync local X is detached and Y becomes X', async () => {
+  const name = `${PREFIX} OutOfSyncX`;
+  const xId = await seedPack(gmPage, { name, bio: 'ORIGINAL', ownerName: playerName });
+  const yId = await seedPack(gmPage, { name, bio: 'DUP', ownerName: playerName });
+  await stub(gmPage, yId, xId);
+  const localX = await seedEnrolledLocal(gmPage, { name, bio: 'OLD X', omniId: xId, ownerName: playerName });
+  await gmPage.evaluate(async (localX) => {
+    const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+    await SyncRegistry.unenroll(game.actors.get(localX));
+  }, localX);
+  const localY = await seedEnrolledLocal(gmPage, { name, bio: 'DUP', omniId: yId, ownerName: playerName });
+  await gmPage.evaluate(async () => {
+    const { SyncEngine } = await import('/modules/omnipresence/scripts/sync-engine.js');
+    await SyncEngine.onLogin();
+  });
+  const s = await mergeState(gmPage, { localId: localY, xId, yId });
+  expect(s).toMatchObject({ localExists: true, localOmniId: xId, localEnrolled: true, bio: 'ORIGINAL', hasX: true, hasY: false });
+  const x = await gmPage.evaluate(id => {
+    const a = game.actors.get(id);
+    return a ? { bio: a.system.details.biography.value, id: a.flags.omnipresence?.id ?? null } : null;
+  }, localX);
+  expect(x).toEqual({ bio: 'OLD X', id: null });
+  await gmPage.waitForTimeout(2_000);
+  expect(await gmPage.evaluate(xId => game.actors.filter(a => a.getFlag('omnipresence', 'id') === xId).length, xId)).toBe(1);
+});
+
+test('GM linking a GM-owned actor to a player\'s character gives the player ownership', async () => {
+  const name = `${PREFIX} GmOwnedLocal`;
+  const xId = await seedPack(gmPage, { name, bio: 'SHARED', ownerName: playerName });
+  const localId = await seedLocal(gmPage, { name, bio: 'LOCAL' });
+  await link(gmPage, localId, xId, 'local');
+  await expect.poll(() => gmPage.evaluate(async ({ localId, xId }) => {
+    const { SyncEngine } = await import('/modules/omnipresence/scripts/sync-engine.js');
+    const comp = (await game.packs.get(SyncEngine.PACK_ID).getDocuments()).find(d => d.getFlag('omnipresence', 'id') === xId);
+    const player = game.users.find(u => !u.isGM);
+    return { packOwner: comp.getFlag('omnipresence', 'ownerName'), bio: comp.system.details.biography.value,
+             playerOwns: game.actors.get(localId).ownership[player.id] === 3 };
+  }, { localId, xId }), { timeout: 5_000 }).toEqual({ packOwner: playerName, bio: 'LOCAL', playerOwns: true });
+});

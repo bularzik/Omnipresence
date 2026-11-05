@@ -58,7 +58,25 @@ export class JournalSync {
     return pins;
   }
 
-  static async push(journal) {
+  // omnipresence id → the tail of that journal's push chain.
+  static _pushChains = new Map();
+
+  /**
+   * Push one journal to the pack. Pushes of the same journal run one after
+   * another: two overlapping pushes of a journal with no pack copy yet (the
+   * login folder sync and a folder mark, say) would each create one.
+   */
+  static push(journal) {
+    const omnipresenceId = journal.getFlag('omnipresence', 'id');
+    if (!omnipresenceId) return this._pushOnce(journal);
+    const prev = this._pushChains.get(omnipresenceId) ?? Promise.resolve();
+    const run = prev.catch(() => {}).then(() => this._pushOnce(journal));
+    this._pushChains.set(omnipresenceId, run);
+    run.finally(() => { if (this._pushChains.get(omnipresenceId) === run) this._pushChains.delete(omnipresenceId); }).catch(() => {});
+    return run;
+  }
+
+  static async _pushOnce(journal) {
     // Only GM-role clients can write to a module compendium.
     if (!game.user.isGM) return;
 

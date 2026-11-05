@@ -61,6 +61,9 @@ export class SyncEngine {
 
     try {
       const existing = await this._getCompendiumActor(omnipresenceId);
+      // A merged-away stub is a redirect: pushing over it would resurrect the
+      // duplicate. The owner's next login follows it instead (_followMerge).
+      if (existing?.getFlag('omnipresence', 'mergedInto')) return;
       if (existing) {
         // recursive:false — the payload is a complete snapshot, so replace
         // subtrees wholesale; merge would resurrect deleted keys forever.
@@ -136,8 +139,11 @@ export class SyncEngine {
    * @param {object} [opts]
    * @param {boolean} [opts.keepForeignFlags] keep the local actor's other
    *   modules' flags (e.g. ddbimporter) — used by linking and merge re-keys
+   * @returns {Promise<boolean>} whether the local actor now holds the shared data
    */
   static async pull(localActor, compActor, { keepForeignFlags = false } = {}) {
+    // A merged-away stub holds no data: pulling it would empty the actor.
+    if (compActor.getFlag('omnipresence', 'mergedInto')) return false;
     // Strip world-local fields so local ownership and folder are preserved,
     // and localize canonical omnipresence ids to this world's ids.
     const actorData = LinkRewriter.localize(stripWorldLocalFields(compActor.toObject()));
@@ -146,13 +152,18 @@ export class SyncEngine {
     actorData.flags.omnipresence ??= {};
     // Reset localModifiedAt to match the pulled syncedAt (no local changes outstanding).
     actorData.flags.omnipresence.localModifiedAt = actorData.flags.omnipresence.syncedAt;
+    // Enrollment is this world's choice, not the shared copy's: keep it.
+    const enrolled = localActor.getFlag('omnipresence', 'enrolled');
+    if (enrolled !== undefined) actorData.flags.omnipresence.enrolled = enrolled;
     try {
       await localActor.update(actorData, { omnipresenceInternal: true, recursive: false });
+      return true;
     } catch (err) {
       console.error('Omnipresence | pull failed for', localActor.name, err);
       ui.notifications.warn(
         game.i18n.format('OMNIPRESENCE.notifications.syncFailed', { name: localActor.name })
       );
+      return false;
     }
   }
 
@@ -232,6 +243,10 @@ export class SyncEngine {
   // runs (ready-hook reconcile + an updateUser-triggered import) would
   // otherwise both create the same actor.
   static _importing = new Set();
+  // Characters already warned about as unsynced lookalikes this session.
+  // Every live import re-runs the check, so without this the same warning
+  // repeats on each selection change.
+  static _warnedLookalike = new Set();
 
   /**
    * Import compendium actors that are selected by their gate user but absent
@@ -281,13 +296,16 @@ export class SyncEngine {
             id: a.id,
             name: a.name,
             enrolled: SyncRegistry.isEnrolled(a),
-            ownedByGateUser: a.testUserPermission(gateUser, 'OWNER')
+            // Explicit ownership only: an NPC every player owns through
+            // "default" is not this player's character.
+            ownedByGateUser: a.ownership?.[gateUser.id] === CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER
           }))
         );
         if (lookalike) {
           // Tell the owner on their own client; the GM only when the owner
           // is offline (otherwise both would see it for one actor).
-          if (isSelf || (game.user.isGM && !gateUser.active)) {
+          if ((isSelf || (game.user.isGM && !gateUser.active)) && !this._warnedLookalike.has(omnipresenceId)) {
+            this._warnedLookalike.add(omnipresenceId);
             ui.notifications.warn(game.i18n.format('OMNIPRESENCE.notifications.unsyncedLookalike', { name: compActor.name }));
           }
           continue;
@@ -340,6 +358,8 @@ export class SyncEngine {
    *   other modules' flags).
    * - No local X, Y has unpushed edits: re-key to X but KEEP the edits, with
    *   timestamps that make it a conflict for the user to resolve.
+   * - A local X that is out of sync is detached (kept, id cleared) and
+   *   treated as absent: this actor becomes X as above.
    * - A synced local X exists: this actor is a duplicate. Delete it when
    *   clean (and permitted), else take it out of sync and tell the owner.
    * The owner's selection swaps Y for X LAST, and X is held as "import in
@@ -365,7 +385,18 @@ export class SyncEngine {
     let result;
     this._importing.add(target);
     try {
-      const localTarget = game.actors.find(a => a.id !== actor.id && a.getFlag('omnipresence', 'id') === target);
+      const others = game.actors.filter(a => a.id !== actor.id && a.getFlag('omnipresence', 'id') === target);
+      // Only a SYNCED local X counts. A copy deliberately taken out of sync is
+      // not the world's copy of this character: detach it fully (kept as an
+      // ordinary actor) so this actor can become X without a second id holder.
+      for (const outOfSync of others.filter(a => !SyncRegistry.isEnrolled(a))) {
+        await outOfSync.update(
+          { 'flags.omnipresence.id': null, 'flags.omnipresence.enrolled': false },
+          { omnipresenceInternal: true }
+        );
+        ui.notifications.warn(game.i18n.format('OMNIPRESENCE.notifications.mergeOutOfSyncDetached', { name: outOfSync.name }));
+      }
+      const localTarget = others.find(a => SyncRegistry.isEnrolled(a));
       if (!localTarget) {
         if (dirty) {
           // An epoch syncedAt with the newer localModifiedAt kept reads as

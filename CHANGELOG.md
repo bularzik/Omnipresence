@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them from their own client, and otherwise the connected GM does within a
   few seconds (shared journal folders always go through the GM). The same
   applies to documents added later in **Manage synced documents**.
+- **Shared journal folders no longer import twice.** If a folder sync started
+  while another was still running (for example, clicking **Sync here** just
+  after logging in), both could import the same folder, leaving duplicate
+  folders and journals. Folder syncs now run one at a time. Marking a folder
+  for sync while the login sync was still running could likewise put two
+  copies of a journal in the shared compendium; pushes of the same journal now
+  run one at a time.
 
 ### Added
 - **"Link to synced character…"** in the Actors Directory right-click menu.
@@ -29,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copy but keeps other modules' data, such as the D&D Beyond Importer link.
   Linking an actor that was already synced under its own id merges the two:
   the extra shared copy is retired and other worlds switch over at login.
+  A GM can link any player's character, for example a player's D&D Beyond
+  re-import; the actor then belongs to that player in this world.
 - **No duplicate imports.** A character isn't imported into a world that
   already has an unsynced character with the same name and owner; you're
   pointed to "Link to synced character…" instead.

@@ -28,7 +28,9 @@ export class LinkDialog {
       .filter(d => d.getFlag('omnipresence', 'id'))
       .filter(d => !d.getFlag('omnipresence', 'mergedInto'))
       .filter(d => d.getFlag('omnipresence', 'id') !== ownId)
-      .filter(d => SyncRegistry.isGateUserFor(d))
+      // A GM may link any character (e.g. a player's D&D Beyond re-import);
+      // a player only their own.
+      .filter(d => game.user.isGM || SyncRegistry.isGateUserFor(d))
       .sort((a, b) => a.name.localeCompare(b.name));
 
     if (!candidates.length) {

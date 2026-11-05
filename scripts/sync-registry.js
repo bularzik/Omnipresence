@@ -306,10 +306,11 @@ export class SyncRegistry {
     await user.update({ 'flags.omnipresence.pendingMerges': [...this.getPendingMerges(userId), entry] });
   }
 
-  static async clearPendingMerges(userId) {
+  /** Replace a user's queued merges (the drain keeps entries queued after it read them). */
+  static async setPendingMerges(userId, entries) {
     const user = game.users?.get(userId);
     if (!user) return;
-    await user.update({ 'flags.omnipresence.pendingMerges': [] }, { omnipresenceInternal: true });
+    await user.update({ 'flags.omnipresence.pendingMerges': entries }, { omnipresenceInternal: true });
   }
 
   /**

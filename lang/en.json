@@ -100,5 +100,6 @@
   "OMNIPRESENCE.link.none": "No synced characters to link to.",
   "OMNIPRESENCE.link.staleCopyWarning": "This world already has a synced copy, {name}. It will be deleted when you link.",
   "OMNIPRESENCE.link.staleCopyDirtyWarning": "This world already has a synced copy, {name}, with changes that haven't synced yet. It will be removed from sync (not deleted) when you link.",
+  "OMNIPRESENCE.notifications.mergeOutOfSyncDetached": "{name} was out of sync, and its synced copy here now carries this character. It's kept as an ordinary actor; ask your GM to delete it if you no longer need it.",
   "OMNIPRESENCE.notifications.mergeDuplicateDetached": "{name} was merged into another synced character that's already here. It was removed from sync; ask your GM to delete it."
 }

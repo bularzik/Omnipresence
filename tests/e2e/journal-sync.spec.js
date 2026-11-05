@@ -98,3 +98,24 @@ test('journal sync disabled suppresses push', async () => {
     });
   });
 });
+
+test('overlapping pushes of a new journal create one compendium copy', async () => {
+  const count = await gmPage.evaluate(async () => {
+    const { JournalSync } = await import('/modules/omnipresence/scripts/journal-sync.js');
+    const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+    const pack = game.packs.get('omnipresence.omnipresence-journals');
+    const j = await JournalEntry.create({ name: 'Omni Push Race', pages: [{ name: 'P', type: 'text', text: { content: '<p>x</p>' } }] });
+    try {
+      const omniId = await SyncRegistry.enroll(j);
+      // e.g. the login folder sync and a folder mark both pushing the member.
+      await Promise.all([JournalSync.push(j), JournalSync.push(j), JournalSync.push(j)]);
+      return (await pack.getDocuments()).filter(d => d.getFlag('omnipresence', 'id') === omniId).length;
+    } finally {
+      const omniId = j.getFlag('omnipresence', 'id');
+      for (const d of await pack.getDocuments()) if (d.getFlag('omnipresence', 'id') === omniId) await d.delete({ omnipresenceInternal: true });
+      await SyncRegistry.unenroll(j);
+      await j.delete({ omnipresenceInternal: true });
+    }
+  });
+  expect(count).toBe(1);
+});
