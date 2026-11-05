@@ -32,6 +32,8 @@ const FOLDER_TYPE = 'JournalEntry';
  */
 export class FolderSync {
   static _timers = new Map(); // root local id → timeout handle
+  static _reconcileRun = null; // the running reconcileFolders pass, if any
+  static _reconcileAgain = false; // a call arrived mid-pass: run once more
 
   static get PACK_ID() {
     return JournalSync.PACK_ID;
@@ -586,8 +588,33 @@ export class FolderSync {
   /**
    * Called from runLoginReconcile before JournalSync.onLogin so folders exist
    * and members are imported before the per-journal loop syncs content.
+   *
+   * Serialized: a call while a pass is running does not start a second,
+   * overlapping pass (both would import the same missing roots and members,
+   * leaving duplicates); it asks for one more pass after the current one and
+   * resolves when that pass is done, so every caller still sees its request
+   * reconciled. Overlaps are routine: the login reconcile vs. a "Sync here"
+   * click or a player's folder-list change.
    */
-  static async reconcileFolders() {
+  static reconcileFolders() {
+    if (this._reconcileRun) {
+      this._reconcileAgain = true;
+      return this._reconcileRun;
+    }
+    this._reconcileRun = (async () => {
+      try {
+        do {
+          this._reconcileAgain = false;
+          await this._reconcileFoldersOnce();
+        } while (this._reconcileAgain);
+      } finally {
+        this._reconcileRun = null;
+      }
+    })();
+    return this._reconcileRun;
+  }
+
+  static async _reconcileFoldersOnce() {
     const pack = this._getPack();
     if (!pack) return;
 

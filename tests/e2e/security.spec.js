@@ -316,3 +316,38 @@ test("a GM-only macro placed on a player's hotbar is not published (#4)", async 
   await expect.poll(() => published(`${PREFIX} Owned Macro`), { timeout: 20_000, message: 'the owned control macro should publish' }).toBe(1);
   expect(await published(`${PREFIX} GM Macro`)).toBe(0);
 });
+
+// A player's client imports, links and follows merges but cannot write
+// bindings, so the active GM binds (adopts) a player's OWN shared character.
+// It must never adopt a carrier of another player's shared copy: the carrier
+// below is User 1's, enrolled and on User 1's list, but the copy names User 2.
+test("the GM binds a player's own re-keyed character, never one carrying another player's id", async () => {
+  test.setTimeout(60_000);
+  const result = await gmPage.evaluate(async ({ PREFIX, PLAYER }) => {
+    const { SyncRegistry } = await import('/modules/omnipresence/scripts/sync-registry.js');
+    const { Bindings } = await import('/modules/omnipresence/scripts/bindings.js');
+    const pack = game.packs.get(`omnipresence.omnipresence-${game.system.id}`);
+    const player = game.users.getName(PLAYER);
+    const run = async (label, ownerName) => {
+      const omniId = foundry.utils.randomID(16);
+      await Actor.create({
+        name: `${PREFIX} Adopt ${label} Copy`, type: 'character',
+        flags: { omnipresence: { id: omniId, syncedAt: new Date().toISOString(), ownerName } }
+      }, { pack: pack.collection });
+      // As a player's link leaves it: re-keyed, enrolled, picked, owned by the player.
+      const carrier = await Actor.create({
+        name: `${PREFIX} Adopt ${label} Carrier`, type: 'character',
+        ownership: { default: 0, [player.id]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER },
+        flags: { omnipresence: { id: omniId, enrolled: true, ownerName: PLAYER } }
+      }, { omnipresenceInternal: true });
+      await SyncRegistry.addToSelection(player.id, 'actor', omniId);
+      const adopted = await Bindings.adopt(carrier);
+      const bound = Bindings.isBoundTo(carrier);
+      await SyncRegistry.removeFromSelection(player.id, 'actor', omniId);
+      return { adopted, bound };
+    };
+    return { other: await run('Other', 'User 2'), own: await run('Own', PLAYER) };
+  }, { PREFIX, PLAYER });
+  expect(result.other).toEqual({ adopted: false, bound: false });
+  expect(result.own).toEqual({ adopted: true, bound: true });
+});

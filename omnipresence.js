@@ -10,6 +10,7 @@ import { LinkRewriter } from './scripts/link-rewriter.js';
 import { Onboarding } from './scripts/onboarding.js';
 import { runLoginReconcile } from './scripts/reconcile.js';
 import { FolderDirectory } from './scripts/folder-directory.js';
+import { drainPendingMerges } from './scripts/link-actor.js';
 import { unlockPacks, hidePacksFromPlayers } from './scripts/pack-ownership.js';
 import { Bindings } from './scripts/bindings.js';
 
@@ -66,6 +67,14 @@ Hooks.once('ready', async () => {
   // all sync/import until they choose what to sync (opt-in). Existing worlds
   // are detected and back-filled silently, returning true. A dismissed prompt
   // returns false — skip sync this session and re-ask next login.
+  // Merge stubs players queued while no GM was online: write them before the
+  // reconcile, so this login already follows the redirects.
+  try {
+    await drainPendingMerges();
+  } catch (err) {
+    console.error('Omnipresence | pending merge drain failed', err);
+  }
+
   const proceed = await Onboarding.ensureOnboarded();
   if (proceed) {
     await runLoginReconcile();
@@ -179,6 +188,49 @@ Hooks.on('updateUser', (_user, changes, _options, _userId) => {
   if (hasPendingRoot || hasPendingDelete) FolderSync.materializePending().catch(err => console.error('Omnipresence | pending folder materialize failed', err));
 });
 
+// A user's synced-document selection changed (onboarding picker, Manage
+// dialog): import their newly picked documents now, not at the next GM login.
+// The owner's own client imports what it may create (shouldImportFor); the
+// designated GM imports the rest, plus folder picks (players can't create
+// folders). Import only — unchecking never deletes or unenrolls here.
+//
+// Every selection write carries the whole selection (folderIds included), so
+// the folder reconcile — a full tree pass — runs only when another user's
+// folder list ACTUALLY changed (a GM's own picks reconcile via the Manage
+// save path). lastFolderIds is seeded at ready.
+const lastFolderIds = new Map(); // userId → JSON of folderIds
+const folderKey = ids => JSON.stringify(Array.isArray(ids) ? [...ids].sort() : ids ?? null);
+Hooks.once('ready', () => {
+  for (const u of game.users) lastFolderIds.set(u.id, folderKey(SyncRegistry.getSelection(u.id).folderIds));
+});
+Hooks.on('updateUser', (user, changes, _options, _userId) => {
+  const selection = changes.flags?.omnipresence?.selection;
+  if (!selection) return;
+  const isSelf = user.id === game.user.id;
+  const isDesignatedGM = FolderSync._isResponsibleGM();
+  const key = folderKey(SyncRegistry.getSelection(user.id).folderIds);
+  const foldersChanged = lastFolderIds.has(user.id) && lastFolderIds.get(user.id) !== key;
+  lastFolderIds.set(user.id, key);
+  if (!isSelf && !isDesignatedGM) return;
+  const log = what => err => console.error(`Omnipresence | live ${what} import failed`, err);
+  (async () => {
+    await SyncEngine.importMissing({ forUserId: user.id }).catch(log('actor'));
+    await JournalSync.importMissing({ forUserId: user.id }).catch(log('journal'));
+    if (isDesignatedGM && !isSelf && foldersChanged) await FolderSync.reconcileFolders().catch(log('folder'));
+    FolderDirectory.refresh();
+  })();
+});
+
+// A player queued a merge stub (they linked an already-synced duplicate to
+// its original): the connected GM writes it now. The GM's own clear is an
+// empty array, which does not match; a non-empty remainder (queued mid-drain)
+// does, and the drain coalesces it into one more pass.
+Hooks.on('updateUser', (_user, changes, _options, _userId) => {
+  const pending = changes.flags?.omnipresence?.pendingMerges;
+  if (!Array.isArray(pending) || pending.length === 0) return;
+  drainPendingMerges().catch(err => console.error('Omnipresence | pending merge drain failed', err));
+});
+
 Hooks.on('updateJournalEntry', (journal, changes, options, userId) => {
   if (options?.omnipresenceInternal) return;
   if (journal.pack) return;
@@ -259,3 +311,20 @@ Hooks.on('createJournalEntry', (journal, options, userId) =>
   Bindings.clearInheritedId(journal, options)
     .then(() => FolderSync.handleMemberCreate(journal, options, userId))
     .catch(err => console.error('Omnipresence | createJournalEntry handling failed', err)));
+
+// A player's client imports, links and follows merges, but only a GM can
+// write bindings: the active GM binds the player's own shared characters and
+// journals once the id, enrollment and synced list have settled (Bindings.adopt).
+// Internal writes count too — a player's import and re-key are internal.
+const adoptIfUnbound = (doc, userId) => {
+  if (doc.pack || userId === game.user.id || !SyncRegistry.isPusher()) return;
+  if (!doc.getFlag('omnipresence', 'id') || Bindings.isBoundTo(doc)) return;
+  Bindings.scheduleAdopt();
+};
+for (const hook of ['createActor', 'updateActor', 'createJournalEntry', 'updateJournalEntry']) {
+  Hooks.on(hook, (doc, ...rest) => adoptIfUnbound(doc, rest[rest.length - 1]));
+}
+Hooks.on('updateUser', (_user, changes, _options, userId) => {
+  if (!changes.flags?.omnipresence?.selection || userId === game.user.id) return;
+  Bindings.scheduleAdopt();
+});

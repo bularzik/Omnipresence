@@ -4,7 +4,7 @@ import { SyncEngine } from './sync-engine.js';
 import { JournalSync } from './journal-sync.js';
 import {
   decidePushBinding, buildBindings, resolveDuplicateBindings, pullAllowed, mergeDuplicateRecord, pushRefusalRecord,
-  markUpgradeDuplicates, duplicateHints, staleBindingRecord
+  markUpgradeDuplicates, duplicateHints, staleBindingRecord, adoptAllowed
 } from './security-logic.js';
 
 // The sync flags a detached document loses: without its omni id it is an
@@ -75,6 +75,7 @@ export class Bindings {
       binding: this.get(omniId), docId: doc.id, docType: doc.documentName
     });
     if (ok) return true;
+    if (await this.adopt(doc)) return true;
     console.warn(
       `Omnipresence | refusing to sync ${doc.documentName} "${doc.name}" (${doc.id}) from its shared copy: ` +
       `its sync id ${omniId} is not bound to it here.`
@@ -115,6 +116,77 @@ export class Bindings {
     return this._write({ [omniId]: { type: doc.documentName, id: doc.id } });
   }
 
+  /**
+   * Active GM: bind `doc` on its player's behalf when it is that player's own
+   * shared character (adoptAllowed). A player's client imports, links and
+   * follows merges but cannot write bindings; without this those documents
+   * would never sync. Drops the id's duplicates record once bound.
+   * @returns {Promise<boolean>} whether `doc` is now bound to its id
+   */
+  static async adopt(doc) {
+    if (!SyncRegistry.isPusher()) return false;
+    if (doc.documentName !== 'Actor' && doc.documentName !== 'JournalEntry') return false;
+    const omniId = doc.getFlag('omnipresence', 'id');
+    if (!omniId) return false;
+    if (this.isBoundTo(doc)) return true;
+    const binding = this.get(omniId);
+    const boundDoc = binding ? this._lookup(binding.type, binding.id) : null;
+    const isActor = doc.documentName === 'Actor';
+    const comp = isActor
+      ? await SyncEngine._getCompendiumActor(omniId)
+      : await JournalSync._getCompendiumJournal(omniId);
+    const ownerName = comp?.getFlag('omnipresence', 'ownerName') ?? null;
+    const user = ownerName ? SyncRegistry.gateUser(ownerName) : null;
+    const owns = !!user && doc.ownership?.[user.id] === CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER;
+    const ok = adoptAllowed({
+      binding,
+      boundDocCarriesId: boundDoc?.getFlag('omnipresence', 'id') === omniId,
+      copy: { exists: !!comp, ownerName, mergedInto: comp?.getFlag('omnipresence', 'mergedInto') ?? null },
+      docOwner: owns ? { name: user.name, isGM: user.isGM } : null,
+      selected: !!user && SyncRegistry.isDocSelected(user.id, isActor ? 'actor' : 'journal', omniId),
+      enrolled: SyncRegistry.isEnrolled(doc),
+      otherCarrier: this._carriers().some(c => c.omniId === omniId && !(c.type === doc.documentName && c.id === doc.id))
+    });
+    if (!ok) return false;
+    await this.bind(doc);
+    const recorded = game.settings.get('omnipresence', this.DUPLICATES) ?? {};
+    if (omniId in recorded) {
+      const { [omniId]: _, ...rest } = recorded;
+      await game.settings.set('omnipresence', this.DUPLICATES, rest);
+    }
+    console.info(`Omnipresence | bound ${doc.documentName} "${doc.name}" (${doc.id}) to ${omniId} for ${user.name}.`);
+    return true;
+  }
+
+  /** Active GM: adopt every unbound Actor/JournalEntry carrying an omni id. */
+  static async adoptAll() {
+    if (!SyncRegistry.isPusher() || !game.settings.get('omnipresence', this.BUILT)) return;
+    for (const doc of [...game.actors, ...game.journal]) {
+      if (!doc.getFlag('omnipresence', 'id') || this.isBoundTo(doc)) continue;
+      try {
+        await this.adopt(doc);
+      } catch (err) {
+        console.error('Omnipresence | binding a player\'s document failed for', doc.name, err);
+      }
+    }
+  }
+
+  static _adoptTimer = null;
+  /**
+   * Active GM: run adoptAll shortly. Called from the create/update hooks and
+   * when a player's synced list changes — the order in which a player's
+   * client writes the id, the enrollment and the list varies by path, so one
+   * pass after they settle sees all three.
+   */
+  static scheduleAdopt() {
+    if (!SyncRegistry.isPusher()) return;
+    clearTimeout(this._adoptTimer);
+    this._adoptTimer = setTimeout(() => {
+      this._adoptTimer = null;
+      this.adoptAll().catch(err => console.error('Omnipresence | adopting player documents failed', err));
+    }, 500);
+  }
+
   /** The push check: may `doc` write (or delete) the shared copy of its omni id? */
   static async authorizePush(doc, copyExists) {
     const omniId = doc.getFlag('omnipresence', 'id');
@@ -128,6 +200,7 @@ export class Bindings {
       await this.bind(doc);
       return true;
     }
+    if (await this.adopt(doc)) return true;
     const record = pushRefusalRecord({
       omniId, bound: !!this.get(omniId), copyExists,
       doc: { type: doc.documentName, id: doc.id }, others
@@ -188,6 +261,7 @@ export class Bindings {
       }
     }
     await this.sweepInheritedIds();
+    await this.adoptAll();
   }
 
   /**

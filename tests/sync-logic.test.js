@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, withLocalStats, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, forgetFolderSelection, upgradeFolderSelection, sharedFolderRows, isGateUser, portableFolderFlags, mergeFolderFlags, resolveFolderFlags } from '../scripts/sync-logic.js';
+import { decideSyncAction, stripWorldLocalFields, stripMacroLocalFields, withLocalStats, diffEmbedded, resolveOwningActor, resolveOwningJournal, requiredModulesForJournal, worldLocalMediaPaths, deriveConflictState, isEnrolledFrom, UUID_PATTERN, canonicalizeLinks, localizeLinks, capturePinPayload, localizePins, decideOnboarding, isSelected, filterCandidates, findSyncedRootId, collectFolderTree, diffFolderTree, classifyMembership, resolveTombstoneAction, forgetFolderSelection, upgradeFolderSelection, sharedFolderRows, isGateUser, portableFolderFlags, mergeFolderFlags, resolveFolderFlags, shouldImportFor, findUnsyncedLookalike, mergeForeignFlags, keepLocalLinkFlags, resolveMerge, isValidMergeRequest } from '../scripts/sync-logic.js';
 
 const T0 = '2026-06-14T10:00:00.000Z';
 const T1 = '2026-06-14T11:00:00.000Z';
@@ -1022,4 +1022,98 @@ test('diffFolderTree: partial pack flags never strip local scopes on pull, and f
   const push = diffFolderTree([local], [pack]).toUpdate;
   assert.deepEqual(push.map(n => n.flags), [local.flags]);
   assert.deepEqual(diffFolderTree([{ ...base, flags: {} }], [pack]).toUpdate, [], 'a world with nothing to add writes nothing');
+});
+
+// --- live import: who imports, duplicate guard (op-87b) ---------------------
+
+test('shouldImportFor: player with create permission imports own picks', () => {
+  assert.equal(shouldImportFor({ isGM: false, isSelf: true, ownerIsGM: false, ownerActive: true, ownerCanCreate: true }), true);
+});
+test('shouldImportFor: player without permission never imports', () => {
+  assert.equal(shouldImportFor({ isGM: false, isSelf: true, ownerIsGM: false, ownerActive: true, ownerCanCreate: false }), false);
+});
+test('shouldImportFor: player never imports for someone else', () => {
+  assert.equal(shouldImportFor({ isGM: false, isSelf: false, ownerIsGM: false, ownerActive: true, ownerCanCreate: true }), false);
+});
+test('shouldImportFor: GM defers to an active owner who can create', () => {
+  assert.equal(shouldImportFor({ isGM: true, isSelf: false, ownerIsGM: false, ownerActive: true, ownerCanCreate: true }), false);
+});
+test('shouldImportFor: GM imports for an offline or permissionless owner', () => {
+  assert.equal(shouldImportFor({ isGM: true, isSelf: false, ownerIsGM: false, ownerActive: false, ownerCanCreate: true }), true);
+  assert.equal(shouldImportFor({ isGM: true, isSelf: false, ownerIsGM: false, ownerActive: true, ownerCanCreate: false }), true);
+});
+test('shouldImportFor: GM imports GM-owned copies', () => {
+  assert.equal(shouldImportFor({ isGM: true, isSelf: true, ownerIsGM: true, ownerActive: true, ownerCanCreate: true }), true);
+});
+
+test('findUnsyncedLookalike: matches trimmed, case-insensitive, unenrolled, same owner', () => {
+  const locals = [{ id: 'a1', name: 'thorin  ', enrolled: false, ownedByGateUser: true }];
+  assert.equal(findUnsyncedLookalike({ name: 'Thorin', ownerName: 'Dan' }, locals), 'a1');
+});
+test('findUnsyncedLookalike: ignores enrolled and other-owner actors', () => {
+  const locals = [
+    { id: 'a1', name: 'Thorin', enrolled: true, ownedByGateUser: true },
+    { id: 'a2', name: 'Thorin', enrolled: false, ownedByGateUser: false }
+  ];
+  assert.equal(findUnsyncedLookalike({ name: 'Thorin', ownerName: 'Dan' }, locals), null);
+});
+test('findUnsyncedLookalike: GM-owned copy (no ownerName) never matches', () => {
+  const locals = [{ id: 'n1', name: 'Goblin Boss', enrolled: false, ownedByGateUser: true }];
+  assert.equal(findUnsyncedLookalike({ name: 'Goblin Boss', ownerName: null }, locals), null);
+});
+
+// --- link / merge helpers (op-87b) -------------------------------------------
+
+test('mergeForeignFlags keeps local module flags, compendium omnipresence', () => {
+  const out = mergeForeignFlags(
+    { ddbimporter: { id: 9 }, omnipresence: { id: 'Y' } },
+    { omnipresence: { id: 'X' }, dnd5e: { a: 1 } }
+  );
+  assert.deepEqual(out, { omnipresence: { id: 'X' }, dnd5e: { a: 1 }, ddbimporter: { id: 9 } });
+});
+test('mergeForeignFlags tolerates missing inputs', () => {
+  assert.deepEqual(mergeForeignFlags(undefined, { omnipresence: { id: 'X' } }), { omnipresence: { id: 'X' } });
+});
+test('keepLocalLinkFlags → decideSyncAction gives push, not conflict', () => {
+  const f = keepLocalLinkFlags({ omniId: 'X', ownerName: 'Dan', compSyncedAt: T1, now: T2 });
+  assert.equal(f.syncedAt, T1);
+  assert.equal(f.id, 'X');
+  assert.equal(f.enrolled, true);
+  assert.equal(decideSyncAction({ localSyncedAt: f.syncedAt, compSyncedAt: T1, localModifiedAt: f.localModifiedAt }), 'push');
+});
+test('resolveMerge follows chains', () => {
+  assert.equal(resolveMerge('Y', { Y: 'X', X: 'W' }), 'W');
+  assert.equal(resolveMerge('Z', { Y: 'X' }), 'Z');
+});
+test('resolveMerge returns null on a cycle', () => {
+  assert.equal(resolveMerge('Y', { Y: 'X', X: 'Y' }), null);
+});
+
+// --- merge-request validation: a player may only merge their OWN copies ----
+
+const PACK = {
+  Y: { ownerName: 'Dan', mergedInto: null },
+  X: { ownerName: 'Dan', mergedInto: null },
+  S: { ownerName: 'Sam', mergedInto: null },
+  G: { ownerName: null, mergedInto: null },
+  Z: { ownerName: 'Dan', mergedInto: 'X' }
+};
+test('isValidMergeRequest: own Y into own X is valid', () => {
+  assert.equal(isValidMergeRequest({ from: 'Y', to: 'X' }, 'Dan', PACK), true);
+});
+test('isValidMergeRequest: cannot stub another player\'s or a GM-owned copy', () => {
+  assert.equal(isValidMergeRequest({ from: 'S', to: 'X' }, 'Dan', PACK), false);
+  assert.equal(isValidMergeRequest({ from: 'G', to: 'X' }, 'Dan', PACK), false);
+});
+test('isValidMergeRequest: target must be the same owner\'s', () => {
+  assert.equal(isValidMergeRequest({ from: 'Y', to: 'S' }, 'Dan', PACK), false);
+});
+test('isValidMergeRequest: rejects missing, self, stubbed, and malformed entries', () => {
+  assert.equal(isValidMergeRequest({ from: 'Q', to: 'X' }, 'Dan', PACK), false);
+  assert.equal(isValidMergeRequest({ from: 'Y', to: 'Q' }, 'Dan', PACK), false);
+  assert.equal(isValidMergeRequest({ from: 'Y', to: 'Y' }, 'Dan', PACK), false);
+  assert.equal(isValidMergeRequest({ from: 'Z', to: 'X' }, 'Dan', PACK), false);
+  assert.equal(isValidMergeRequest({ from: 'Y', to: 'Z' }, 'Dan', PACK), false);
+  assert.equal(isValidMergeRequest(null, 'Dan', PACK), false);
+  assert.equal(isValidMergeRequest({ from: 'Y', to: 'X' }, null, PACK), false);
 });

@@ -739,3 +739,99 @@ export function sharedFolderRows(packRoots, { isGM, userName }, allowList, local
 export function isGateUser({ ownerName, isGM, userName }) {
   return ownerName ? ownerName === userName : !!isGM;
 }
+
+/**
+ * Should THIS client import a compendium document picked by its gate user?
+ * A player imports only their own picks, and only with the create permission.
+ * A GM imports GM-owned copies, and a player's picks unless that player is
+ * online and can create the document themselves (their own client does it,
+ * so the GM stepping in would race it into a duplicate).
+ * @returns {boolean}
+ */
+export function shouldImportFor({ isGM, isSelf, ownerIsGM, ownerActive, ownerCanCreate }) {
+  if (!isGM) return isSelf && ownerCanCreate;
+  return ownerIsGM || !(ownerActive && ownerCanCreate);
+}
+
+const normName = name => String(name ?? '').trim().toLowerCase();
+
+/**
+ * Duplicate guard: a local, NOT yet synced actor that looks like the
+ * compendium copy about to be imported (same normalized name, owned by the
+ * same gate user). Player-owned copies only — a GM owns every local actor, so
+ * a same-name NPC would otherwise block a legitimate GM-owned import.
+ * @param {{name: string, ownerName: string|null}} comp
+ * @param {Array<{id: string, name: string, enrolled: boolean, ownedByGateUser: boolean}>} locals
+ * @returns {string|null} the local actor id, or null
+ */
+export function findUnsyncedLookalike(comp, locals) {
+  if (!comp?.ownerName) return null;
+  const target = normName(comp.name);
+  const hit = locals.find(l => !l.enrolled && l.ownedByGateUser && normName(l.name) === target);
+  return hit?.id ?? null;
+}
+
+/**
+ * Flags for a link that takes the compendium copy ("Use this"): the
+ * compendium's flags, with every local scope except `omnipresence` laid over
+ * them — so other modules' data (e.g. `ddbimporter`) survives in this world.
+ * Scope-level (shallow) merge: a local scope replaces the compendium's whole.
+ * @returns {object}
+ */
+export function mergeForeignFlags(localFlags, compFlags) {
+  const out = { ...(compFlags ?? {}) };
+  for (const [scope, value] of Object.entries(localFlags ?? {})) {
+    if (scope === 'omnipresence') continue;
+    out[scope] = value;
+  }
+  return out;
+}
+
+/**
+ * `flags.omnipresence` for a link that keeps this world's copy ("Keep this").
+ * syncedAt EQUALS the compendium's and localModifiedAt is now, so
+ * decideSyncAction returns `push` — an older syncedAt would read as a conflict.
+ * @returns {{id: string, ownerName: string|null, syncedAt: string, localModifiedAt: string, enrolled: true}}
+ */
+export function keepLocalLinkFlags({ omniId, ownerName, compSyncedAt, now }) {
+  return { id: omniId, ownerName, syncedAt: compSyncedAt, localModifiedAt: now, enrolled: true };
+}
+
+/**
+ * Follow merge redirects (`mergedInto`) from `id` to the surviving id.
+ * @param {string} id
+ * @param {Record<string, string>} mergedIntoById
+ * @returns {string|null} the final id, or null on a cycle
+ */
+export function resolveMerge(id, mergedIntoById) {
+  const seen = new Set();
+  let current = id;
+  while (mergedIntoById[current]) {
+    if (seen.has(current)) return null;
+    seen.add(current);
+    current = mergedIntoById[current];
+  }
+  return current;
+}
+
+/**
+ * Authorize a player-queued merge before a GM writes it (the queue lives on
+ * the player's own User flags, so its contents are untrusted). A requester
+ * may only retire their OWN shared copy (`from`), into another of their own
+ * (`to`); neither may already be a stub, and they must differ. GM-owned
+ * copies (no ownerName) can never be stubbed through the queue.
+ * @param {{from: string, to: string}|null} entry
+ * @param {string|null} requesterName the queuing user's name
+ * @param {Record<string, {ownerName: string|null, mergedInto: string|null}>} packIndex by omnipresence id
+ * @returns {boolean}
+ */
+export function isValidMergeRequest(entry, requesterName, packIndex) {
+  if (!entry || !requesterName) return false;
+  const { from, to } = entry;
+  if (typeof from !== 'string' || typeof to !== 'string' || from === to) return false;
+  const src = packIndex[from];
+  const dst = packIndex[to];
+  if (!src || !dst) return false;
+  if (src.mergedInto || dst.mergedInto) return false;
+  return src.ownerName === requesterName && dst.ownerName === requesterName;
+}

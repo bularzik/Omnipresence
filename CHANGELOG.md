@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-05
+
+### Added
+- **"Link to synced character…"** in the Actors Directory right-click menu.
+  Connects an actor to a character already in the shared compendium, such as a
+  character re-imported from D&D Beyond after it failed to sync. Pick the
+  character (a same-name match is pre-selected), then choose which version
+  wins: **Keep this** overwrites the shared copy, **Use this** takes the shared
+  copy but keeps other modules' data, such as the D&D Beyond Importer link.
+  Linking an actor that was already synced under its own id merges the two:
+  the extra shared copy is retired and other worlds switch over at login.
+  A GM can link any player's character, for example a player's D&D Beyond
+  re-import; the actor then belongs to that player in this world.
+- **No duplicate imports.** A character isn't imported into a world that
+  already has an unsynced character with the same name and owner; you're
+  pointed to "Link to synced character…" instead.
+
 ### Security
 - **Synced content is hidden from players.** The Omnipresence packs no longer
   show in players' Compendium sidebar, and a GM login hides them again if a
@@ -49,6 +66,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from players; the fix prevents new leaks only).
 - A script macro approved by a GM is now approved by the command that was
   shown in the dialog, not whatever the shared copy holds when Install is clicked.
+- Characters and journals a player imports or links from their own client
+  are recorded as theirs by the connected GM (or at the GM's next login) so
+  they sync, but only when the shared copy belongs to that player, the
+  player owns the document and picked it for this world, and nothing else
+  here holds its sync id.
 
 ### Changed
 - On upgrade, documents that already share a sync id (for example a synced
@@ -88,6 +110,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer syncs from that player's hotbar.
 
 ### Fixed
+- **Characters picked in the first-sync dialog now arrive right away.** On a
+  player's first login to a world, the characters and journals they picked
+  were only imported the next time a GM reloaded the world, even with a GM
+  connected. Now a player with the "Create New Actors" permission imports
+  them from their own client, and otherwise the connected GM does within a
+  few seconds (shared journal folders always go through the GM). The same
+  applies to documents added later in **Manage synced documents**.
+- **Shared journal folders no longer import twice.** If a folder sync started
+  while another was still running (for example, clicking **Sync here** just
+  after logging in), both could import the same folder, leaving duplicate
+  folders and journals. Folder syncs now run one at a time. Marking a folder
+  for sync while the login sync was still running could likewise put two
+  copies of a journal in the shared compendium; pushes of the same journal now
+  run one at a time.
 - A player who duplicated their own journal inside their synced folder with
   no GM online, then deleted the copy, no longer deletes the original and its
   shared copy at the next GM login: a queued folder-member delete is refused
@@ -462,7 +498,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/publish` slash command and a GitHub Actions release workflow (manifest,
   download, and url fields for Foundry installation).
 
-[Unreleased]: https://github.com/bularzik/Omnipresence/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/bularzik/Omnipresence/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/bularzik/Omnipresence/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/bularzik/Omnipresence/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/bularzik/Omnipresence/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/bularzik/Omnipresence/compare/v0.7.0...v0.7.1

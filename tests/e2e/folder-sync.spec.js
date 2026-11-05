@@ -2,7 +2,7 @@
 // import into an empty "target" world, unmark.
 import { test, expect, chromium } from '@playwright/test';
 import { loginToFoundry } from './helpers.js';
-import { buildTree, cleanup, PACK, ROOT_NAME, SUB_NAME } from './folder-helpers.js';
+import { buildTree, buildAndMark, cleanup, PACK, ROOT_NAME, SUB_NAME } from './folder-helpers.js';
 
 let browser, gmContext, gmPage;
 
@@ -133,6 +133,32 @@ test('unmarking removes the pack tree and leaves local copies in place', async (
       packRootGone: true, packDocsGone: true, localRootStays: true,
       localSubStays: true, j1Stays: true, registryGone: true
     });
+  } finally {
+    await cleanup(gmPage);
+  }
+});
+
+// Two reconciles can overlap on one client: the login reconcile is still
+// running when a "Sync here" click, a player's folder-list change, or a second
+// call arrives. Each pass imports every missing member, so without
+// serialization both import the same journal and the world holds two copies.
+test('overlapping folder reconciles import each member once', async () => {
+  try {
+    await buildAndMark(gmPage);
+    const counts = await gmPage.evaluate(async ({ ROOT_NAME }) => {
+      const { FolderSync } = await import('/modules/omnipresence/scripts/folder-sync.js');
+      // Simulate a target world: the pack tree exists, nothing local.
+      for (const j of game.journal.filter(j => j.name.startsWith(ROOT_NAME))) await j.delete({ omnipresenceInternal: true });
+      for (const f of game.folders.filter(f => f.name.startsWith(ROOT_NAME) && f.folder)) await f.delete({ omnipresenceInternal: true });
+      await game.folders.getName(ROOT_NAME).delete({ omnipresenceInternal: true });
+      await Promise.all([FolderSync.reconcileFolders(), FolderSync.reconcileFolders(), FolderSync.reconcileFolders()]);
+      return {
+        roots: game.folders.filter(f => f.name === ROOT_NAME).length,
+        j1: game.journal.filter(j => j.name === `${ROOT_NAME} J1`).length,
+        j2: game.journal.filter(j => j.name === `${ROOT_NAME} J2`).length
+      };
+    }, { ROOT_NAME });
+    expect(counts).toEqual({ roots: 1, j1: 1, j2: 1 });
   } finally {
     await cleanup(gmPage);
   }

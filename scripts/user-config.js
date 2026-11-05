@@ -3,18 +3,20 @@ import { DocPicker } from './doc-picker.js';
 import { runLoginReconcile } from './reconcile.js';
 
 /**
- * After a save that admits new documents: a GM imports them now, a player's
- * wait for the next GM login (the import sections are GM-gated). A failure
- * here means "saved but not yet synced", so it gets its own message.
+ * After a save that admits new documents: a GM, or a player with "Create New
+ * Actors", imports them now; otherwise a connected GM does (updateUser hook),
+ * or the next GM login. A failure here means "saved but not yet synced", so
+ * it gets its own message.
  */
 export async function syncNewlyAdmitted() {
   try {
     await runLoginReconcile();
-    ui.notifications.info(game.i18n.localize(
-      game.user.isGM
-        ? 'OMNIPRESENCE.notifications.manageSavedSyncingNow'
-        : 'OMNIPRESENCE.notifications.manageSavedSyncsAtNextGmLogin'
-    ));
+    const key = (game.user.isGM || game.user.can('ACTOR_CREATE'))
+      ? 'OMNIPRESENCE.notifications.manageSavedSyncingNow'
+      : game.users.activeGM
+        ? 'OMNIPRESENCE.notifications.manageSavedGmImporting'
+        : 'OMNIPRESENCE.notifications.manageSavedSyncsAtNextGmLogin';
+    ui.notifications.info(game.i18n.localize(key));
   } catch (reconcileErr) {
     console.error('Omnipresence | reconcile after manage save failed', reconcileErr);
     ui.notifications.warn(game.i18n.localize('OMNIPRESENCE.notifications.manageSavedReconcileFailed'));

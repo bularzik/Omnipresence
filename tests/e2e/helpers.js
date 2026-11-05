@@ -17,8 +17,9 @@ export const FOUNDRY_URL = process.env.FOUNDRY_URL ?? 'http://localhost:30000';
  * before submitting. Selecting via `selectOption` would fail on a disabled
  * option, hence the manual value set plus change event.
  *
- * v14 replaced the dropdown with an `<input name="username">` text field, so
- * the name is typed instead.
+ * v14.368 replaced the dropdown with an `<input name="username">` text field, so
+ * the name is typed instead. v14.369 is back to a dropdown, now
+ * `<select name="userId">` — hence the case-insensitive `[name="userid" i]`.
  *
  * `waitForFunction(fn, arg, options)`: the timeout must be the THIRD argument.
  * Passing it second makes it the predicate's `arg` and silently leaves the

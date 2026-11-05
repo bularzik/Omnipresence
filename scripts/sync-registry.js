@@ -292,6 +292,27 @@ export class SyncRegistry {
     await user.update({ 'flags.omnipresence.pendingDeletes': entries }, { omnipresenceInternal: true });
   }
 
+  /** Player-requested merge stubs (`{from, to}` omnipresence ids) awaiting a GM write. */
+  static getPendingMerges(userId) {
+    const stored = game.users?.get(userId)?.getFlag('omnipresence', 'pendingMerges');
+    return Array.isArray(stored) ? stored : [];
+  }
+
+  // Deliberately NOT omnipresenceInternal: the connected GM's updateUser hook
+  // must see it and write the stub now (see drainPendingMerges).
+  static async addPendingMerge(userId, entry) {
+    const user = game.users?.get(userId);
+    if (!user) return;
+    await user.update({ 'flags.omnipresence.pendingMerges': [...this.getPendingMerges(userId), entry] });
+  }
+
+  /** Replace a user's queued merges (the drain keeps entries queued after it read them). */
+  static async setPendingMerges(userId, entries) {
+    const user = game.users?.get(userId);
+    if (!user) return;
+    await user.update({ 'flags.omnipresence.pendingMerges': entries }, { omnipresenceInternal: true });
+  }
+
   /**
    * The user whose preferences and allow-list gate a document or root: the
    * user named by its ownerName, or — for a GM-owned doc / GM-marked root

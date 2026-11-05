@@ -35,6 +35,30 @@ export function pullAllowed({ bindingsBuilt, binding, docId, docType }) {
 }
 
 /**
+ * May the active GM bind `doc` to its omni id on a player's behalf? A
+ * player's client creates or re-keys synced documents (live import, Link to
+ * synced character, following a merge) but cannot write bindings. Bind only
+ * the player's OWN shared character: the shared copy (GM-written) names that
+ * player as owner, the player owns the document, picked the id for this
+ * world, and nothing else here holds the id or a live binding to it.
+ * @param {object} p
+ * @param {{type: string, id: string}|null} p.binding the id's current binding
+ * @param {boolean} p.boundDocCarriesId the bound document exists and still carries the id
+ * @param {{exists: boolean, ownerName: string|null, mergedInto: string|null}} p.copy
+ * @param {{name: string, isGM: boolean}|null} p.docOwner the document's player owner
+ * @param {boolean} p.selected the id is on that player's list for this world
+ * @param {boolean} p.enrolled the document is enrolled here
+ * @param {boolean} p.otherCarrier another local document carries the id
+ * @returns {boolean}
+ */
+export function adoptAllowed({ binding, boundDocCarriesId, copy, docOwner, selected, enrolled, otherCarrier }) {
+  if (binding && boundDocCarriesId) return false;
+  if (!copy?.exists || copy.mergedInto || !copy.ownerName) return false;
+  if (!docOwner || docOwner.isGM || docOwner.name !== copy.ownerName) return false;
+  return !!selected && !!enrolled && !otherCarrier;
+}
+
+/**
  * Build bindings from the documents of an existing world. An omni id carried
  * by exactly one document is bound to it; one carried by two or more is left
  * unbound and reported (a pre-upgrade forgery looks exactly like this).
