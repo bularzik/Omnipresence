@@ -213,6 +213,9 @@ async function seedEnrolledLocal(page, { name, bio, omniId, ownerName, dirty = f
       flags: { omnipresence: { id: omniId, ownerName, enrolled: true, syncedAt: t, localModifiedAt: dirty ? new Date().toISOString() : t } }
     }, { omnipresenceInternal: true });
     await SyncRegistry.addToSelection(player.id, 'actor', omniId);
+    // Already synced here, so bound to its id (as its first push or import left it).
+    const { Bindings } = await import('/modules/omnipresence/scripts/bindings.js');
+    await Bindings.bind(a);
     return a.id;
   }, { name, bio, omniId, ownerName, dirty });
 }

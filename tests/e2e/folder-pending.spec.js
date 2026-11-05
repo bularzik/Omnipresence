@@ -80,9 +80,10 @@ test('player mark → connected GM materializes; move-out with GM; move-out + de
     await new Promise(r => setTimeout(r, 500));
     out.pendingRemove = game.journal.get(ids.J2).getFlag('omnipresence', 'pendingRemove');
     out.pendingDeletes = game.user.getFlag('omnipresence', 'pendingDeletes');
+    out.userId = game.user.id;
     return out;
   }, { ids });
-  expect(pend.pendingRemove).toBe(rootId);
+  expect(pend.pendingRemove).toEqual({ rootId, userId: pend.userId });
   expect(pend.pendingDeletes).toEqual([{ omniId: pend.j3Omni, rootId }]);
 
   // 6. A fresh GM login drains both into tombstones and clears the records.

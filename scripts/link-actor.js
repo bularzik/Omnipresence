@@ -1,5 +1,6 @@
 import { SyncRegistry } from './sync-registry.js';
 import { SyncEngine } from './sync-engine.js';
+import { Bindings } from './bindings.js';
 import { FolderSync } from './folder-sync.js';
 import { keepLocalLinkFlags, isValidMergeRequest } from './sync-logic.js';
 
@@ -34,6 +35,11 @@ export async function linkActor(localActor, compActor, winner) {
   const ownerName = compData.flags.omnipresence.ownerName ?? null;
   const compSyncedAt = compData.flags.omnipresence.syncedAt;
 
+  // Only a GM, or the player the shared copy belongs to, may take it (the
+  // dialog lists nothing else); the pull below skips the binding check on
+  // that basis.
+  if (!game.user.isGM && !SyncRegistry.isGateUserFor(compActor)) return false;
+
   const previousId = SyncRegistry.isEnrolled(localActor) ? localActor.getFlag('omnipresence', 'id') : null;
   if (previousId === omniId) return true; // already linked to this character
 
@@ -64,13 +70,17 @@ export async function linkActor(localActor, compActor, winner) {
   if (winner === 'shared') {
     // A failed pull already warned; enrolling would sync the actor's old data
     // as this character.
-    if (!await SyncEngine.pull(localActor, compActor, { keepForeignFlags: true })) return false;
+    if (!await SyncEngine.pull(localActor, compActor, { keepForeignFlags: true, authorized: true })) return false;
     await SyncRegistry.enroll(localActor);
+    // A GM binds the re-keyed actor now; a player's is bound by the active GM
+    // (Bindings.adopt) once it sees the new id and the player's list.
+    if (game.user.isGM) await Bindings.bind(localActor);
   } else {
     const flags = keepLocalLinkFlags({ omniId, ownerName, compSyncedAt, now: new Date().toISOString() });
     if (game.user.isGM) {
       await localActor.update({ 'flags.omnipresence': flags }, { omnipresenceInternal: true });
       await SyncRegistry.enroll(localActor);
+      await Bindings.bind(localActor);
       await SyncEngine.push(localActor);
     } else {
       // Players cannot write the pack. Deliberately NOT omnipresenceInternal:

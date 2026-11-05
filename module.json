@@ -22,14 +22,14 @@
     }
   ],
   "packs": [
-    { "name": "omnipresence-dnd5e",       "type": "Actor", "system": "dnd5e",       "path": "packs/omnipresence-dnd5e",       "label": "Omnipresence — D&D 5e" },
-    { "name": "omnipresence-pf2e",        "type": "Actor", "system": "pf2e",        "path": "packs/omnipresence-pf2e",        "label": "Omnipresence — Pathfinder 2e" },
-    { "name": "omnipresence-daggerheart", "type": "Actor", "system": "daggerheart", "path": "packs/omnipresence-daggerheart", "label": "Omnipresence — Daggerheart" },
-    { "name": "omnipresence-draw-steel",  "type": "Actor", "system": "draw-steel",  "path": "packs/omnipresence-draw-steel",  "label": "Omnipresence — Draw Steel" },
-    { "name": "omnipresence-shadowdark",  "type": "Actor", "system": "shadowdark",  "path": "packs/omnipresence-shadowdark",  "label": "Omnipresence — Shadowdark" },
-    { "name": "omnipresence-CoC7",        "type": "Actor", "system": "CoC7",        "path": "packs/omnipresence-CoC7",        "label": "Omnipresence — Call of Cthulhu 7e" },
-    { "name": "omnipresence-macros",      "type": "Macro", "path": "packs/omnipresence-macros", "label": "Omnipresence — Macros" },
-    { "name": "omnipresence-journals",   "type": "JournalEntry", "path": "packs/omnipresence-journals", "label": "Omnipresence — Journals" }
+    { "name": "omnipresence-dnd5e",       "type": "Actor", "system": "dnd5e",       "path": "packs/omnipresence-dnd5e",       "label": "Omnipresence — D&D 5e",              "ownership": { "PLAYER": "NONE", "TRUSTED": "NONE", "ASSISTANT": "OWNER" } },
+    { "name": "omnipresence-pf2e",        "type": "Actor", "system": "pf2e",        "path": "packs/omnipresence-pf2e",        "label": "Omnipresence — Pathfinder 2e",       "ownership": { "PLAYER": "NONE", "TRUSTED": "NONE", "ASSISTANT": "OWNER" } },
+    { "name": "omnipresence-daggerheart", "type": "Actor", "system": "daggerheart", "path": "packs/omnipresence-daggerheart", "label": "Omnipresence — Daggerheart",         "ownership": { "PLAYER": "NONE", "TRUSTED": "NONE", "ASSISTANT": "OWNER" } },
+    { "name": "omnipresence-draw-steel",  "type": "Actor", "system": "draw-steel",  "path": "packs/omnipresence-draw-steel",  "label": "Omnipresence — Draw Steel",          "ownership": { "PLAYER": "NONE", "TRUSTED": "NONE", "ASSISTANT": "OWNER" } },
+    { "name": "omnipresence-shadowdark",  "type": "Actor", "system": "shadowdark",  "path": "packs/omnipresence-shadowdark",  "label": "Omnipresence — Shadowdark",          "ownership": { "PLAYER": "NONE", "TRUSTED": "NONE", "ASSISTANT": "OWNER" } },
+    { "name": "omnipresence-CoC7",        "type": "Actor", "system": "CoC7",        "path": "packs/omnipresence-CoC7",        "label": "Omnipresence — Call of Cthulhu 7e",  "ownership": { "PLAYER": "NONE", "TRUSTED": "NONE", "ASSISTANT": "OWNER" } },
+    { "name": "omnipresence-macros",      "type": "Macro",                          "path": "packs/omnipresence-macros",      "label": "Omnipresence — Macros",              "ownership": { "PLAYER": "NONE", "TRUSTED": "NONE", "ASSISTANT": "OWNER" } },
+    { "name": "omnipresence-journals",    "type": "JournalEntry",                   "path": "packs/omnipresence-journals",    "label": "Omnipresence — Journals",            "ownership": { "PLAYER": "NONE", "TRUSTED": "NONE", "ASSISTANT": "OWNER" } }
   ],
   "relationships": {
     "systems": [

@@ -1,11 +1,30 @@
 import { SyncRegistry } from './sync-registry.js';
-import { stripMacroLocalFields } from './sync-logic.js';
+import { stripMacroLocalFields, withLocalStats } from './sync-logic.js';
+import { macroPushDecision, macroCopiesToDelete, decideScriptMacroInstall, sha256Hex } from './security-logic.js';
 import { LinkRewriter } from './link-rewriter.js';
 
 const DEBOUNCE_MS = 2000;
 
 export class MacroSync {
   static _timers = new Map(); // userId → timeout handle
+
+  /** Client setting: SHA-256 hashes of script-macro commands this GM approved (#5). */
+  static APPROVED_SETTING = 'approvedMacroHashes';
+
+  static registerSettings() {
+    game.settings.register('omnipresence', this.APPROVED_SETTING, {
+      name: 'Approved script macro hashes', scope: 'client', config: false, type: Array, default: []
+    });
+  }
+
+  static _approvedHashes() {
+    return game.settings.get('omnipresence', this.APPROVED_SETTING) ?? [];
+  }
+
+  /** Hash of the pack copy's canonical command — identical in every world, unlike the localized one. */
+  static _commandHash(compMacro) {
+    return sha256Hex(compMacro._source.command ?? '');
+  }
 
   static get PACK_ID() {
     return 'omnipresence.omnipresence-macros';
@@ -58,8 +77,18 @@ export class MacroSync {
 
     for (const [macroId, slots] of macroSlots) {
       const macro = game.macros.get(macroId);
-      if (!macro) {
+      const decision = macroPushDecision({
+        exists: !!macro,
+        ownedByUser: !!macro?.testUserPermission(user, 'OWNER')
+      });
+      if (decision === 'dangling') {
         for (const slot of slots) danglingSlots.add(slot);
+        continue;
+      }
+      if (decision === 'skip') {
+        // A player can put any macro id on their own hotbar; publishing a
+        // macro they do not own would leak a GM-only macro under their name (#4).
+        console.warn('Omnipresence | not publishing macro', macro.name, 'from the hotbar of', user.name, '— they do not own it');
         continue;
       }
 
@@ -78,7 +107,8 @@ export class MacroSync {
       // it, then canonicalize links so the pack copy is world-independent.
       const macroData = LinkRewriter.canonicalize(stripMacroLocalFields(macro.toObject()));
       macroData.flags ??= {};
-      macroData.flags.omnipresence = { id: ompId, ownerName: user.name, hotbarSlots: slots };
+      // originWorld scopes cleanup to the world that pushed the copy (#8).
+      macroData.flags.omnipresence = { id: ompId, ownerName: user.name, hotbarSlots: slots, originWorld: game.world.id };
 
       const existing = compByOmpId.get(ompId);
       if (existing) {
@@ -91,13 +121,21 @@ export class MacroSync {
       pushedOmpIds.add(ompId);
     }
 
-    // Delete compendium entries for macros no longer on this user's hotbar —
-    // except copies a dangling slot still points at (restored on pull).
+    // Delete copies of macros no longer on this user's hotbar — except copies
+    // a dangling slot still points at (restored on pull), and only copies
+    // pushed FROM THIS WORLD: a same-named user in another world owns the
+    // rest (#8). Untagged pre-upgrade copies are never deleted here.
+    const toDelete = new Set(macroCopiesToDelete(
+      userCompDocs.map(d => ({
+        omniId: d.getFlag('omnipresence', 'id'),
+        ownerName: user.name,
+        originWorld: d.getFlag('omnipresence', 'originWorld'),
+        slots: d.getFlag('omnipresence', 'hotbarSlots') ?? []
+      })),
+      { userName: user.name, worldId: game.world.id, pushedIds: [...pushedOmpIds], danglingSlots: [...danglingSlots] }
+    ));
     for (const doc of userCompDocs) {
-      if (pushedOmpIds.has(doc.getFlag('omnipresence', 'id'))) continue;
-      const copySlots = doc.getFlag('omnipresence', 'hotbarSlots') ?? [];
-      if (copySlots.some(slot => danglingSlots.has(slot))) continue;
-      await doc.delete();
+      if (toDelete.has(doc.getFlag('omnipresence', 'id'))) await doc.delete();
     }
   }
 
@@ -106,7 +144,7 @@ export class MacroSync {
     if (this._timers.has(id)) clearTimeout(this._timers.get(id));
     const timer = setTimeout(() => {
       this._timers.delete(id);
-      this.pushForUser(user);
+      this.pushForUser(user).catch(err => console.error('Omnipresence | macro push failed for user', user.name, err));
     }, DEBOUNCE_MS);
     this._timers.set(id, timer);
   }
@@ -122,24 +160,22 @@ export class MacroSync {
   }
 
   static handleMacroChange(macro) {
-    if (!game.user.isGM) return;
+    if (!SyncRegistry.isPusher()) return;
     for (const user of this._getUsersWithMacro(macro.id)) {
       this.debouncedPushForUser(user);
     }
   }
 
   static handleHotbarChange(user) {
-    if (!game.user.isGM) return;
+    if (!SyncRegistry.isPusher()) return;
     if (!SyncRegistry.isMacroSyncEnabled(user.id)) return;
     this.debouncedPushForUser(user);
   }
 
   static async onLogin() {
-    const pack = this._getPack();
-    if (!pack) return;
-
-    // GM: push all users' hotbars to catch up changes made while GM was offline.
-    if (game.user.isGM) {
+    // The active GM pushes every user's hotbar to catch up on changes made
+    // while no GM was here; a second GM must not push the same hotbars (#7).
+    if (SyncRegistry.isPusher()) {
       for (const user of game.users) {
         if (SyncRegistry.isMacroSyncEnabled(user.id)) {
           try {
@@ -150,7 +186,13 @@ export class MacroSync {
         }
       }
     }
+    await this.pullOwn();
+  }
 
+  /** Pull the current user's own macros and place them on their hotbar. */
+  static async pullOwn() {
+    const pack = this._getPack();
+    if (!pack) return;
     if (!SyncRegistry.isMacroSyncEnabled(game.user.id)) return;
 
     const compDocs = await pack.getDocuments();
@@ -166,6 +208,8 @@ export class MacroSync {
     );
 
     const newHotbarEntries = {};
+    const approved = this._approvedHashes();
+    const needsConfirm = [];
 
     for (const compMacro of myDocs) {
       const ompId = compMacro.getFlag('omnipresence', 'id');
@@ -177,37 +221,114 @@ export class MacroSync {
       // assigns the current user as author/owner.
       // …and localize canonical omnipresence ids to this world's ids.
       const macroData = LinkRewriter.localize(stripMacroLocalFields(compMacro.toObject()));
+      const localMacro = localById.get(ompId) ?? null;
 
-      let localMacro = localById.get(ompId);
-      try {
-        if (localMacro) {
-          await localMacro.update(macroData, { omnipresenceInternal: true, recursive: false });
-        } else {
-          localMacro = await Macro.create(macroData);
-        }
-      } catch (err) {
-        console.error('Omnipresence | macro pull failed for', compMacro.name, err);
+      // A GM never runs a script macro from another world's pack copy without
+      // seeing it first (#5): new here, or changed, and not approved before.
+      const packHash = this._commandHash(compMacro);
+      const decision = decideScriptMacroInstall({
+        isGM: game.user.isGM,
+        type: macroData.type,
+        localType: localMacro?.type,
+        localCommand: localMacro ? localMacro.command : null,
+        packCommand: macroData.command,
+        packHash,
+        approvedHashes: approved
+      });
+      if (decision === 'confirm') {
+        needsConfirm.push({ compMacro, macroData, localMacro, slots, packHash });
         continue;
       }
 
-      for (const slot of slots) {
-        newHotbarEntries[slot] = localMacro.id;
-      }
+      const installed = await this._installPulled(localMacro, macroData, compMacro.name);
+      if (!installed) continue;
+      for (const slot of slots) newHotbarEntries[slot] = installed.id;
     }
 
-    if (Object.keys(newHotbarEntries).length > 0) {
-      // Write slot by slot and DELETE any empty slot instead of carrying it.
-      // Foundry (v14 verified) accepts a null slot on write but then rejects
-      // the whole User document at the next load, which removes that user
-      // from the join screen. A whole-object write would not clear a null
-      // already stored (the update is diffed against the source), so the
-      // `-=` deletion key is what actually repairs it.
-      const update = {};
-      for (const [slot, id] of Object.entries({ ...game.user.hotbar, ...newHotbarEntries })) {
-        if (id) update[`hotbar.${slot}`] = id;
-        else update[`hotbar.-=${slot}`] = null;
-      }
-      await game.user.update(update, { omnipresenceInternal: true });
+    await this._writeHotbar(newHotbarEntries);
+
+    // Never hold the login reconcile on the GM's answer.
+    if (needsConfirm.length) {
+      this._confirmScriptMacros(needsConfirm)
+        .catch(err => console.error('Omnipresence | script macro confirmation failed', err));
     }
+  }
+
+  /** Create or update the local macro from pulled data. Null on failure (logged). */
+  static async _installPulled(localMacro, macroData, name) {
+    try {
+      if (localMacro) {
+        // Keep this world's _stats: a non-recursive update would replace it.
+        await localMacro.update(withLocalStats(macroData, localMacro.toObject()), { omnipresenceInternal: true, recursive: false });
+        return localMacro;
+      }
+      return await Macro.create(macroData);
+    } catch (err) {
+      console.error('Omnipresence | macro pull failed for', name, err);
+      return null;
+    }
+  }
+
+  /** Point hotbar slots at local macros: {slot: macroId}. */
+  static async _writeHotbar(entries) {
+    if (Object.keys(entries).length === 0) return;
+    // Write slot by slot and DELETE any empty slot instead of carrying it.
+    // Foundry (v14 verified) accepts a null slot on write but then rejects
+    // the whole User document at the next load, which removes that user
+    // from the join screen. A whole-object write would not clear a null
+    // already stored (the update is diffed against the source), so the
+    // `-=` deletion key is what actually repairs it.
+    const update = {};
+    for (const [slot, id] of Object.entries({ ...game.user.hotbar, ...entries })) {
+      if (id) update[`hotbar.${slot}`] = id;
+      else update[`hotbar.-=${slot}`] = null;
+    }
+    await game.user.update(update, { omnipresenceInternal: true });
+  }
+
+  /**
+   * One dialog per login listing every script macro that needs the GM's
+   * approval (name, owner, origin world, command). Install installs them all
+   * and remembers each command's hash; Skip installs nothing (asked again
+   * at the next login).
+   */
+  static async _confirmScriptMacros(items) {
+    const esc = foundry.utils.escapeHTML;
+    const L = key => game.i18n.localize(`OMNIPRESENCE.macroConfirm.${key}`);
+    const rows = items.map(({ compMacro, macroData }) => {
+      const world = compMacro.getFlag('omnipresence', 'originWorld') ?? L('unknownWorld');
+      const owner = compMacro.getFlag('omnipresence', 'ownerName') ?? '';
+      return `
+      <section class="omnipresence-macro-confirm-item">
+        <h4>${esc(compMacro.name)}</h4>
+        <p class="notes">${esc(game.i18n.format('OMNIPRESENCE.macroConfirm.origin', { owner, world }))}</p>
+        <pre><code>${esc(macroData.command ?? '')}</code></pre>
+      </section>`;
+    }).join('');
+
+    const choice = await foundry.applications.api.DialogV2.wait({
+      window: { title: L('title') },
+      classes: ['omnipresence-macro-confirm'],
+      content: `<p>${L('intro')}</p>${rows}`,
+      buttons: [
+        { action: 'install', label: L('install'), callback: () => 'install' },
+        { action: 'skip', label: L('skip'), default: true, callback: () => 'skip' }
+      ],
+      rejectClose: false
+    });
+    if (choice !== 'install') return;
+
+    const approved = new Set(this._approvedHashes());
+    const entries = {};
+    for (const { compMacro, macroData, localMacro, slots, packHash } of items) {
+      const installed = await this._installPulled(localMacro, macroData, compMacro.name);
+      if (!installed) continue;
+      // The hash of what was pulled and shown, not the live copy, which may
+      // have changed while the dialog was open.
+      approved.add(packHash);
+      for (const slot of slots) entries[slot] = installed.id;
+    }
+    await game.settings.set('omnipresence', this.APPROVED_SETTING, [...approved]);
+    await this._writeHotbar(entries);
   }
 }

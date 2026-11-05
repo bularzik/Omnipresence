@@ -2,6 +2,7 @@ import { SyncRegistry } from './sync-registry.js';
 import { SyncEngine } from './sync-engine.js';
 import { JournalSync } from './journal-sync.js';
 import { FolderSync } from './folder-sync.js';
+import { Bindings } from './bindings.js';
 import { deriveConflictState } from './sync-logic.js';
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
@@ -31,7 +32,8 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
       removeSyncJournal: this._onRemoveSyncJournal,
       forcePushFolder: this._onForcePushFolder,
       forcePullFolder: this._onForcePullFolder,
-      removeSyncFolder: this._onRemoveSyncFolder
+      removeSyncFolder: this._onRemoveSyncFolder,
+      keepDuplicate: this._onKeepDuplicate
     }
   };
 
@@ -142,7 +144,11 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
       };
     });
 
-    return { isGM, actors, journals, folders, conflictsOnly };
+    // Upgraded worlds: sync ids carried by more than one document (their
+    // pushes are refused until the GM keeps one; see Bindings.build).
+    const duplicates = isGM && !conflictsOnly ? Bindings.duplicateRows() : [];
+
+    return { isGM, actors, journals, folders, conflictsOnly, duplicates };
   }
 
   /**
@@ -178,7 +184,10 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     const docs = await pack.getDocuments();
     const compActor = docs.find(d => d.getFlag('omnipresence', 'id') === omnipresenceId);
     if (!compActor) return;
-    await SyncEngine.pull(actor, compActor);
+    // SyncEngine.pull applies the pull rule (Bindings.mayPull) and records a refusal.
+    if (!(await SyncEngine.pull(actor, compActor))) {
+      ui.notifications.warn(game.i18n.format('OMNIPRESENCE.notifications.pullRefused', { name: actor.name }));
+    }
     this.render();
   }
 
@@ -188,6 +197,8 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     if (!actor) return;
     if (!game.user.isGM && !actor.isOwner) return;
     await SyncRegistry.unenroll(actor);
+    // Removing the extra copies is how a GM resolves a duplicate sync id.
+    if (game.user.isGM) await Bindings.resolveDuplicates();
     ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.unenrolled', { name: actor.name }));
     this.render();
   }
@@ -225,7 +236,10 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     const docs = await pack.getDocuments();
     const compJournal = docs.find(d => d.getFlag('omnipresence', 'id') === omnipresenceId);
     if (!compJournal) return;
-    await JournalSync.pull(journal, compJournal);
+    // JournalSync.pull applies the pull rule (Bindings.mayPull) and records a refusal.
+    if (!(await JournalSync.pull(journal, compJournal))) {
+      ui.notifications.warn(game.i18n.format('OMNIPRESENCE.notifications.pullRefused', { name: journal.name }));
+    }
     this.render();
   }
 
@@ -235,6 +249,8 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     if (!journal) return;
     if (!game.user.isGM && !journal.isOwner) return;
     await SyncRegistry.unenroll(journal);
+    // Removing the extra copies is how a GM resolves a duplicate sync id.
+    if (game.user.isGM) await Bindings.resolveDuplicates();
     ui.notifications.info(game.i18n.format('OMNIPRESENCE.notifications.unenrolled', { name: journal.name }));
     this.render();
   }
@@ -252,6 +268,45 @@ export class OmnipresenceDashboard extends HandlebarsApplicationMixin(Applicatio
     const folder = game.folders.get(target.closest('[data-folder-id]').dataset.folderId);
     if (!folder) return;
     await FolderSync.pullFolder(folder);
+    this.render();
+  }
+
+  /**
+   * GM: settle a Duplicate sync ids row by keeping one of its documents
+   * (Bindings.keep binds it and takes the others out of sync). A row listed
+   * with the existing shared copy is confirmed first: that copy may have been
+   * written elsewhere (another world), and the kept document syncs with it.
+   * The dialog shows the kept document's real owner next to the owner
+   * recorded on the copy.
+   */
+  static async _onKeepDuplicate(event, target) {
+    if (!game.user.isGM) return;
+    const { omniId, docType, docId } = target.closest('[data-doc-id]').dataset;
+    const record = game.settings.get('omnipresence', Bindings.DUPLICATES)?.[omniId] ?? [];
+    if (record.some(d => d.type === 'SharedCopy')) {
+      const doc = Bindings._lookup(docType, docId);
+      const gm = game.i18n.localize('OMNIPRESENCE.dashboard.keepConfirmGmOwner');
+      let copyOwner = gm;
+      try {
+        const pack = game.packs.get(docType === 'Actor' ? SyncEngine.PACK_ID : JournalSync.PACK_ID);
+        const copy = pack ? (await pack.getDocuments()).find(d => d.getFlag('omnipresence', 'id') === omniId) : null;
+        copyOwner = copy?.getFlag('omnipresence', 'ownerName') ?? gm;
+      } catch (err) {
+        console.warn('Omnipresence | could not read the shared copy for the keep confirmation', err);
+      }
+      const esc = foundry.utils.escapeHTML;
+      const ok = await foundry.applications.api.DialogV2.confirm({
+        window: { title: game.i18n.localize('OMNIPRESENCE.dashboard.keepConfirmTitle') },
+        content: `<p>${game.i18n.format('OMNIPRESENCE.dashboard.keepConfirmContent', {
+          name: esc(doc?.name ?? docId),
+          owner: esc((doc && SyncRegistry.resolveOwnerName(doc)) ?? gm),
+          copyOwner: esc(copyOwner)
+        })}</p>`,
+        classes: ['omnipresence-keep-confirm']
+      });
+      if (!ok) return;
+    }
+    await Bindings.keep(omniId, { type: docType, id: docId });
     this.render();
   }
 

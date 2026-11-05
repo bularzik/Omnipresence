@@ -1,5 +1,6 @@
 import { LinkRewriter } from './link-rewriter.js';
 import { SyncRegistry } from './sync-registry.js';
+import { Bindings } from './bindings.js';
 import {
   decideSyncAction,
   stripWorldLocalFields,
@@ -7,7 +8,8 @@ import {
   shouldImportFor,
   findUnsyncedLookalike,
   mergeForeignFlags,
-  resolveMerge
+  resolveMerge,
+  withLocalStats
 } from './sync-logic.js';
 
 const DEBOUNCE_MS = 2000;
@@ -64,6 +66,9 @@ export class SyncEngine {
       // A merged-away stub is a redirect: pushing over it would resurrect the
       // duplicate. The owner's next login follows it instead (_followMerge).
       if (existing?.getFlag('omnipresence', 'mergedInto')) return;
+      // Only the document bound to this omni id may write its shared copy
+      // (#1): a player can stamp any id on an actor they own.
+      if (!(await Bindings.authorizePush(actor, !!existing))) return;
       if (existing) {
         // recursive:false — the payload is a complete snapshot, so replace
         // subtrees wholesale; merge would resurrect deleted keys forever.
@@ -95,7 +100,7 @@ export class SyncEngine {
     if (this._timers.has(id)) clearTimeout(this._timers.get(id));
     const timer = setTimeout(() => {
       this._timers.delete(id);
-      this.push(actor);
+      this.push(actor).catch(err => console.error('Omnipresence | push failed for', actor.name, err));
     }, DEBOUNCE_MS);
     this._timers.set(id, timer);
   }
@@ -110,11 +115,19 @@ export class SyncEngine {
     this._timers.clear();
   }
 
+  /**
+   * Mark an actor dirty. Every caller is a hook that does not await it, so
+   * log failures here instead of leaving an unhandled rejection.
+   */
   static async trackLocalModification(actor) {
-    await actor.update(
-      { 'flags.omnipresence.localModifiedAt': new Date().toISOString() },
-      { omnipresenceInternal: true }
-    );
+    try {
+      await actor.update(
+        { 'flags.omnipresence.localModifiedAt': new Date().toISOString() },
+        { omnipresenceInternal: true }
+      );
+    } catch (err) {
+      console.error('Omnipresence | dirty-mark failed for', actor.name, err);
+    }
   }
 
   /**
@@ -130,20 +143,27 @@ export class SyncEngine {
     if (!actor) return;
     if (!SyncRegistry.isEnrolled(actor)) return;
     if (userId === game.user.id) this.trackLocalModification(actor);
-    if (game.user.isGM) this.debouncedPush(actor);
+    if (SyncRegistry.isPusher()) this.debouncedPush(actor);
   }
 
   /**
+   * Overwrite `localActor` from its shared copy. Every pull path (login,
+   * dashboard force-pull) goes through here, so the pull rule lives here:
+   * once bindings are built only the bound document is written (I-1).
    * @param {Actor} localActor
    * @param {Actor} compActor
    * @param {object} [opts]
    * @param {boolean} [opts.keepForeignFlags] keep the local actor's other
    *   modules' flags (e.g. ddbimporter) — used by linking and merge re-keys
+   * @param {boolean} [opts.authorized] the caller already checked this user
+   *   may take this shared copy (linkActor: a GM, or the copy's own player),
+   *   so the binding check is skipped for this one re-key
    * @returns {Promise<boolean>} whether the local actor now holds the shared data
    */
-  static async pull(localActor, compActor, { keepForeignFlags = false } = {}) {
+  static async pull(localActor, compActor, { keepForeignFlags = false, authorized = false } = {}) {
     // A merged-away stub holds no data: pulling it would empty the actor.
     if (compActor.getFlag('omnipresence', 'mergedInto')) return false;
+    if (!authorized && !(await Bindings.mayPull(localActor))) return false;
     // Strip world-local fields so local ownership and folder are preserved,
     // and localize canonical omnipresence ids to this world's ids.
     const actorData = LinkRewriter.localize(stripWorldLocalFields(compActor.toObject()));
@@ -156,8 +176,8 @@ export class SyncEngine {
     const enrolled = localActor.getFlag('omnipresence', 'enrolled');
     if (enrolled !== undefined) actorData.flags.omnipresence.enrolled = enrolled;
     try {
-      await localActor.update(actorData, { omnipresenceInternal: true, recursive: false });
-      return true;
+      // Keep this world's _stats: a non-recursive update would replace it.
+      await localActor.update(withLocalStats(actorData, localActor.toObject()), { omnipresenceInternal: true, recursive: false });
     } catch (err) {
       console.error('Omnipresence | pull failed for', localActor.name, err);
       ui.notifications.warn(
@@ -165,6 +185,7 @@ export class SyncEngine {
       );
       return false;
     }
+    return true;
   }
 
   static async onLogin() {
@@ -189,6 +210,18 @@ export class SyncEngine {
       const omnipresenceId = actor.getFlag('omnipresence', 'id');
       const compActor = compActors.find(d => d.getFlag('omnipresence', 'id') === omnipresenceId);
 
+      // A local actor whose id is bound to a different document must never be
+      // overwritten from (or pushed over) that document's shared copy (#1).
+      const bound = Bindings.get(omnipresenceId);
+      if (bound && !Bindings.isBoundTo(actor)) {
+        console.warn(`Omnipresence | skipping login sync of "${actor.name}" (${actor.id}): its sync id is bound to another document.`);
+        continue;
+      }
+      // Once bindings exist, an unbound carrier of an id whose shared copy
+      // exists never syncs: the copy may have been made by a forgery in
+      // another world's first-push race.
+      if (compActor && !(await Bindings.mayPull(actor))) continue;
+
       // Gate on the OWNER's preference and allow-list (the user named by
       // ownerName, or this GM for a GM-owned actor) — never on the acting
       // GM's list, which would let a GM's picker silently stop a player's
@@ -206,8 +239,8 @@ export class SyncEngine {
       }
 
       if (!compActor) {
-        // No compendium entry — push local copy as master (GM only; no-op for players).
-        await this.push(actor);
+        // No compendium entry — push local copy as master (the active GM only, #7).
+        if (SyncRegistry.isPusher()) await this.push(actor);
         continue;
       }
 
@@ -222,7 +255,7 @@ export class SyncEngine {
       } else if (action === 'pull') {
         await this.pull(actor, compActor);
       } else if (action === 'push') {
-        await this.push(actor);
+        if (SyncRegistry.isPusher()) await this.push(actor);
       }
       // 'none': in sync
     }
@@ -334,8 +367,12 @@ export class SyncEngine {
         if (!SyncRegistry.isDocSelected(gateUser.id, 'actor', omnipresenceId)) continue;
         this._importing.add(omnipresenceId);
         try {
-          const actor = await Actor.create(actorData, { keepId: true });
+          // Internal: the createActor hook must not clear the id this import sets.
+          const actor = await Actor.create(actorData, { keepId: true, omnipresenceInternal: true });
           await SyncRegistry.enroll(actor);
+          // A GM import comes from the pack: bind it. A player's import is
+          // bound by the active GM (Bindings.adopt, from the create hook).
+          if (game.user.isGM) await Bindings.bind(actor);
           created.push(actor);
         } finally {
           this._importing.delete(omnipresenceId);
@@ -408,9 +445,13 @@ export class SyncEngine {
           result = 'conflict';
         } else {
           await actor.update({ 'flags.omnipresence.id': target }, { omnipresenceInternal: true });
-          await this.pull(actor, targetComp, { keepForeignFlags: true });
+          // The redirect is GM-written and this actor is the gate user's
+          // copy of `fromId`, so it may take X before it is bound to it.
+          await this.pull(actor, targetComp, { keepForeignFlags: true, authorized: true });
         }
         await SyncRegistry.enroll(actor);
+        // A GM binds it now; a player's is bound by the active GM (Bindings.adopt).
+        if (game.user.isGM) await Bindings.bind(actor);
       } else if (!dirty && actor.canUserModify(game.user, 'delete')) {
         await actor.delete({ omnipresenceInternal: true });
       } else {

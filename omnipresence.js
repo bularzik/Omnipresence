@@ -11,9 +11,13 @@ import { Onboarding } from './scripts/onboarding.js';
 import { runLoginReconcile } from './scripts/reconcile.js';
 import { FolderDirectory } from './scripts/folder-directory.js';
 import { drainPendingMerges } from './scripts/link-actor.js';
+import { unlockPacks, hidePacksFromPlayers } from './scripts/pack-ownership.js';
+import { Bindings } from './scripts/bindings.js';
 
 Hooks.once('init', () => {
   SyncRegistry.register();
+  Bindings.register();
+  MacroSync.registerSettings();
 
   game.settings.registerMenu('omnipresence', 'dashboard', {
     name: 'OMNIPRESENCE.settings.dashboard.name',
@@ -30,12 +34,26 @@ Hooks.once('init', () => {
 
 Hooks.once('ready', async () => {
   if (game.user.isGM) {
-    const pack = game.packs.get(SyncEngine.PACK_ID);
-    if (pack && pack.locked) await pack.configure({ locked: false });
-    const macroPack = game.packs.get(MacroSync.PACK_ID);
-    if (macroPack && macroPack.locked) await macroPack.configure({ locked: false });
-    const journalPack = game.packs.get(JournalSync.PACK_ID);
-    if (journalPack && journalPack.locked) await journalPack.configure({ locked: false });
+    try {
+      await unlockPacks();
+    } catch (err) {
+      console.error('Omnipresence | pack unlock failed', err);
+    }
+    // A per-world override would put every world's synced content back in
+    // players' Compendium sidebar: hide the packs again.
+    try {
+      await hidePacksFromPlayers();
+    } catch (err) {
+      console.error('Omnipresence | pack ownership check failed', err);
+    }
+    try {
+      // Active GM: bind each shared copy to its local document (built from
+      // this world's documents on the first login after the upgrade) before
+      // anything below pushes.
+      await Bindings.init();
+    } catch (err) {
+      console.error('Omnipresence | binding setup failed', err);
+    }
   }
   // Folder sync is explicit per world since 0.9.0: users whose folders were
   // admitted by the old "every folder" rule keep the ones already here.
@@ -99,7 +117,8 @@ Hooks.on('updateActor', (actor, changes, options, userId) => {
   if (!SyncRegistry.isEnrolled(actor)) return;
   if (!SyncRegistry.isActorSyncEnabled(userId)) return;
   if (userId === game.user.id) SyncEngine.trackLocalModification(actor);
-  if (game.user.isGM) SyncEngine.debouncedPush(actor);
+  // One automatic pusher per world (#7): every GM client sees this hook.
+  if (SyncRegistry.isPusher()) SyncEngine.debouncedPush(actor);
 });
 
 // Deleting an enrolled actor is deliberately NOT an unenroll (README, Notes):
@@ -110,6 +129,13 @@ Hooks.on('updateActor', (actor, changes, options, userId) => {
 // was already gone, which is the only reason the contract held — op-74f.)
 // Folder members are the exception and are handled in deleteJournalEntry.
 Hooks.on('deleteActor', (_actor, _options, _userId) => {});
+
+// Foundry's Duplicate (and a hand import) copies every flag, so the new actor
+// would carry a sync id bound to the original: the active GM clears it.
+Hooks.on('createActor', (actor, options, _userId) => {
+  Bindings.clearInheritedId(actor, options)
+    .catch(err => console.error('Omnipresence | createActor handling failed', err));
+});
 
 // v13 renamed directory context-menu hooks to get{DocumentName}ContextOptions;
 // the v12 name (getActorDirectoryEntryContext) no longer fires. The callback
@@ -217,7 +243,7 @@ Hooks.on('updateJournalEntry', (journal, changes, options, userId) => {
   if (!SyncRegistry.isEnrolled(journal)) return;
   if (!SyncRegistry.isJournalSyncEnabled(userId)) return;
   if (userId === game.user.id) JournalSync.trackLocalModification(journal);
-  if (game.user.isGM) JournalSync.debouncedPush(journal);
+  if (SyncRegistry.isPusher()) JournalSync.debouncedPush(journal);
 });
 
 Hooks.on('deleteJournalEntry', (journal, options, userId) => {
@@ -278,7 +304,27 @@ Hooks.on('deleteFolder', (folder, options, userId) =>
   FolderSync.handleFolderDelete(folder, options, userId)
     .catch(err => console.error('Omnipresence | deleteFolder handling failed', err)));
 // A journal created inside a synced folder joins the sync (the single-journal
-// path never enrolled on create; this fires only for folder members).
+// path never enrolled on create; this fires only for folder members). First,
+// a Duplicate's inherited sync id is cleared (see createActor), so a copy made
+// inside a synced folder enrolls under a fresh id instead of the original's.
 Hooks.on('createJournalEntry', (journal, options, userId) =>
-  FolderSync.handleMemberCreate(journal, options, userId)
+  Bindings.clearInheritedId(journal, options)
+    .then(() => FolderSync.handleMemberCreate(journal, options, userId))
     .catch(err => console.error('Omnipresence | createJournalEntry handling failed', err)));
+
+// A player's client imports, links and follows merges, but only a GM can
+// write bindings: the active GM binds the player's own shared characters and
+// journals once the id, enrollment and synced list have settled (Bindings.adopt).
+// Internal writes count too — a player's import and re-key are internal.
+const adoptIfUnbound = (doc, userId) => {
+  if (doc.pack || userId === game.user.id || !SyncRegistry.isPusher()) return;
+  if (!doc.getFlag('omnipresence', 'id') || Bindings.isBoundTo(doc)) return;
+  Bindings.scheduleAdopt();
+};
+for (const hook of ['createActor', 'updateActor', 'createJournalEntry', 'updateJournalEntry']) {
+  Hooks.on(hook, (doc, ...rest) => adoptIfUnbound(doc, rest[rest.length - 1]));
+}
+Hooks.on('updateUser', (_user, changes, _options, userId) => {
+  if (!changes.flags?.omnipresence?.selection || userId === game.user.id) return;
+  Bindings.scheduleAdopt();
+});
